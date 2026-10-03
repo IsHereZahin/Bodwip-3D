@@ -6,6 +6,7 @@ import { Clock, SPEEDS } from './env/clock';
 import type { SkyEvent, SkyEventKind } from './env/clock';
 import { Environment } from './env/environment';
 import { Pipeline } from './render/pipeline';
+import { loadSurfaces } from './render/surfaces';
 import { setMaxAnisotropy } from './render/textures';
 import { Director } from './rig/director';
 import { Rig, VIEWS } from './rig/rig';
@@ -15,8 +16,11 @@ import { Controls } from './ui/controls';
 import type { CameraChoice } from './ui/controls';
 import { Hud } from './ui/hud';
 import { RiverTraffic } from './world/boats';
+import { Drift } from './world/drift';
 import { HeroBoat } from './world/hero';
 import { Life } from './world/life';
+import { Meadow } from './world/meadow';
+import { buildPondLife } from './world/ponds';
 import { buildSky } from './world/sky';
 import { buildTerrain } from './world/terrain';
 import { buildVegetation } from './world/vegetation';
@@ -61,6 +65,8 @@ async function main(hud: Hud): Promise<void> {
   renderer.info.autoReset = false;
   const aniso = renderer.capabilities.getMaxAnisotropy();
   setMaxAnisotropy(aniso);
+  // the photo textures download while the first parts are built
+  const surfacesLoading = loadSurfaces(Math.min(aniso, 8));
 
   const scene = new Scene();
   const camera = new PerspectiveCamera(48, innerWidth / innerHeight, 0.5, 6000);
@@ -72,7 +78,9 @@ async function main(hud: Hud): Promise<void> {
   await nextTask();
   const sky = buildSky();
   scene.add(sky.mesh);
-  scene.add(buildTerrain());
+  const surfaces = await surfacesLoading;
+  hud.progress(0.15);
+  scene.add(buildTerrain(surfaces.ground));
   hud.progress(0.3);
   await nextTask();
   const water = buildWater(pipeline.reflection.target.texture, pipeline.reflection.textureMatrix, Math.min(aniso, 8));
@@ -83,7 +91,12 @@ async function main(hud: Hud): Promise<void> {
   scene.add(buildVillages(huts));
   hud.progress(0.52);
   await nextTask();
-  scene.add(buildVegetation(huts));
+  scene.add(buildVegetation(huts, surfaces.bark));
+  scene.add(buildPondLife());
+  const meadow = new Meadow(huts);
+  scene.add(meadow.group);
+  const drift = new Drift();
+  scene.add(drift.group);
   hud.progress(0.78);
   await nextTask();
 
@@ -332,9 +345,11 @@ async function main(hud: Hud): Promise<void> {
     hero.group.rotation.set(b.pitch, b.heading, b.roll, 'YXZ');
     water.boat.set(b.pos.x, b.pos.z, b.heading, b.speed);
     traffic.update(dt, t, b.pos.z);
+    drift.update(dt, t, camera.position.z, b);
     // birds and fireflies gather round whoever is being watched: the boat, or the free camera
     life.update(dt, t, rig.subject, rig.subjectHeading, env.night);
     sky.mesh.position.copy(camera.position);
+    meadow.update(camera.position);
     // the shadow box rides ahead of the view, snapped so it redraws only every few metres
     if (director.active) focus.copy(director.focus);
     else rig.focus(focus);
@@ -443,6 +458,7 @@ async function main(hud: Hud): Promise<void> {
           debug.freeze = false;
           clock.playing = false;
           step(0.001);
+          meadow.update(camera.position, true);
           renderer.shadowMap.needsUpdate = true;
           debug.freeze = true;
         },

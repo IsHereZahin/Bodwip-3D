@@ -1,5 +1,7 @@
 import {
+  AddEquation,
   Color,
+  CustomBlending,
   DataTexture,
   DataUtils,
   HalfFloatType,
@@ -7,6 +9,8 @@ import {
   LinearMipmapLinearFilter,
   Matrix4,
   Mesh,
+  OneFactor,
+  OneMinusSrcAlphaFactor,
   PlaneGeometry,
   RGBAFormat,
   RepeatWrapping,
@@ -111,7 +115,6 @@ uniform sampler2D tNormal;
 uniform sampler2D tField;
 uniform vec4 uField;
 uniform vec4 uBoat;      // x, z, heading, speed
-uniform vec3 uWaterCol;
 uniform vec3 uAmb;
 varying vec3 vWorld;
 
@@ -166,15 +169,21 @@ void main() {
   vec4 fld = texture2D(tField, (wp.xz - uField.xy) * uField.zw);
   float depth = max(-fld.r, 0.0);
   vec2 flow = fld.gb;
+  float spd = length(flow);
+  vec2 along = spd > 0.02 ? flow / spd : vec2(0.0, -1.0);
+  vec2 across = vec2(-along.y, along.x);
+  // the river's own frame: ripples are drawn out along the current, as moving water stretches them
+  vec2 fp = vec2(dot(wp.xz, across), dot(wp.xz, along));
 
   // two-phase flow map: ripples drift with the current, without a visible reset
   float ph = uTime * 0.1;
   float p0 = fract(ph);
   float p1 = fract(ph + 0.5);
   float w0 = 1.0 - abs(2.0 * p0 - 1.0);
-  vec2 uvA = wp.xz / 11.0;
-  vec2 adv = flow * 10.0 / 11.0;
-  vec2 nA = ripple(uvA - adv * p0) * w0 + ripple(uvA - adv * p1 + 0.37) * (1.0 - w0);
+  vec2 uvA = fp / vec2(6.5, 17.0);
+  vec2 adv = vec2(0.0, spd * 10.0 / 17.0);
+  vec2 tA = ripple(uvA - adv * p0) * w0 + ripple(uvA - adv * p1 + 0.37) * (1.0 - w0);
+  vec2 nA = across * tA.x + along * tA.y;
   // wind ripples, not advected
   vec2 nB = ripple(wp.xz / 3.2 + uWind.xy * uTime * 0.08 + vec2(0.13, 0.71));
   // a slow broad swell
@@ -198,6 +207,12 @@ void main() {
     }
   }
 
+  // flecks of foam and silt riding the current, thickest in the slack water by the banks
+  vec2 fq = vec2(fp.x * 0.9, fp.y * 0.22);
+  float fa = smoothstep(0.74, 0.92, vnoise(fq - vec2(0.0, spd * 2.2 * p0)));
+  float fb = smoothstep(0.74, 0.92, vnoise(fq - vec2(0.0, spd * 2.2 * p1) + 3.7));
+  foam += (fa * w0 + fb * (1.0 - w0)) * smoothstep(3.5, 0.6, depth) * 0.35 * far;
+
   vec3 N = normalize(vec3(-slope.x, 1.0, -slope.y));
   float NdV = max(dot(N, V), 0.0);
   float F = 0.02 + 0.98 * pow(1.0 - NdV, 5.0);
@@ -207,13 +222,12 @@ void main() {
   vec2 ruv = rc.xy / rc.w + N.xz * 0.05 / (1.0 + dist * 0.02);
   vec3 refl = texture2D(tRefl, clamp(ruv, vec2(0.001), vec2(0.999))).rgb;
 
-  // silt-laden river: an olive-brown body, lit by the sky and a little sun
+  // Premultiplied: the surface reflects F of the light and lets the rest through to the riverbed, which
+  // tints itself with the silty water it is seen through (see underwater()). Shallows show their bed.
   float keyUp = max(uKeyDir.y, 0.0);
   vec3 light = uAmb + uKeyColor * keyUp * 0.45;
-  vec3 body = uWaterCol * light * 0.3183;
-  vec3 bed = vec3(0.13, 0.11, 0.075) * light * 0.3183;
-  body = mix(body, bed, exp(-depth * 1.1) * 0.6);
-  vec3 col = mix(body, refl, F);
+  vec3 col = refl * F;
+  float alpha = F;
 
   // sun (or moon) glitter
   vec3 H = normalize(uKeyDir + V);
@@ -224,10 +238,13 @@ void main() {
   float shore = smoothstep(0.5, 0.06, depth) * smoothstep(0.0, 0.04, depth);
   foam += shore * smoothstep(0.35, 0.8, vnoise(wp.xz * 0.8 + vec2(uTime * 0.25, -uTime * 0.1)));
   vec3 foamCol = vec3(0.62, 0.58, 0.5) * light * 0.3183;
-  col = mix(col, foamCol, clamp(foam, 0.0, 1.0) * 0.55);
+  float fA = clamp(foam, 0.0, 1.0) * 0.55;
+  col = col * (1.0 - fA) + foamCol * fA;
+  alpha = alpha * (1.0 - fA) + fA;
 
-  col = applyAtmosphere(col, wp);
-  gl_FragColor = vec4(col, 1.0);
+  // fog the premultiplied colour as if it were opaque, then weight it back by its coverage
+  col = applyAtmosphere(col / max(alpha, 1e-3), wp) * alpha;
+  gl_FragColor = vec4(col, alpha);
 }
 `;
 
@@ -252,11 +269,15 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
       tField: { value: field.texture },
       uField: { value: field.bounds },
       uBoat: { value: boat },
-      uWaterCol: { value: color },
       uAmb: { value: ambient },
     },
     vertexShader: VERT,
     fragmentShader: FRAG,
+    transparent: true,
+    blending: CustomBlending,
+    blendEquation: AddEquation,
+    blendSrc: OneFactor,
+    blendDst: OneMinusSrcAlphaFactor,
   });
   const SZ = WORLD_Z0 - WORLD_Z1;
   const geometry = new PlaneGeometry(1400, SZ, 8, 32);
@@ -264,6 +285,8 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
   const mesh = new Mesh(geometry, material);
   mesh.position.set(0, 0, (WORLD_Z0 + WORLD_Z1) / 2);
   mesh.layers.set(LAYER_WATER);
+  // first of the see-through things, so fireflies and motes over the river draw on top of it
+  mesh.renderOrder = -1;
   mesh.name = 'water';
   return { mesh, boat, color, ambient };
 }

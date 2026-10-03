@@ -22,6 +22,8 @@ export const G = {
   uFogFalloff: { value: 0.06 },
   uMist: { value: 0.004 },
   uNight: { value: 0 },
+  /** Light scattered back by the silty water body; anything far enough under the surface takes this colour. */
+  uWaterBody: { value: new Color() },
   /** xy: wind direction, z: strength. */
   uWind: { value: new Vector4(0.55, -0.83, 1, 0) },
 };

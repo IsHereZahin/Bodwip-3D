@@ -3,6 +3,7 @@ import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
 import { mixRgb, rgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
+import type { GroundSet } from '../render/surfaces';
 import {
   WORLD_U,
   WORLD_Z0,
@@ -48,38 +49,69 @@ function columnOffsets(): number[] {
   return [...far.map((v) => -v).reverse(), ...near, ...far];
 }
 
-function vertexColor(x: number, z: number, u: number, h: number): { color: RGB; zone: number } {
+/**
+ * What covers the ground at a point: the painted colour, the paddy zone, and the weights of the photo
+ * layers (grass, dirt, sand, and whether pebbles may gather here; mud takes whatever is left).
+ * The terrain mesh and the near-field grass both read it, so grass grows where the ground is grassy.
+ */
+export interface Cover {
+  color: RGB;
+  zone: number;
+  grass: number;
+  dirt: number;
+  sand: number;
+  pebbles: number;
+}
+
+function cover(x: number, z: number, u: number, h: number): Cover {
   const ch = charHeight(z, u);
   if (ch >= h - 0.02 && ch > -1.5) {
     const color =
       h < -0.1
         ? mixRgb(COLORS.bedDeep, COLORS.sandWet, smoothstep(-1.8, -0.1, h))
         : mixRgb(COLORS.sandWet, COLORS.sand, smoothstep(0.0, 0.55, h));
-    return { color, zone: 0 };
+    return { color, zone: 0, grass: 0, dirt: 0, sand: 1, pebbles: 0 };
   }
-  if (h < -0.15) return { color: mixRgb(COLORS.bedDeep, COLORS.wetMud, smoothstep(-4, -0.15, h)), zone: 0 };
+  if (h < -0.15) {
+    const color = mixRgb(COLORS.bedDeep, COLORS.wetMud, smoothstep(-4, -0.15, h));
+    return { color, zone: 0, grass: 0, dirt: 0, sand: 0, pebbles: h > -1.3 ? 1 : 0 };
+  }
 
   const land = landLevel(x, z);
   const top = smoothstep(land - 0.8, land - 0.1, h);
   const mud = mixRgb(COLORS.wetMud, COLORS.dryMud, smoothstep(-0.1, 1.0, h));
   let ground = mixRgb(COLORS.grassA, COLORS.grassB, fbm(x * 0.012, z * 0.012, 3, 21));
-  ground = mixRgb(ground, COLORS.grassDry, smoothstep(0.6, 0.8, fbm(x * 0.004, z * 0.004, 2, 33)));
+  const dry = smoothstep(0.6, 0.8, fbm(x * 0.004, z * 0.004, 2, 33));
+  ground = mixRgb(ground, COLORS.grassDry, dry);
   const vd = villageDistance(x, z);
-  ground = mixRgb(ground, COLORS.dust, smoothstep(1.0, 0.35, vd) * 0.6);
+  const yard = smoothstep(1.0, 0.35, vd);
+  ground = mixRgb(ground, COLORS.dust, yard * 0.6);
   const side = u >= 0 ? 1 : -1;
   const inland = Math.abs(u) - edgeHalfWidth(z, side);
   const fields = smoothstep(0.3, 0.42, fbm(x * 0.0025 + 5, z * 0.0025, 2, 44));
   const zone = top * smoothstep(38, 75, inland) * smoothstep(1.25, 1.9, vd) * fields;
-  return { color: mixRgb(mud, ground, top), zone };
+  // trodden earth round the houses, and bare patches where the grass has dried out
+  const dirt = Math.min(1, yard * 0.9 + dry * 0.35 + 0.25 * smoothstep(0.62, 0.78, fbm(x * 0.05, z * 0.05, 2, 71)));
+  // pebbles only along the river; the ponds keep muddy banks
+  const pebbles = (1 - top) * smoothstep(30, 14, inland);
+  return { color: mixRgb(mud, ground, top), zone, grass: top * (1 - dirt), dirt: top * dirt, sand: 0, pebbles };
 }
 
-export function buildTerrain(): Group {
+/** Ground cover at a point of the world (see `Cover`), with the terrain height there. */
+export function groundAt(x: number, z: number): Cover & { h: number } {
+  const h = terrainHeight(x, z);
+  return { ...cover(x, z, x - riverX(z), h), h };
+}
+
+/** `ground`: the photo layers; without them the terrain keeps its painted colours. */
+export function buildTerrain(ground: GroundSet | null): Group {
   const cols = columnOffsets();
   const C = cols.length;
   const R = Math.ceil((WORLD_Z0 - WORLD_Z1) / Z_STEP) + 1;
   const pos = new Float32Array(R * C * 3);
   const col = new Float32Array(R * C * 3);
   const zone = new Float32Array(R * C);
+  const splat = new Float32Array(R * C * 4);
 
   for (let r = 0; r < R; r++) {
     const z = Math.max(WORLD_Z0 - r * Z_STEP, WORLD_Z1);
@@ -92,11 +124,12 @@ export function buildTerrain(): Group {
       pos[i * 3] = x;
       pos[i * 3 + 1] = h;
       pos[i * 3 + 2] = z;
-      const vc = vertexColor(x, z, u, h);
+      const vc = cover(x, z, u, h);
       col[i * 3] = vc.color[0];
       col[i * 3 + 1] = vc.color[1];
       col[i * 3 + 2] = vc.color[2];
       zone[i] = vc.zone;
+      splat.set([vc.grass, vc.dirt, vc.sand, vc.pebbles], i * 4);
     }
   }
 
@@ -130,6 +163,7 @@ export function buildTerrain(): Group {
 
   const material = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.94, metalness: 0 }), {
     terrain: true,
+    splat: ground ?? undefined,
   });
   const group = new Group();
   group.name = 'terrain';
@@ -144,6 +178,7 @@ export function buildTerrain(): Group {
     g.setAttribute('normal', new BufferAttribute(nrm.slice(from * 3, to * 3), 3));
     g.setAttribute('color', new BufferAttribute(col.slice(from * 3, to * 3), 3));
     g.setAttribute('aZone', new BufferAttribute(zone.slice(from, to), 1));
+    g.setAttribute('aSplat', new BufferAttribute(splat.slice(from * 4, to * 4), 4));
     const idx = new Uint32Array((rows - 1) * (C - 1) * 6);
     let k = 0;
     for (let r = 0; r < rows - 1; r++) {

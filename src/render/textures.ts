@@ -94,23 +94,48 @@ function leafPath(ctx: Ctx, len: number, wid: number): void {
   ctx.fill();
 }
 
-/** A round cluster of leaves for canopy cards. */
+/** One half of a leaf, either side of the midrib (`side` ±1). */
+function halfLeafPath(ctx: Ctx, len: number, wid: number, side: number): void {
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.quadraticCurveTo(len * 0.45, side * wid, len, 0);
+  ctx.closePath();
+  ctx.fill();
+}
+
+/** A tangent-space normal as a CSS colour (canvas y runs down the texture, so it is v negated). */
+function normalCss(x: number, yDown: number, z: number): string {
+  const l = Math.hypot(x, yDown, z);
+  return `rgb(${Math.round((x / l * 0.5 + 0.5) * 255)},${Math.round((-yDown / l * 0.5 + 0.5) * 255)},${Math.round((z / l * 0.5 + 0.5) * 255)})`;
+}
+
+/**
+ * A round cluster of leaves for canopy cards, with a matching normal map: every leaf tilts its own
+ * way and folds along its midrib, so a crown catches the light leaf by leaf rather than card by card.
+ */
 export function leafClusterTexture(
   seed: number,
   palette: readonly string[],
   leaf: { count: number; len: [number, number]; width: number },
-): DataTexture {
+): { map: DataTexture; normal: DataTexture } {
   const S = 256;
   const rng = new Rng(seed);
+  const normals = paint(S, S, (n) => {
+    n.fillStyle = normalCss(0, 0, 1);
+    n.fillRect(0, 0, S, S);
+  });
   const ctx = paint(S, S, (c) => {
     for (let pass = 0; pass < 2; pass++) {
       for (let i = 0; i < leaf.count * (pass === 0 ? 0.5 : 1); i++) {
         const a = rng.range(0, Math.PI * 2);
         const r = Math.sqrt(rng.next()) * S * 0.33;
         const len = rng.range(leaf.len[0], leaf.len[1]) * S;
+        const rot = a + rng.range(-0.7, 0.7);
+        const x = S / 2 + Math.cos(a) * r;
+        const y = S / 2 + Math.sin(a) * r;
         c.save();
-        c.translate(S / 2 + Math.cos(a) * r, S / 2 + Math.sin(a) * r);
-        c.rotate(a + rng.range(-0.7, 0.7));
+        c.translate(x, y);
+        c.rotate(rot);
         // first pass: darker leaves deeper in the clump
         c.fillStyle = pass === 0 ? palette[0] : rng.pick(palette);
         leafPath(c, len, len * leaf.width);
@@ -121,10 +146,25 @@ export function leafClusterTexture(
         c.lineTo(len * 0.9, 0);
         c.stroke();
         c.restore();
+        // the same leaf in the normal map: a random tilt, and each half turned away from the midrib
+        const tx = rng.range(-0.55, 0.55);
+        const ty = rng.range(-0.55, 0.55);
+        const fold = 0.45;
+        normals.save();
+        normals.translate(x, y);
+        normals.rotate(rot);
+        for (const side of [-1, 1]) {
+          // the fold leans the half's normal across the leaf: (−sin, cos) of the leaf's angle on canvas
+          const fx = -Math.sin(rot) * side * fold;
+          const fy = Math.cos(rot) * side * fold;
+          normals.fillStyle = normalCss(tx + fx, ty + fy, 1);
+          halfLeafPath(normals, len, len * leaf.width, side);
+        }
+        normals.restore();
       }
     }
   });
-  return toTexture(ctx, { bleed: true });
+  return { map: toTexture(ctx, { bleed: true }), normal: toTexture(normals, { data: true }) };
 }
 
 /** Coconut frond: u along the frond, v across it (rib at v = 0.5). */
@@ -253,13 +293,18 @@ export function grassTexture(seed: number): DataTexture {
   const S = 128;
   const rng = new Rng(seed);
   const ctx = paint(S, S, (c) => {
-    const greens = ['#4d6a24', '#5f7d2a', '#6f8a33', '#7f9240', '#94924a'];
-    for (let i = 0; i < 26; i++) {
-      const bx = S / 2 + rng.range(-14, 14);
-      const tx = bx + rng.range(-46, 46);
-      const ty = rng.range(4, S * 0.45);
-      const w = rng.range(2, 4);
-      c.fillStyle = rng.pick(greens);
+    // each blade dark at the root and bleached toward the tip, as in late-summer grass
+    const tips = ['#9aa64a', '#a9ad55', '#b8b060', '#8f9c44', '#c0a866'];
+    for (let i = 0; i < 40; i++) {
+      const bx = S / 2 + rng.range(-20, 20);
+      const tx = bx + rng.range(-50, 50);
+      const ty = rng.range(4, S * 0.5);
+      const w = rng.range(1.6, 3.4);
+      const g = c.createLinearGradient(0, S, 0, ty);
+      g.addColorStop(0, '#1c2a0d');
+      g.addColorStop(0.45, rng.pick(['#3e5a1c', '#4a6622', '#567028']));
+      g.addColorStop(1, rng.pick(tips));
+      c.fillStyle = g;
       c.beginPath();
       c.moveTo(bx - w, S);
       c.quadraticCurveTo((bx + tx) / 2 - w * 0.5, (S + ty) / 2, tx, ty);

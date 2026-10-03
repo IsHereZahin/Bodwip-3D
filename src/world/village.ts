@@ -41,6 +41,9 @@ export interface HutPlan {
   wall: RGB;
 }
 
+/** Each village's brick ghat: where its steps run down the bank (kept clear of grass). */
+export const GHATS: readonly { z: number; side: 1 | -1 }[] = VILLAGES.map((v) => ({ z: v.z + v.radius * 0.3, side: v.side }));
+
 /** Where the lift nets stand (also framed by the film tour). */
 export const LIFT_NETS: readonly { z: number; side: 1 | -1 }[] = [
   { z: -260, side: 1 },
@@ -333,7 +336,7 @@ export function buildVillages(huts: readonly HutPlan[]): Group {
       const z = c.z + Math.sin(a) * v.radius * 0.55;
       if (bankInfo(x, z).inland > 10 && !huts.some((h) => Math.hypot(h.x - x, h.z - z) < 7)) haystack(hay, x, z, rng, wood);
     }
-    ghat(walls, v.z + v.radius * 0.3, v.side);
+    ghat(walls, GHATS[i].z, v.side);
     mooredBoat(wood, v.z + v.radius * 0.3 + 6, v.side, rng);
     if (i % 2 === 0) mooredBoat(wood, v.z - v.radius * 0.4, v.side, rng);
   });

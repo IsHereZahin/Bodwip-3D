@@ -167,6 +167,14 @@ export class Environment {
 
     this.water.color.set(a.water).lerp(tmpB.set(b.water), t);
     this.water.ambient.copy(this.hemi.color).multiplyScalar(this.hemi.intensity * 1.6);
+    // what the silty water body sends back: lit by the sky and a little by the key light
+    const keyUp = Math.max(G.uKeyDir.value.y, 0);
+    G.uWaterBody.value
+      .copy(G.uKeyColor.value)
+      .multiplyScalar(keyUp * 0.45)
+      .add(this.water.ambient)
+      .multiply(this.water.color)
+      .multiplyScalar(1 / Math.PI);
   }
 
   /** Points the shadow at `focus`; returns true when the shadow map needs redrawing. */

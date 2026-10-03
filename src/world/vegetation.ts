@@ -1,4 +1,4 @@
-import { BufferGeometry, DoubleSide, Group, Matrix4, Mesh, MeshStandardMaterial, SphereGeometry, Vector3 } from 'three';
+import { BufferGeometry, DoubleSide, Group, Matrix4, Mesh, MeshStandardMaterial, SphereGeometry, Vector2, Vector3 } from 'three';
 import type { Texture } from 'three';
 import { LAYER_NO_REFLECT } from '../core/globals';
 import { smoothstep } from '../core/mathx';
@@ -7,6 +7,7 @@ import { Rng } from '../core/rng';
 import { MeshBuilder, card, rgb, scaleRgb, taperedTube, type RGB } from '../render/builder';
 import { instanced, type Placement } from '../render/instancing';
 import { patchMaterial } from '../render/patch';
+import type { Surfaces } from '../render/surfaces';
 import {
   bananaLeafTexture,
   grassTexture,
@@ -53,6 +54,8 @@ interface BroadleafOptions {
   cards: number;
   cardSize: number;
   tint: RGB;
+  /** Trunk colour; near white when a bark texture supplies the colour. */
+  bark: RGB;
 }
 
 function randomUnit(rng: Rng, out: Vector3): Vector3 {
@@ -74,7 +77,7 @@ function broadleaf(rng: Rng, o: BroadleafOptions): TreeParts {
     pts.push(new Vector3(lean.x * t * t, o.height * t, lean.z * t * t));
     radii.push(o.trunkR * (1 - 0.45 * t) * (i === 0 ? 1.3 : 1));
   }
-  taperedTube(wood, pts, radii, 7, BARK, 2);
+  taperedTube(wood, pts, radii, 7, o.bark, 2);
   const top = pts[5];
   const center = top.clone().add(new Vector3(0, o.crown * 0.5 * o.flat, 0));
   const lobes: { c: Vector3; r: number }[] = [];
@@ -89,7 +92,7 @@ function broadleaf(rng: Rng, o: BroadleafOptions): TreeParts {
   for (const l of lobes) {
     const mid = top.clone().lerp(l.c, 0.55);
     mid.y += 0.3;
-    taperedTube(wood, [top.clone(), mid, l.c.clone().lerp(mid, 0.35)], [radii[5] * 0.75, radii[5] * 0.45, 0.05], 5, BARK, 2);
+    taperedTube(wood, [top.clone(), mid, l.c.clone().lerp(mid, 0.35)], [radii[5] * 0.75, radii[5] * 0.45, 0.05], 5, o.bark, 2);
   }
   const dir = new Vector3();
   const jitter = new Vector3();
@@ -268,6 +271,58 @@ function bamboo(rng: Rng): TreeParts {
   return { wood: wood.build(), leaves: leaves.build() };
 }
 
+/** Joba (hibiscus) by the houses: a few stems, a rounded bush of glossy leaves, red flowers on its skin. */
+function hibiscus(rng: Rng): TreeParts {
+  const stems = new MeshBuilder();
+  const leaves = new MeshBuilder();
+  const h = rng.range(1.0, 1.6);
+  const r = rng.range(0.55, 0.85);
+  const center = new Vector3(0, h * 0.62, 0);
+  for (let i = 0; i < 4; i++) {
+    const a = rng.range(0, Math.PI * 2);
+    const top = center.clone().add(new Vector3(Math.cos(a) * r * 0.5, rng.range(-0.1, 0.25), Math.sin(a) * r * 0.5));
+    taperedTube(stems, [new Vector3(Math.cos(a) * 0.05, 0, Math.sin(a) * 0.05), top], [0.025, 0.012], 4, rgb('#5a4630'), 1);
+  }
+  const dir = new Vector3();
+  for (let k = 0; k < 26; k++) {
+    randomUnit(rng, dir);
+    dir.y = Math.abs(dir.y) * 0.8 - 0.1;
+    dir.normalize();
+    const p = center.clone().addScaledVector(dir, r * Math.cbrt(rng.range(0.35, 1))).setY(center.y + dir.y * r * 0.75);
+    const facing = dir.clone().add(randomUnit(rng, new Vector3()).multiplyScalar(0.6)).normalize();
+    const right = new Vector3().crossVectors(facing, Math.abs(facing.y) < 0.95 ? UP : new Vector3(1, 0, 0)).normalize();
+    const up = new Vector3().crossVectors(right, facing).normalize();
+    const s = rng.range(0.32, 0.45);
+    card(leaves, p, right.multiplyScalar(s), up.multiplyScalar(s), dir.clone().add(UP).normalize(), scaleRgb(WHITE, rng.range(0.8, 1.05)));
+  }
+  // flowers sit on the outside of the bush, facing out and up
+  const red = rgb('#c4161c');
+  const flowers = rng.int(16, 24);
+  for (let k = 0; k < flowers; k++) {
+    randomUnit(rng, dir);
+    dir.y = Math.abs(dir.y) * 0.7;
+    dir.normalize();
+    const at = center.clone().addScaledVector(dir, r * 1.02).setY(center.y + dir.y * r * 0.8);
+    const face = dir.clone().add(new Vector3(0, 0.5, 0)).normalize();
+    const u = new Vector3().crossVectors(face, UP).normalize();
+    const v = new Vector3().crossVectors(face, u).normalize();
+    const c = stems.vertex(at, face, 0.5, 0.5, rgb('#7a0a10'));
+    const rim = (ang: number, s: number) =>
+      at.clone().addScaledVector(u, Math.cos(ang) * s).addScaledVector(v, Math.sin(ang) * s).addScaledVector(face, s * 0.25);
+    for (let q = 0; q < 5; q++) {
+      const a0 = (q / 5) * Math.PI * 2;
+      const p0 = stems.vertex(rim(a0 - 0.55, 0.085), face, 0, 0, red);
+      const p1 = stems.vertex(rim(a0, 0.11), face, 0, 0, scaleRgb(red, 1.15));
+      const p2 = stems.vertex(rim(a0 + 0.55, 0.085), face, 0, 0, red);
+      stems.tri(c, p0, p1);
+      stems.tri(c, p1, p2);
+    }
+    // the long staminal column with its yellow tip
+    taperedTube(stems, [at.clone(), at.clone().addScaledVector(face, 0.08)], [0.005, 0.004], 3, rgb('#f2c230'), 1);
+  }
+  return { wood: stems.build(), leaves: leaves.build() };
+}
+
 /** Upright cards rooted at the origin: kash plumes or grass blades. */
 function tuft(rng: Rng, count: [number, number], height: [number, number], width: number, plumeWiden: number): BufferGeometry {
   const b = new MeshBuilder();
@@ -341,7 +396,8 @@ function at(x: number, z: number, rng: Rng, s: number, sink = 0.15): Placement {
 
 // ---------- assembly ----------
 
-export function buildVegetation(huts: readonly HutPlan[]): Group {
+/** `bark`: the photo bark for broadleaf trunks; without it they keep a painted brown. */
+export function buildVegetation(huts: readonly HutPlan[], bark: Surfaces['bark']): Group {
   const rng = new Rng(7);
   const group = new Group();
   group.name = 'vegetation';
@@ -349,9 +405,10 @@ export function buildVegetation(huts: readonly HutPlan[]): Group {
   for (const h of huts) occ.add(h.x, h.z, Math.max(h.w, h.l) * 0.75 + 1.5);
 
   const tex = {
-    mango: leafClusterTexture(11, ['#2a4319', '#35521f', '#426026', '#4f6e2b', '#5f7d31'], { count: 120, len: [0.09, 0.15], width: 0.42 }),
-    rain: leafClusterTexture(12, ['#33501c', '#3f5f22', '#4e7029', '#5d7f2f', '#6c8a36'], { count: 170, len: [0.05, 0.09], width: 0.5 }),
+    mango: leafClusterTexture(11, ['#2a4319', '#35521f', '#426026', '#4f6e2b', '#5f7d31'], { count: 150, len: [0.08, 0.14], width: 0.4 }),
+    rain: leafClusterTexture(12, ['#33501c', '#3f5f22', '#4e7029', '#5d7f2f', '#6c8a36'], { count: 210, len: [0.045, 0.085], width: 0.5 }),
     bamboo: leafClusterTexture(13, ['#4e6a24', '#5f7d2b', '#6f8c33', '#7f983c'], { count: 70, len: [0.18, 0.3], width: 0.16 }),
+    hibiscus: leafClusterTexture(19, ['#1d3812', '#264818', '#30571d', '#3b6624'], { count: 80, len: [0.12, 0.18], width: 0.6 }),
     frond: palmFrondTexture(14),
     banana: bananaLeafTexture(15),
     kash: kashTexture(16),
@@ -359,12 +416,32 @@ export function buildVegetation(huts: readonly HutPlan[]): Group {
     bark: palmBarkTexture(18),
   };
 
-  const leafMat = (map: Texture, wind = 0.22, windHeight = 10) =>
+  const leafMat = (set: { map: Texture; normal?: Texture }, wind = 0.22, windHeight = 10, roughness = 0.78) =>
     patchMaterial(
-      new MeshStandardMaterial({ map, vertexColors: true, alphaTest: 0.42, alphaToCoverage: true, side: DoubleSide, roughness: 0.78 }),
+      new MeshStandardMaterial({
+        map: set.map,
+        normalMap: set.normal ?? null,
+        normalScale: new Vector2(0.9, 0.9),
+        vertexColors: true,
+        alphaTest: 0.42,
+        alphaToCoverage: true,
+        side: DoubleSide,
+        roughness,
+      }),
       { wind, windHeight, translucency: 1, foliage: true },
     );
-  const woodMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.92 }), { grime: 0.5 });
+  const woodMat = patchMaterial(
+    new MeshStandardMaterial({ map: bark?.color ?? null, normalMap: bark?.normal ?? null, vertexColors: true, roughness: 0.92 }),
+    { grime: bark ? 0.2 : 0.5 },
+  );
+  const culmMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.6 }), { grime: 0.4 });
+  const flowerMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.6, side: DoubleSide }), {
+    translucency: 1.2,
+    wind: 0.05,
+    windHeight: 1.5,
+  });
+  // the photo bark brings its own colour; tint it toward the dark grey of mango bark
+  const barkTint = bark ? rgb('#b4aa9c') : BARK;
   const palmWood = patchMaterial(new MeshStandardMaterial({ map: tex.bark, vertexColors: true, roughness: 0.9 }), {
     grime: 0.3,
     wind: 0.14,
@@ -374,33 +451,35 @@ export function buildVegetation(huts: readonly HutPlan[]): Group {
     mango: leafMat(tex.mango),
     rain: leafMat(tex.rain),
     bamboo: leafMat(tex.bamboo, 0.45, 12),
-    frond: leafMat(tex.frond, 0.14, 14),
-    banana: leafMat(tex.banana, 0.12, 3),
+    frond: leafMat({ map: tex.frond }, 0.14, 14),
+    banana: leafMat({ map: tex.banana }, 0.12, 3),
+    hibiscus: leafMat(tex.hibiscus, 0.06, 1.5, 0.5),
     kash: patchMaterial(
       new MeshStandardMaterial({ map: tex.kash, vertexColors: true, alphaTest: 0.42, alphaToCoverage: true, side: DoubleSide, roughness: 0.85 }),
       { wind: 0.35, windHeight: 2.2, translucency: 2.2, foliage: true },
     ),
-    grass: leafMat(tex.grass, 0.15, 0.8),
+    grass: leafMat({ map: tex.grass }, 0.15, 0.8),
   };
 
   // a few shapes per species; instances vary them further by yaw and scale
   const variants = <T>(n: number, make: (r: Rng) => T): T[] => Array.from({ length: n }, (_, i) => make(new Rng(100 + i * 31)));
   const mango = variants(3, (r) =>
-    broadleaf(r, { height: r.range(2.6, 3.6), trunkR: 0.3, crown: r.range(3.6, 4.6), flat: 0.85, lobes: 5, cards: 95, cardSize: 1.25, tint: WHITE }),
+    broadleaf(r, { height: r.range(2.6, 3.6), trunkR: 0.3, crown: r.range(3.6, 4.6), flat: 0.85, lobes: 6, cards: 125, cardSize: 1.1, tint: WHITE, bark: barkTint }),
   );
   const rainTree = variants(3, (r) =>
-    broadleaf(r, { height: r.range(4.5, 5.5), trunkR: 0.42, crown: r.range(6, 7.5), flat: 0.45, lobes: 7, cards: 150, cardSize: 1.5, tint: rgb('#e8f0d8') }),
+    broadleaf(r, { height: r.range(4.5, 5.5), trunkR: 0.42, crown: r.range(6, 7.5), flat: 0.45, lobes: 8, cards: 190, cardSize: 1.35, tint: rgb('#e8f0d8'), bark: barkTint }),
   );
   const farTree = variants(2, (r) =>
-    broadleaf(r, { height: 4, trunkR: 0.4, crown: 5.5, flat: 0.75, lobes: 4, cards: 34, cardSize: 2.6, tint: rgb('#c8d0b8') }),
+    broadleaf(r, { height: 4, trunkR: 0.4, crown: 5.5, flat: 0.75, lobes: 4, cards: 34, cardSize: 2.6, tint: rgb('#c8d0b8'), bark: barkTint }),
   );
+  const joba = variants(3, hibiscus);
   const coconut = variants(3, (r) => palm(r, 'coconut'));
   const supari = variants(3, (r) => palm(r, 'supari'));
   const date = variants(2, (r) => palm(r, 'date'));
   const bananas = variants(3, banana);
   const bamboos = variants(2, bamboo);
   const kash = variants(3, (r) => tuft(r, [8, 13], [1.5, 2.5], 0.17, 1.6));
-  const grass = variants(3, (r) => tuft(r, [6, 9], [0.35, 0.75], 0.22, 1.2));
+  const grass = variants(3, (r) => tuft(r, [7, 10], [0.4, 0.8], 0.24, 1.2));
 
   type Bucket = { parts: TreeParts[]; wood: MeshStandardMaterial; leaves: MeshStandardMaterial; items: Placement[][] };
   const bucket = (parts: TreeParts[], leaves: MeshStandardMaterial, wood = woodMat): Bucket => ({
@@ -417,7 +496,8 @@ export function buildVegetation(huts: readonly HutPlan[]): Group {
     supari: bucket(supari, mats.frond, palmWood),
     date: bucket(date, mats.frond, palmWood),
     banana: bucket(bananas, mats.banana),
-    bamboo: bucket(bamboos, mats.bamboo),
+    bamboo: bucket(bamboos, mats.bamboo, culmMat),
+    joba: bucket(joba, mats.hibiscus, flowerMat),
   };
   const put = (b: Bucket, p: Placement) => b.items[rng.int(0, b.items.length - 1)].push(p);
 
@@ -441,6 +521,17 @@ export function buildVegetation(huts: readonly HutPlan[]): Group {
     tryPlace(B.coconut, 10, 0.3, 1.2, 2.5, [0.9, 1.15]);
     tryPlace(B.supari, 12, 0.1, 0.9, 1.6, [0.85, 1.15]);
     tryPlace(B.banana, 12, 0.05, 0.8, 1.6, [0.8, 1.2]);
+    // a joba bush or two beside the houses, by the door or at the edge of the yard
+    for (const h of huts) {
+      if (Math.hypot(h.x - c.x, h.z - c.z) > v.radius * 1.3 || rng.next() < 0.45) continue;
+      const a = rng.range(0, Math.PI * 2);
+      const d = Math.max(h.l, h.w) * 0.5 + rng.range(1.2, 2.4);
+      const x = h.x + Math.cos(a) * d;
+      const z = h.z + Math.sin(a) * d;
+      // clear of every hut's walls (the huts' own clearance rings are meant for trees, not bushes)
+      if (!onDryLand(x, z, 3) || huts.some((o) => Math.hypot(o.x - x, o.z - z) < Math.max(o.l, o.w) * 0.5 + 0.8)) continue;
+      put(B.joba, at(x, z, rng, rng.range(0.85, 1.2), 0.05));
+    }
     // bamboo groves sit at the landward edge of the village
     for (let k = 0; k < 2; k++) {
       const x = c.x + v.side * v.radius * rng.range(0.8, 1.05);
@@ -526,11 +617,13 @@ export function buildVegetation(huts: readonly HutPlan[]): Group {
   // grass tufts on the bank tops and round the villages
   const grassItems: Placement[][] = grass.map(() => []);
   for (const side of [-1, 1] as const) {
-    for (let z = WORLD_Z0; z > WORLD_Z1; z -= 1.6) {
-      const inland = rng.range(0.5, 18);
-      const x = riverX(z) + side * (edgeHalfWidth(z, side) + 3 + inland);
-      if (!onDryLand(x, z, 0) || rng.next() < 0.35) continue;
-      grassItems[rng.int(0, grass.length - 1)].push(at(x, z, rng, rng.range(0.8, 1.3), 0.05));
+    for (let z = WORLD_Z0; z > WORLD_Z1; z -= 1.1) {
+      // thickest along the lip of the bank, where it shows from the river
+      for (const inland of [rng.range(0.5, 4), rng.range(2, 18)]) {
+        const x = riverX(z) + side * (edgeHalfWidth(z, side) + 3 + inland);
+        if (!onDryLand(x, z, 0) || rng.next() < 0.3) continue;
+        grassItems[rng.int(0, grass.length - 1)].push(at(x, z, rng, rng.range(0.8, 1.35), 0.05));
+      }
     }
   }
   grass.forEach(

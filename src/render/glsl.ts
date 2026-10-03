@@ -16,6 +16,7 @@ uniform float uFogDensity;
 uniform float uFogFalloff;
 uniform float uMist;
 uniform float uNight;
+uniform vec3 uWaterBody;
 uniform vec4 uWind;
 
 float hash12(vec2 p) {
@@ -64,6 +65,14 @@ vec3 hazeColor(vec3 rd) {
   float az = (hl > 1e-4 && sl > 1e-4) ? max(dot(rd.xz / hl, uSunDir.xz / sl), 0.0) : 0.0;
   float mu = max(dot(rd, uSunDir), 0.0);
   return uFogColor + uGlow * (0.3 * pow(az, 3.0) + 0.55 * pow(az, 14.0)) + uSunColor * 0.04 * pow(mu, 24.0);
+}
+
+// Seen from above the river, anything under the surface fades into the silty water body with the
+// length of water the eye looks through it; the surface itself adds only reflection, glitter and foam
+vec3 underwater(vec3 col, vec3 wpos) {
+  if (wpos.y >= 0.0 || uReflPass > 0.5 || uCamPos.y <= 0.0) return col;
+  float path = length(wpos - uCamPos) * -wpos.y / (uCamPos.y - wpos.y);
+  return mix(uWaterBody, col * vec3(0.78, 0.86, 0.72), exp(-path * 2.8));
 }
 
 // Aerial perspective: analytic exponential height fog plus a thin river mist that hugs the water
