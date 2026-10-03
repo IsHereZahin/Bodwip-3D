@@ -47,20 +47,6 @@ export interface HutPlan {
 /** Each village's brick ghat: where its steps run down the bank (kept clear of grass). */
 export const GHATS: readonly { z: number; side: 1 | -1 }[] = VILLAGES.map((v) => ({ z: v.z + v.radius * 0.3, side: v.side }));
 
-/** Where the lift nets stand (also framed by the film tour). */
-export const LIFT_NETS: readonly { z: number; side: 1 | -1 }[] = [
-  { z: -260, side: 1 },
-  { z: -980, side: -1 },
-  { z: -1580, side: 1 },
-  { z: -2240, side: 1 },
-  { z: -2620, side: -1 },
-];
-
-/** Centre of a lift net's square, out over the water. */
-export function liftNetCenter(net: { z: number; side: 1 | -1 }): Vector3 {
-  return new Vector3(riverX(net.z) + net.side * (edgeHalfWidth(net.z, net.side) - 9), 1.1, net.z);
-}
-
 const WALLS: RGB[] = [rgb('#a88458'), rgb('#b8946a'), rgb('#9a7a4a'), rgb('#c4b69a')];
 
 /** Huts for every village; vegetation keeps clear of them. Deterministic. */
@@ -255,49 +241,6 @@ function mooredBoat(b: MeshBuilder, z: number, side: 1 | -1, rng: Rng): void {
   b.add(hull.build(), m, rgb('#3a2c20'));
 }
 
-/** Bhesal jal: a square lift net hung from crossed bamboo arms at the end of a long lever. */
-function liftNet(wood: MeshBuilder, net: MeshBuilder, z: number, side: 1 | -1): void {
-  const we = edgeHalfWidth(z, side);
-  const cx = riverX(z);
-  const pivot = new Vector3(cx + side * (we + 6), 0, z);
-  pivot.y = terrainHeight(pivot.x, pivot.z) + 0.6;
-  const tip = new Vector3(cx + side * (we - 7), 5.2, z);
-  const center = liftNetCenter({ z, side });
-  const bamboo = rgb('#8c7c50');
-  taperedTube(wood, [pivot, pivot.clone().lerp(tip, 0.5).add(new Vector3(0, 0.4, 0)), tip], [0.09, 0.075, 0.06], 6, bamboo);
-  // A-frame support near the water's edge
-  const foot = new Vector3(cx + side * (we + 1), 0, z);
-  foot.y = terrainHeight(foot.x, foot.z);
-  const head = pivot.clone().lerp(tip, 0.45);
-  for (const o of [-1.2, 1.2]) taperedTube(wood, [foot.clone().add(new Vector3(0, 0, o)), head], [0.07, 0.05], 5, bamboo);
-  const corners: Vector3[] = [];
-  for (const [a, c] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) corners.push(center.clone().add(new Vector3(a * 3.6, -0.2, c * 3.6)));
-  for (const c of corners) {
-    const mid = tip.clone().lerp(c, 0.5);
-    mid.add(c.clone().sub(center).setY(0).multiplyScalar(0.22));
-    taperedTube(wood, [tip, mid, c], [0.05, 0.045, 0.035], 5, bamboo);
-  }
-  // the net sags between the corners, its belly just under the surface
-  const N = 8;
-  const start = net.vertexCount;
-  const up = new Vector3(0, 1, 0);
-  for (let i = 0; i <= N; i++) {
-    for (let j = 0; j <= N; j++) {
-      const a = i / N;
-      const c = j / N;
-      const p = corners[0].clone().lerp(corners[1], a).lerp(corners[3].clone().lerp(corners[2], a), c);
-      p.y -= Math.sin(Math.PI * a) * Math.sin(Math.PI * c) * 1.4;
-      net.vertex(p, up, a * 3, c * 3);
-    }
-  }
-  for (let i = 0; i < N; i++) {
-    for (let j = 0; j < N; j++) {
-      const a = start + i * (N + 1) + j;
-      net.quad(a, a + 1, a + N + 2, a + N + 1);
-    }
-  }
-}
-
 /** A row of bamboo stakes in the shallows with a net strung between them. */
 function stakeRow(wood: MeshBuilder, net: MeshBuilder, start: Vector3, dir: Vector3, count: number, rng: Rng): void {
   const tops: Vector3[] = [];
@@ -326,6 +269,8 @@ export function buildVillages(huts: readonly HutPlan[]): Group {
   const thatchRoofs = new MeshBuilder();
   const tinRoofs = new MeshBuilder();
   const wood = new MeshBuilder();
+  /** Boats tied up at the banks and in the khals: they ride the season's water. */
+  const afloat = new MeshBuilder();
   const hay = new MeshBuilder();
   const nets = new MeshBuilder();
 
@@ -340,11 +285,9 @@ export function buildVillages(huts: readonly HutPlan[]): Group {
       if (bankInfo(x, z).inland > 10 && !nearBackwater(x, z, 6) && !huts.some((h) => Math.hypot(h.x - x, h.z - z) < 7)) haystack(hay, x, z, rng, wood);
     }
     ghat(walls, GHATS[i].z, v.side);
-    mooredBoat(wood, v.z + v.radius * 0.3 + 6, v.side, rng);
-    if (i % 2 === 0) mooredBoat(wood, v.z - v.radius * 0.4, v.side, rng);
+    mooredBoat(afloat, v.z + v.radius * 0.3 + 6, v.side, rng);
+    if (i % 2 === 0) mooredBoat(afloat, v.z - v.radius * 0.4, v.side, rng);
   });
-
-  for (const n of LIFT_NETS) liftNet(wood, nets, n.z, n.side);
 
   // a dinghy tied up in each khal, against one bank
   KHALS.forEach((_, k) => {
@@ -358,7 +301,7 @@ export function buildVillages(huts: readonly HutPlan[]): Group {
       new Quaternion().setFromEuler(new Euler(rng.range(-0.03, 0.03), c.heading + rng.range(-0.15, 0.15), side * rng.range(0.02, 0.06))),
       new Vector3(1, 1, 1),
     );
-    wood.add(hull.build(), m, rgb('#3a2c20'));
+    afloat.add(hull.build(), m, rgb('#3a2c20'));
   });
 
   for (const ch of CHARS) {
@@ -396,6 +339,14 @@ export function buildVillages(huts: readonly HutPlan[]): Group {
   add(thatchRoofs, thatchMat);
   add(tinRoofs, tinMat);
   add(wood, woodMat);
+  // moored boats rise and fall with the water; when it drops they settle on the mud by the bank
+  add(
+    afloat,
+    patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), {
+      grime: 0.35,
+      vertex: { key: 'moored', pars: '', code: 'transformed.y += max(uWaterLevel, -0.25);' },
+    }),
+  );
   add(hay, hayMat);
   add(nets, netMat, false);
   return group;

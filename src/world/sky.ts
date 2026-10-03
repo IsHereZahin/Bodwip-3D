@@ -1,4 +1,4 @@
-import { BackSide, Color, Mesh, ShaderMaterial, SphereGeometry, Vector3 } from 'three';
+import { BackSide, Color, Mesh, ShaderMaterial, SphereGeometry, Vector2, Vector3 } from 'three';
 import { G } from '../core/globals';
 import { GLSL_COMMON } from '../render/glsl';
 
@@ -19,6 +19,7 @@ uniform vec3 uHorizon;
 uniform vec3 uMoonDir;
 uniform float uMoonGlow;
 uniform float uCloud;
+uniform vec2 uCloudShift;
 varying vec3 vWorld;
 
 // angular radius of the moon's disc, drawn about five times life size
@@ -93,7 +94,7 @@ void main() {
   vec3 cloudCol = vec3(0.0);
   if (y > 0.0) {
     vec2 p = rd.xz / (y + 0.09);
-    vec2 q = p * 0.5 + uWind.xy * uTime * 0.0035;
+    vec2 q = p * 0.5 + uCloudShift;
     float d = fbm5(q) * 0.8 + fbm3(q * 3.3 + 7.0) * 0.2;
     cov = smoothstep(1.0 - uCloud, 1.0 - uCloud + 0.26, d);
     vec2 sdir = normalize(uSunDir.xz + vec2(1e-5));
@@ -106,6 +107,8 @@ void main() {
     float edge = cov * (1.0 - cov) * 4.0;
     cloudCol += uSunColor * 0.5 * pow(mup, 10.0) * (edge * 0.8 + 0.25);
     cloudCol += uKeyColor * 0.12 * uNight;
+    // rain cloud: a low, dark, even grey
+    cloudCol *= 1.0 - 0.45 * uOvercast;
     cov *= smoothstep(0.0, 0.14, y) * 0.95;
   }
   col += disc * (1.0 - cov) + night * (1.0 - cov * 0.9);
@@ -129,6 +132,8 @@ export interface Sky {
   /** 0..1: how much the moon's halo shows (its phase, and whether it is up). */
   moonGlow: { value: number };
   cloud: { value: number };
+  /** How far the clouds have drifted on the wind (in their own units). */
+  shift: Vector2;
 }
 
 export function buildSky(): Sky {
@@ -137,8 +142,17 @@ export function buildSky(): Sky {
   const moonDir = new Vector3(0, 1, 0);
   const moonGlow = { value: 0 };
   const cloud = { value: 0.44 };
+  const shift = new Vector2();
   const material = new ShaderMaterial({
-    uniforms: { ...G, uZenith: { value: zenith }, uHorizon: { value: horizon }, uMoonDir: { value: moonDir }, uMoonGlow: moonGlow, uCloud: cloud },
+    uniforms: {
+      ...G,
+      uZenith: { value: zenith },
+      uHorizon: { value: horizon },
+      uMoonDir: { value: moonDir },
+      uMoonGlow: moonGlow,
+      uCloud: cloud,
+      uCloudShift: { value: shift },
+    },
     vertexShader: VERT,
     fragmentShader: FRAG,
     side: BackSide,
@@ -148,5 +162,5 @@ export function buildSky(): Sky {
   mesh.frustumCulled = false;
   mesh.renderOrder = -10;
   mesh.name = 'sky';
-  return { mesh, zenith, horizon, moonDir, moonGlow, cloud };
+  return { mesh, zenith, horizon, moonDir, moonGlow, cloud, shift };
 }

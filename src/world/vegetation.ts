@@ -23,18 +23,21 @@ import {
   PONDS,
   VILLAGES,
   VILLAGE_CENTERS,
+  WETLANDS,
   WORLD_Z0,
   WORLD_Z1,
   bankInfo,
   bilDepth,
   bilReach,
   charHeight,
+  coastal,
   edgeHalfWidth,
   khalPoint,
   landLevel,
   nearBackwater,
   riverX,
   routeGap,
+  saltPan,
   terrainHeight,
   villageDistance,
 } from './geography';
@@ -394,6 +397,9 @@ function onDryLand(x: number, z: number, minInland: number): boolean {
   const info = bankInfo(x, z);
   if (info.inland < minInland) return false;
   for (const p of PONDS) if (Math.hypot(x - p.x, z - p.z) < p.r * 1.35) return false;
+  for (const w of WETLANDS) if (Math.hypot(x - w.x, z - w.z) < w.r * 1.5) return false;
+  // nothing grows on the salt pans
+  if (saltPan(x, z) > 0.2) return false;
   return !nearBackwater(x, z, 3);
 }
 
@@ -404,12 +410,14 @@ function at(x: number, z: number, rng: Rng, s: number, sink = 0.15): Placement {
 // ---------- assembly ----------
 
 /** `bark`: the photo bark for broadleaf trunks; without it they keep a painted brown. */
-export function buildVegetation(huts: readonly HutPlan[], bark: Surfaces['bark']): Group {
+/** `clear`: other places to keep trees off (x, z and a radius), such as the fishermen's platforms. */
+export function buildVegetation(huts: readonly HutPlan[], bark: Surfaces['bark'], clear: readonly { x: number; z: number; r: number }[] = []): Group {
   const rng = new Rng(7);
   const group = new Group();
   group.name = 'vegetation';
   const occ = new Occupancy();
   for (const h of huts) occ.add(h.x, h.z, Math.max(h.w, h.l) * 0.75 + 1.5);
+  for (const c of clear) occ.add(c.x, c.z, c.r);
 
   const tex = {
     mango: leafClusterTexture(11, ['#2a4319', '#35521f', '#426026', '#4f6e2b', '#5f7d31'], { count: 150, len: [0.08, 0.14], width: 0.4 }),
@@ -423,7 +431,7 @@ export function buildVegetation(huts: readonly HutPlan[], bark: Surfaces['bark']
     bark: palmBarkTexture(18),
   };
 
-  const leafMat = (set: { map: Texture; normal?: Texture }, wind = 0.22, windHeight = 10, roughness = 0.78) =>
+  const leafMat = (set: { map: Texture; normal?: Texture }, wind = 0.22, windHeight = 10, roughness = 0.78, seasonal: 'leaf' | 'tree' = 'leaf') =>
     patchMaterial(
       new MeshStandardMaterial({
         map: set.map,
@@ -435,13 +443,14 @@ export function buildVegetation(huts: readonly HutPlan[], bark: Surfaces['bark']
         side: DoubleSide,
         roughness,
       }),
-      { wind, windHeight, translucency: 1, foliage: true },
+      { wind, windHeight, translucency: 1, foliage: true, seasonal },
     );
+  // trunks, stems and culms bend with the same wind as the leaves they carry, so a crown never leaves its tree
   const woodMat = patchMaterial(
     new MeshStandardMaterial({ map: bark?.color ?? null, normalMap: bark?.normal ?? null, vertexColors: true, roughness: 0.92 }),
-    { grime: bark ? 0.2 : 0.5 },
+    { grime: bark ? 0.2 : 0.5, wind: 0.3, windHeight: 6 },
   );
-  const culmMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.6 }), { grime: 0.4 });
+  const culmMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.6 }), { grime: 0.4, wind: 0.45, windHeight: 12 });
   const flowerMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.6, side: DoubleSide }), {
     translucency: 1.2,
     wind: 0.05,
@@ -451,19 +460,20 @@ export function buildVegetation(huts: readonly HutPlan[], bark: Surfaces['bark']
   const barkTint = bark ? rgb('#b4aa9c') : BARK;
   const palmWood = patchMaterial(new MeshStandardMaterial({ map: tex.bark, vertexColors: true, roughness: 0.9 }), {
     grime: 0.3,
-    wind: 0.14,
-    windHeight: 14,
+    wind: 0.2,
+    windHeight: 12,
   });
   const mats = {
-    mango: leafMat(tex.mango),
-    rain: leafMat(tex.rain),
+    // crowns move a hand's breadth in a breeze and a good half metre in a storm (see the wind in patch.ts)
+    mango: leafMat(tex.mango, 0.3, 6, 0.78, 'tree'),
+    rain: leafMat(tex.rain, 0.3, 6, 0.78, 'tree'),
     bamboo: leafMat(tex.bamboo, 0.45, 12),
-    frond: leafMat({ map: tex.frond }, 0.14, 14),
+    frond: leafMat({ map: tex.frond }, 0.2, 12),
     banana: leafMat({ map: tex.banana }, 0.12, 3),
     hibiscus: leafMat(tex.hibiscus, 0.06, 1.5, 0.5),
     kash: patchMaterial(
       new MeshStandardMaterial({ map: tex.kash, vertexColors: true, alphaTest: 0.42, alphaToCoverage: true, side: DoubleSide, roughness: 0.85 }),
-      { wind: 0.35, windHeight: 2.2, translucency: 2.2, foliage: true },
+      { wind: 0.35, windHeight: 2.2, translucency: 2.2, foliage: true, seasonal: 'kash' },
     ),
     grass: leafMat({ map: tex.grass }, 0.15, 0.8),
   };
@@ -557,9 +567,13 @@ export function buildVegetation(huts: readonly HutPlan[], bark: Surfaces['bark']
       const inland = rng.range(4, 26);
       const x = riverX(z) + side * (edgeHalfWidth(z, side) + 3 + inland);
       if (villageDistance(x, z) < 1.3 || !onDryLand(x, z, 3) || !occ.free(x, z, 3)) continue;
+      // the coast is open country: only the odd palm along its banks
+      const coast = coastal(z);
+      if (coast > 0 && rng.next() < coast * 0.8) continue;
       occ.add(x, z, 3);
       const r = rng.next();
-      put(r < 0.35 ? B.rain : r < 0.7 ? B.mango : r < 0.9 ? B.coconut : B.supari, at(x, z, rng, rng.range(0.85, 1.2)));
+      const tree = coast > 0.5 ? (r < 0.55 ? B.coconut : B.date) : r < 0.35 ? B.rain : r < 0.7 ? B.mango : r < 0.9 ? B.coconut : B.supari;
+      put(tree, at(x, z, rng, rng.range(0.85, 1.2)));
     }
   }
 

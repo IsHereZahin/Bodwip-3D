@@ -3,11 +3,23 @@ import { DEG } from '../core/mathx';
 import { SYNODIC_MONTH, sunDirection } from '../env/astro';
 import type { Clock, SkyEvent, SkyEventKind } from '../env/clock';
 import { skyColorAt } from '../env/environment';
+import { SEASON_NAMES, banglaDate, seasonIndex } from '../env/season';
 import type { ViewName } from '../rig/rig';
 import { EVENT_NAME, MOON_PHASES, bn, clockLabel, nearestPhase, tithiLabel } from './bangla';
 import './controls.css';
 
 export type CameraChoice = 'follow' | 'free' | 'film';
+
+/** The weather menu: by the season, or held clear, breezy, windy, raining or stormy. */
+export const WEATHER_PICKS = [
+  ['auto', 'ঋতু অনুযায়ী'],
+  ['calm', 'পরিষ্কার, শান্ত'],
+  ['breeze', 'মৃদু হাওয়া'],
+  ['windy', 'জোর হাওয়া'],
+  ['rain', 'বৃষ্টি'],
+  ['storm', 'ঝড়'],
+] as const;
+export type WeatherPick = (typeof WEATHER_PICKS)[number][0];
 
 /** What the controls ask of the scene. */
 export interface ControlHandlers {
@@ -21,6 +33,9 @@ export interface ControlHandlers {
   camera(choice: CameraChoice): void;
   view(name: ViewName): void;
   moon(age: number): void;
+  /** A season by index into SEASON_NAMES, or today's date. */
+  season(choice: number | 'today'): void;
+  weather(choice: WeatherPick): void;
   sound(): void;
   /** Any use of the controls; it counts as activity, like touching the scene. */
   touched(): void;
@@ -83,6 +98,9 @@ export class Controls {
   private readonly views = $<HTMLSelectElement>('#views');
   private readonly moon = $<HTMLSelectElement>('#moon');
   private readonly moonLit = $<SVGPathElement>('#moon-lit');
+  private readonly season = $<HTMLSelectElement>('#season');
+  private readonly weather = $<HTMLSelectElement>('#weather');
+  private readonly bdate = $<HTMLElement>('#bdate');
   private readonly sound = $<HTMLButtonElement>('#sound');
   private readonly fullscreen = $<HTMLButtonElement>('#fullscreen');
   private readonly help = $<HTMLDialogElement>('#help');
@@ -92,7 +110,7 @@ export class Controls {
   private scrubbing = false;
   private idleTimer = 0;
   private film = false;
-  private last = { minute: -1, playing: true, speed: 0, camera: '', sound: false, sky: -1, phase: -1, moonAge: -1, tithi: '' };
+  private last = { minute: -1, playing: true, speed: 0, camera: '', sound: false, sky: -1, phase: -1, moonAge: -1, tithi: '', date: '', season: -1 };
 
   constructor(handlers: ControlHandlers) {
     this.handlers = handlers;
@@ -118,6 +136,12 @@ export class Controls {
     );
     MOON_PHASES.forEach((p, i) => this.moon.add(new Option(p.name, String(i))));
     this.moon.addEventListener('change', use(() => h.moon(MOON_PHASES[Number(this.moon.value)].age)));
+    // the season shows itself; the menu jumps to the middle of another, or back to today's date
+    SEASON_NAMES.forEach((name, i) => this.season.add(new Option(name, String(i))));
+    this.season.add(new Option('আজকের তারিখ', 'today'));
+    this.season.addEventListener('change', use(() => h.season(this.season.value === 'today' ? 'today' : Number(this.season.value))));
+    for (const [value, label] of WEATHER_PICKS) this.weather.add(new Option(label, value));
+    this.weather.addEventListener('change', use(() => h.weather(this.weather.value as WeatherPick)));
 
     // the timeline: drag or click to set the time; the arrow keys step ten minutes, an hour with Shift
     this.paintDay();
@@ -224,7 +248,21 @@ export class Controls {
     }
     if (clock.revision !== l.sky) {
       l.sky = clock.revision;
+      // the sun's path changes with the day of the year
+      this.paintSky();
       this.markDay(clock);
+    }
+    const day = clock.dayOfYear;
+    const s = seasonIndex(day);
+    const d = banglaDate(day);
+    const date = `${bn(d.date)} ${d.month} · ${SEASON_NAMES[s]}`;
+    if (date !== l.date) {
+      l.date = date;
+      this.bdate.textContent = date;
+    }
+    if (s !== l.season && document.activeElement !== this.season) {
+      l.season = s;
+      this.season.value = String(s);
     }
     const age = clock.moonAge;
     if (Math.abs(age - l.moonAge) > 0.05) {
@@ -243,8 +281,25 @@ export class Controls {
     }
   }
 
-  /** Paints the bar with the colour of the sky through one day; the sun's path is the same every day. */
+  /** Shows a weather choice made elsewhere (by a key). */
+  showWeather(choice: WeatherPick): void {
+    this.weather.value = choice;
+  }
+
+  /** Paints the bar with the colour of the sky through one day (the day's own sun path), and its hour ticks. */
   private paintDay(): void {
+    this.paintSky();
+    const track = $<HTMLElement>('#tl-track');
+    for (const hour of [6, 12, 18]) {
+      const tick = document.createElement('span');
+      tick.className = 'tl-tick';
+      tick.style.left = `${(hour / 24) * 100}%`;
+      track.prepend(tick);
+    }
+  }
+
+  /** The bar's colours: the sky through the day, as the sun crosses it on this day of the year. */
+  private paintSky(): void {
     const c = new Color();
     const dir = new Vector3();
     const stops: string[] = [];
@@ -252,14 +307,7 @@ export class Controls {
       const elev = Math.asin(sunDirection(i / 2, dir).y) / DEG;
       stops.push(`#${skyColorAt(elev, c).getHexString()} ${((i / 48) * 100).toFixed(2)}%`);
     }
-    const track = $<HTMLElement>('#tl-track');
-    track.style.background = `linear-gradient(90deg, ${stops.join(', ')})`;
-    for (const hour of [6, 12, 18]) {
-      const tick = document.createElement('span');
-      tick.className = 'tl-tick';
-      tick.style.left = `${(hour / 24) * 100}%`;
-      track.prepend(tick);
-    }
+    $<HTMLElement>('#tl-track').style.background = `linear-gradient(90deg, ${stops.join(', ')})`;
   }
 
   /** Marks today's sunrise, sunset, moonrise and moonset, and the hours the moon is up. */

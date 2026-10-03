@@ -340,7 +340,8 @@
   font-weight: 500;
   white-space: nowrap;
 }
-#tithi {
+#tithi,
+#bdate {
   font-size: 12px;
   color: var(--ink-dim);
   white-space: nowrap;
@@ -492,6 +493,9 @@ body.ui-off #ui-restore:focus-visible {
   .seg button span,
   #tithi {
     display: none;
+  }
+  #bdate {
+    font-size: 11px;
   }
   .seg button {
     padding: 0 10px;

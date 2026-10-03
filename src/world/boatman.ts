@@ -233,6 +233,22 @@ function spring(x: number, v: number, target: number, f: number, zeta: number, d
   return [x + v * dt, v];
 }
 
+/** What he wears: the lungi's check (ground, stripe, thin thread), the vest, the gamchha's check (sRGB), and a seed for the weave. */
+export interface Outfit {
+  lungi: readonly [string, string, string];
+  vest: string;
+  gamchha: readonly [string, string, string];
+  seed: number;
+}
+
+/** The majhi's: a blue checked lungi, an off-white vest, a red gamchha. */
+export const MAJHI_OUTFIT: Outfit = {
+  lungi: ['#2c4a86', '#e8e2d2', '#16244a'],
+  vest: '#d6cfbf',
+  gamchha: ['#a8342a', '#efe6d6', '#5a1410'],
+  seed: 71,
+};
+
 export interface BoatTilt {
   rotX: number;
   rotZ: number;
@@ -328,10 +344,10 @@ export class Boatman {
   private readonly ad = new Vector3();
 
   /**
-   * `stance`: the middle of his feet on the boards (boat frame); `barRadii`: the cross-grip's radius and the
-   * shaft's where his left hand holds it.
+   * `stance`: the middle of his feet on the boards (boat frame); `barRadii`: the radius of what his right
+   * hand holds (the cross-grip) and his left (the shaft); `outfit`: what he wears.
    */
-  constructor(stance: Vector3, barRadii: readonly [number, number]) {
+  constructor(stance: Vector3, barRadii: readonly [number, number], outfit: Outfit = MAJHI_OUTFIT) {
     this.stance = stance.clone();
     this.group.name = 'boatman';
     const skin = patchMaterial(new MeshStandardMaterial({ color: SKIN_TONE, roughness: 0.55 }), { translucency: 0.35 });
@@ -346,9 +362,10 @@ export class Boatman {
         roughness,
         side: DoubleSide,
       });
-    const lungiMat = patchMaterial(cloth(clothTexture('#2c4a86', '#e8e2d2', '#16244a', 71), 0.92), { grime: 0.15, translucency: 0.15 });
-    const vestMat = patchMaterial(cloth(clothTexture('#d6cfbf', '#d6cfbf', '#d6cfbf', 72, true), 0.94, 0.3), { grime: 0.3, translucency: 0.2 });
-    const gamchhaMat = patchMaterial(cloth(clothTexture('#a8342a', '#efe6d6', '#5a1410', 73), 0.9), { translucency: 0.3 });
+    const { lungi, vest, gamchha, seed } = outfit;
+    const lungiMat = patchMaterial(cloth(clothTexture(lungi[0], lungi[1], lungi[2], seed), 0.92), { grime: 0.15, translucency: 0.15 });
+    const vestMat = patchMaterial(cloth(clothTexture(vest, vest, vest, seed + 1, true), 0.94, 0.3), { grime: 0.3, translucency: 0.2 });
+    const gamchhaMat = patchMaterial(cloth(clothTexture(gamchha[0], gamchha[1], gamchha[2], seed + 2), 0.9), { translucency: 0.3 });
     const hair = new MeshStandardMaterial({ color: '#17110d', roughness: 0.75 });
     const hatWeave = weaveTexture(53);
     hatWeave.repeat.set(10, 3);

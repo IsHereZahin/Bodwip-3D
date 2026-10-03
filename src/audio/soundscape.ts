@@ -11,6 +11,7 @@ export class Soundscape {
   private lap: GainNode | null = null;
   private wind: GainNode | null = null;
   private windFilter: BiquadFilterNode | null = null;
+  private rain: GainNode | null = null;
   private nextBird = 2;
   private nextCricket = 0;
   muted = false;
@@ -59,6 +60,8 @@ export class Soundscape {
     this.wind.gain.value = 0.02;
     const src = this.loop();
     src.connect(this.windFilter).connect(this.wind).connect(this.master);
+    // rain: a bright hiss on the water and the leaves, silent until it rains
+    this.rain = this.bed(9000, 1400, 0);
   }
 
   setMuted(muted: boolean): void {
@@ -161,14 +164,36 @@ export class Soundscape {
     o.stop(t + 1.8);
   }
 
-  update(dt: number, night: number, wind: number): void {
+  /** Thunder after a lightning flash: a low roll that swells and dies away. */
+  thunder(): void {
     const ctx = this.ctx;
-    if (!ctx || !this.master || !this.wind || !this.windFilter || !this.river) return;
+    if (!ctx || !this.master || this.muted) return;
+    const t = ctx.currentTime + 0.4 + Math.random() * 2.5;
+    const s = ctx.createBufferSource();
+    s.buffer = this.noise;
+    s.playbackRate.value = 0.35 + Math.random() * 0.15;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 160;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.5, t + 0.25);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 3.5 + Math.random() * 2);
+    s.connect(lp).connect(g).connect(this.master);
+    s.start(t, Math.random() * 2);
+    s.stop(t + 6);
+  }
+
+  update(dt: number, night: number, wind: number, rain: number): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.master || !this.wind || !this.windFilter || !this.river || !this.rain) return;
     const now = ctx.currentTime;
     // the river carries further in the still night air
     this.river.gain.setTargetAtTime(0.2 + 0.08 * night, now, 2);
-    this.wind.gain.setTargetAtTime(0.012 + 0.02 * wind, now, 1);
-    this.windFilter.frequency.setTargetAtTime(320 + 260 * Math.sin(now * 0.07) ** 2, now, 2);
+    // the wind roars more than it grows: louder and higher as it strengthens
+    this.wind.gain.setTargetAtTime(0.008 + 0.018 * wind + 0.012 * wind * wind, now, 1);
+    this.rain.gain.setTargetAtTime(0.09 * rain, now, 1.5);
+    this.windFilter.frequency.setTargetAtTime(280 + 140 * wind + 260 * Math.sin(now * 0.07) ** 2, now, 2);
     if (this.muted) return;
     this.nextBird -= dt;
     if (this.nextBird <= 0) {

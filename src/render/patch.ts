@@ -20,6 +20,11 @@ export interface PatchOptions {
   foliage?: boolean;
   /** Custom vertex displacement after `begin_vertex`; `key` names it in the program cache. */
   vertex?: { key: string; pars: string; code: string; uniforms?: Record<string, IUniform> };
+  /**
+   * How the season shows on it: 'leaf' greens up in the rains and dries and pales in the dry months;
+   * 'tree' as a leaf, and in spring a share of trees burst into red flower; 'kash' plumes only in autumn.
+   */
+  seasonal?: 'leaf' | 'tree' | 'kash';
 }
 
 /** Metres covered by one repeat of a ground texture. */
@@ -35,19 +40,26 @@ mvPosition = batchingMatrix * mvPosition;
 mvPosition = instanceMatrix * mvPosition;
 #endif
 vec4 atmW = modelMatrix * mvPosition;
+#if defined(ATM_WIND) || defined(ATM_SEASONAL)
+vec3 root = vec3(modelMatrix[3]);
+#ifdef USE_INSTANCING
+root = (modelMatrix * vec4(instanceMatrix[3].xyz, 1.0)).xyz;
+#endif
+#endif
+#ifdef ATM_SEASONAL
+vAtmRoot = root;
+#endif
 #ifdef ATM_WIND
 {
-  vec3 root = vec3(modelMatrix[3]);
-  #ifdef USE_INSTANCING
-  root = (modelMatrix * vec4(instanceMatrix[3].xyz, 1.0)).xyz;
-  #endif
   float hk = clamp(position.y / ATM_WIND_H, 0.0, 1.6);
   hk *= hk;
-  // one shared wind field: slow gust fronts travelling downwind, plus each plant's own flutter
-  float gust = 0.55 + 0.45 * sin(dot(root.xz, uWind.xy) * 0.045 - uTime * 0.8);
-  float flutter = sin(uTime * 2.1 + root.x * 0.73 + root.z * 0.41 + position.y * 0.8);
-  vec2 sway = uWind.xy * (gust * 0.75 + flutter * 0.3) + vec2(-uWind.y, uWind.x) * 0.22 * sin(uTime * 1.6 + root.z * 0.3);
-  atmW.xz += sway * hk * ATM_WIND * uWind.z;
+  // the one wind (env/wind.ts): the local strength under the gust fronts rolling downwind. Drag grows
+  // with the square of the wind, so a plant leans further the harder it blows, and shivers faster.
+  float s = uWind.z * windGust(root.xz);
+  float lean = s * (0.5 + 0.5 * s + 0.25 * s * s);
+  float flutter = sin(uGust.x * 3.0 + root.x * 0.73 + root.z * 0.41 + position.y * 0.8) * (0.25 + 0.2 * min(s, 2.0));
+  vec2 sway = uWind.xy * (lean * 0.45 + flutter * 0.4) + vec2(-uWind.y, uWind.x) * 0.22 * min(s, 2.0) * sin(uGust.x * 2.2 + root.z * 0.3);
+  atmW.xz += sway * hk * ATM_WIND;
 }
 #endif
 vAtmWorld = atmW.xyz;
@@ -129,8 +141,36 @@ vec3 splatDetail = vec3(1.0);
 
 const COLOR_EXTRA = /* glsl */ `
 float atmWet = 0.0;
+// how much of the ground is open water that mirrors the sky (brine in the salt pans, flooded plots)
+float atmBrine = 0.0;
+#ifdef ATM_SEASONAL
+{
+  // the season in the leaves: lush in the rains, dusty and paler in the dry months
+  diffuseColor.rgb *= mix(vec3(1.0), vec3(1.2, 1.06, 0.7), uSeasonA.y * 0.6) * (0.86 + 0.16 * uSeasonA.x);
+  #if ATM_SEASONAL == 2
+  // spring: a share of the trees (shimul, palash, krishnachura) aflame with red flowers
+  if (hash12(floor(vAtmRoot.xz * 0.37) + 3.1) < uSeasonA.z) {
+    float spot = vnoise(vAtmWorld.xz * 2.3 + vAtmWorld.y * 1.7);
+    float crown = smoothstep(1.2, 3.0, vAtmWorld.y - vAtmRoot.y);
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.62, 0.06, 0.02) * (0.7 + 0.5 * spot), smoothstep(0.35, 0.6, spot) * crown);
+  }
+  #endif
+  #if ATM_SEASONAL == 3
+  // kash plumes only from late in the rains through autumn; out of season the white heads are not there
+  float lum = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+  float sat = max(diffuseColor.r, max(diffuseColor.g, diffuseColor.b)) - min(diffuseColor.r, min(diffuseColor.g, diffuseColor.b));
+  float plume = smoothstep(0.35, 0.6, lum) * (1.0 - smoothstep(0.08, 0.2, sat));
+  diffuseColor.a *= 1.0 - plume * (1.0 - uSeasonA.w);
+  #endif
+}
+#endif
 #ifdef ATM_GRIME
 diffuseColor.rgb *= 1.0 + ATM_GRIME * ((fbm3(vAtmWorld.xz * 0.35 + vAtmWorld.y * 0.25) - 0.5) * 1.3 + (vnoise(vAtmWorld.xz * 3.1 + vAtmWorld.y * 2.0) - 0.5) * 0.45);
+#endif
+#ifndef ATM_TERRAIN
+// after rain everything is darker and glistens
+atmWet = uWet * 0.4;
+diffuseColor.rgb *= mix(1.0, 0.8, atmWet);
 #endif
 #ifdef ATM_TERRAIN
 ${SPLAT_COLOR}
@@ -140,7 +180,17 @@ ${SPLAT_COLOR}
   #ifndef ATM_SPLAT
   diffuseColor.rgb *= 1.0 + 0.16 * (vnoise(wp * 0.9) - 0.5);
   #endif
-  // paddy: rectangular plots with raised bunds (ail), each plot at its own stage of growth
+  // the season on open ground: grass greener and soil darker in the rains, straw-pale and dusty when dry
+  {
+    float greenish = clamp((diffuseColor.g - diffuseColor.r) * 9.0, 0.0, 1.0);
+    diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.3, 1.08, 0.66), greenish * uSeasonA.y * 0.65);
+    diffuseColor.rgb *= mix(1.0, 0.86 + 0.14 * uSeasonA.x, greenish);
+    diffuseColor.rgb *= mix(1.0, 0.8, uSeasonB.z * (1.0 - greenish));
+  }
+  // paddy: rectangular plots with raised bunds (ail). Each plot keeps its place in the order the season
+  // plants and reaps them (env/season.ts): seedlings standing in water, green rice, ripe gold, mustard in
+  // flower in the winter, or stubble after the harvest
+  float plotWater = 0.0;
   if (vZone > 0.01) {
     float ang = 0.3 + 0.35 * sin(floor(wp.y / 240.0) * 1.7);
     vec2 q = mat2(cos(ang), -sin(ang), sin(ang), cos(ang)) * wp;
@@ -148,19 +198,70 @@ ${SPLAT_COLOR}
     vec2 cell = floor(q / size);
     vec2 f = fract(q / size);
     float r = hash12(cell);
-    vec3 fc = r < 0.28 ? vec3(0.060, 0.120, 0.018)
-            : r < 0.62 ? vec3(0.300, 0.200, 0.045)
-            : r < 0.84 ? vec3(0.110, 0.190, 0.030)
+    float c1 = uCrops.x;
+    float c2 = c1 + uCrops.y;
+    float c3 = c2 + uCrops.z;
+    float c4 = c3 + uCrops.w;
+    vec3 fc = r < c1 ? vec3(0.085, 0.165, 0.03)
+            : r < c2 ? mix(vec3(0.060, 0.120, 0.018), vec3(0.110, 0.190, 0.030), hash12(cell + 3.7))
+            : r < c3 ? vec3(0.300, 0.200, 0.045)
+            : r < c4 ? vec3(0.46, 0.36, 0.02)
             : vec3(0.170, 0.125, 0.065);
     fc *= 0.82 + 0.36 * vnoise(q * 0.3 + r * 50.0);
     vec2 e = min(f, 1.0 - f) * size;
     float bund = 1.0 - smoothstep(0.25, 0.8, min(e.x, e.y));
+    // water standing in the plots: under the seedlings always, in others as the season has it
+    plotWater = (1.0 - bund) * vZone * max(r < c1 ? 1.0 : 0.0, step(hash12(cell + 7.1), uSeasonB.y) * step(c3, r));
+    fc = mix(fc, fc * 0.45, plotWater * 0.6);
     fc = mix(fc, vec3(0.13, 0.11, 0.065), bund);
     diffuseColor.rgb = mix(diffuseColor.rgb, fc, vZone);
+    atmBrine = plotWater * 0.5;
   }
-  diffuseColor.rgb *= splatDetail;
-  // the bank darkens and shines where the river has just wet it
-  atmWet = smoothstep(0.6, 0.05, vAtmWorld.y);
+  // salt pans (লবণ মাঠ) on the coastal flats: blocks of small pans behind low clay bunds, a brine channel
+  // round each block, some blocks lying fallow. In the dry months (uSeasonB.w) a pan at work holds brine
+  // over its clay floor, or brine on black plastic sheeting, or has dried to a white crust of salt ready
+  // to rake; in the rains, and in the pans not at work, the water stands brackish and still. The layout
+  // has a twin in world/coast.ts (the heaps sit on these bunds): keep the two in step
+  float panW = 0.0;
+  if (vZone < -0.01) {
+    float ang = 0.12 + 0.2 * sin(floor(wp.y / 300.0) * 2.3);
+    vec2 q = mat2(cos(ang), -sin(ang), sin(ang), cos(ang)) * wp;
+    vec2 blockSize = vec2(96.0, 60.0);
+    vec2 block = floor(q / blockSize);
+    vec2 bq = q - block * blockSize;
+    float fallow = step(0.55, sin(block.x * 3.1 + block.y * 1.3 + 0.7));
+    vec2 size = vec2(16.0, 10.0) * (0.8 + 0.4 * (0.5 + 0.5 * sin(block.x * 1.7 + block.y * 2.9)));
+    vec2 cell = floor(bq / size);
+    vec2 f = fract(bq / size);
+    vec2 e = min(f, 1.0 - f) * size;
+    // the channel round the block, and the pans that do not fit whole at its far edges
+    vec2 eb = min(bq, blockSize - bq);
+    float channel = 1.0 - smoothstep(1.2, 1.8, min(eb.x, eb.y));
+    float whole = step(bq.x, floor(blockSize.x / size.x) * size.x) * step(bq.y, floor(blockSize.y / size.y) * size.y);
+    panW = -vZone * (1.0 - fallow) * whole * (1.0 - channel);
+    cell += block * 31.0;
+    float bund = 1.0 - smoothstep(0.3, 0.9, min(e.x, e.y));
+    float working = step(hash12(cell + 19.3), uSeasonB.w);
+    float stage = hash12(cell + 4.1);
+    vec3 crust = vec3(0.82, 0.81, 0.78) * (0.9 + 0.14 * vnoise(q * 2.3 + stage * 30.0));
+    vec3 pc = stage < 0.35 ? vec3(0.27, 0.25, 0.21) : stage < 0.7 ? vec3(0.02, 0.02, 0.024) : crust;
+    float wetPan = mix(1.0, stage < 0.7 ? 1.0 : 0.0, working);
+    pc = mix(vec3(0.17, 0.16, 0.12), pc, working);
+    pc = mix(pc, vec3(0.22, 0.19, 0.15), bund);
+    diffuseColor.rgb = mix(diffuseColor.rgb, pc, panW);
+    float brine = (1.0 - bund) * panW * wetPan;
+    // the channels run with brine whatever the season
+    float run = channel * -vZone * (1.0 - fallow * 0.6);
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.14, 0.13, 0.1), run);
+    brine = max(brine, run);
+    plotWater = max(plotWater, brine);
+    atmBrine = max(atmBrine, brine * 0.8);
+  }
+  // the photo layers' grain, less of it on the smooth pans
+  diffuseColor.rgb *= mix(splatDetail, vec3(1.0), panW * 0.7);
+  // the bank darkens and shines where the river has just wet it, the plots where water stands, and
+  // everything after rain
+  atmWet = max(max(smoothstep(uWaterLevel + 0.6, uWaterLevel + 0.05, vAtmWorld.y), plotWater * 0.85), uWet * 0.55);
   diffuseColor.rgb *= mix(1.0, 0.55, atmWet);
 }
 #endif
@@ -188,13 +289,19 @@ const TRANSLUCENCY = /* glsl */ `
 }
 #endif
 #ifdef ATM_TERRAIN
+// still water standing on the ground (brine in the pans, flooded plots) mirrors the sky, more so at a grazing look
+if (atmBrine > 0.01 && uReflPass < 0.5) {
+  vec3 toEye = normalize(uCamPos - vAtmWorld);
+  float fres = 0.02 + 0.98 * pow(1.0 - max(toEye.y, 0.0), 5.0);
+  outgoingLight = mix(outgoingLight, hazeColor(reflect(-toEye, vec3(0.0, 1.0, 0.0))), clamp(fres * 0.9 + 0.08, 0.0, 1.0) * atmBrine);
+}
 // sunlight focused by the ripples into a moving net of caustics on the shallow bed
-if (vAtmWorld.y < -0.02 && uReflPass < 0.5) {
+if (vAtmWorld.y < uWaterLevel - 0.02 && uReflPass < 0.5) {
   vec2 q = vAtmWorld.xz * 0.85;
   float a = vnoise(q + vec2(uTime * 0.31, uTime * 0.17));
   float b = vnoise(q * 1.41 + vec2(-uTime * 0.23, uTime * 0.29) + 4.7);
   float caustic = pow(clamp(1.0 - abs(a - b) * 3.2, 0.0, 1.0), 5.0);
-  outgoingLight += diffuseColor.rgb * uKeyColor * max(uKeyDir.y, 0.0) * caustic * smoothstep(-2.2, -0.08, vAtmWorld.y) * 1.6;
+  outgoingLight += diffuseColor.rgb * uKeyColor * max(uKeyDir.y, 0.0) * caustic * smoothstep(uWaterLevel - 2.2, uWaterLevel - 0.08, vAtmWorld.y) * 1.6;
 }
 #endif
 `;
@@ -212,6 +319,7 @@ export function patchMaterial<T extends Material>(material: T, options: PatchOpt
   if (options.grime) defines.ATM_GRIME = options.grime.toFixed(3);
   if (options.terrain) defines.ATM_TERRAIN = '';
   if (options.terrain && options.splat) defines.ATM_SPLAT = '';
+  if (options.seasonal) defines.ATM_SEASONAL = options.seasonal === 'leaf' ? '1' : options.seasonal === 'tree' ? '2' : '3';
   material.defines = { ...(material.defines ?? {}), ...defines };
 
   const key = `atm|${JSON.stringify(defines)}|${options.foliage ? 'f' : ''}|${options.vertex?.key ?? ''}`;
@@ -229,6 +337,7 @@ export function patchMaterial<T extends Material>(material: T, options: PatchOpt
     shader.vertexShader =
       GLSL_COMMON +
       'varying vec3 vAtmWorld;\n' +
+      (options.seasonal ? 'varying vec3 vAtmRoot;\n' : '') +
       terrainPars +
       splatVertPars +
       (options.vertex?.pars ?? '') +
@@ -245,7 +354,12 @@ export function patchMaterial<T extends Material>(material: T, options: PatchOpt
     if (options.foliage) frag = frag.replace('#include <normal_fragment_begin>', FOLIAGE_NORMAL);
     const splatFragPars = splat ? SPLAT_PARS : '';
     shader.fragmentShader =
-      GLSL_COMMON + 'varying vec3 vAtmWorld;\n' + (options.terrain ? 'varying float vZone;\n' : '') + splatFragPars + frag;
+      GLSL_COMMON +
+      'varying vec3 vAtmWorld;\n' +
+      (options.seasonal ? 'varying vec3 vAtmRoot;\n' : '') +
+      (options.terrain ? 'varying float vZone;\n' : '') +
+      splatFragPars +
+      frag;
   };
   return material;
 }

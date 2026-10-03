@@ -191,6 +191,7 @@ export class Meadow {
     this.group.name = 'meadow';
     this.huts = huts;
     const grassMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, side: DoubleSide, roughness: 0.78 }), {
+      seasonal: 'leaf',
       wind: 0.12,
       windHeight: 0.55,
       translucency: 1.7,
@@ -331,7 +332,8 @@ export class Meadow {
         if (ghats.some((gh) => Math.abs(gh.z - z) < 3.2 && bankInfo(x, z).side === gh.side && bankInfo(x, z).inland < 21)) continue;
         // grass where the ground is grassy, in drifts, thinning on trodden earth and in the paddy
         const drift = smoothstep(0.28, 0.62, fbm(x * 0.07, z * 0.07, 2, 91));
-        const density = (g.grass * (0.45 + 0.55 * drift) + g.dirt * 0.12 * drift) * (1 - g.zone);
+        // none in the paddy plots (zone > 0) or the salt pans (zone < 0)
+        const density = (g.grass * (0.45 + 0.55 * drift) + g.dirt * 0.12 * drift) * (1 - Math.abs(g.zone));
         if (rng.next() > density) continue;
         const lush = fbm(x * 0.03 + 7, z * 0.03, 2, 92);
         const dry = Math.min(1, g.dirt * 1.4 + smoothstep(0.62, 0.8, lush) * 0.5);

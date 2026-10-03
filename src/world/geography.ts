@@ -4,15 +4,17 @@ import { clamp, smoothstep } from '../core/mathx';
 // Where land and water are. The terrain mesh, the water field and every placement read these,
 // so the boat, the trees and the riverbed always agree.
 
-export const WATER_Y = 0;
 /** World extent along the river (it flows toward −z). */
 export const WORLD_Z0 = 460;
-export const WORLD_Z1 = -3340;
+export const WORLD_Z1 = -4300;
 /** Half extent across the river. */
 export const WORLD_U = 2600;
 /** The boat's journey; it loops through a mist fade at the end. */
 export const JOURNEY_Z0 = 320;
-export const JOURNEY_Z1 = -2960;
+export const JOURNEY_Z1 = -3920;
+/** Downstream of COAST_Z0 the river country gives way to the coast: by COAST_Z1 the land is low, level salt flats. */
+export const COAST_Z0 = -3280;
+export const COAST_Z1 = -3600;
 
 export function riverX(z: number): number {
   return 120 * Math.sin(z * 0.0021 + 0.5) + 55 * Math.sin(z * 0.0047 + 1.3) + 18 * Math.sin(z * 0.011 + 2.1);
@@ -53,7 +55,11 @@ const REACHES: readonly (readonly [number, number, number])[] = [
   [-2800, 45, 5.5],
   [-3000, 42, 5.5],
   [-3150, 60, 5],
-  [-3340, 70, 4.5],
+  // nearing the sea it opens out into a broad, slow estuary
+  [-3330, 95, 4.5],
+  [-3520, 170, 3.8],
+  [-3800, 240, 3.4],
+  [-4300, 300, 3.2],
 ];
 
 function reach(z: number, column: 1 | 2): number {
@@ -138,6 +144,9 @@ export const VILLAGES: readonly Village[] = [
   { z: -2080, side: -1, inland: 40, radius: 80 },
   { z: -2380, side: 1, inland: 50, radius: 85 },
   { z: -2730, side: -1, inland: 38, radius: 75 },
+  // the salt workers' villages on the coast
+  { z: -3640, side: -1, inland: 70, radius: 70 },
+  { z: -3980, side: 1, inland: 90, radius: 65 },
 ];
 
 export interface Point2 {
@@ -176,9 +185,17 @@ export function villageDistance(x: number, z: number): number {
   return best;
 }
 
+/** How far the coast has taken over from the river country at z: 0 upstream, 1 on the coastal flats. */
+export function coastal(z: number): number {
+  return smoothstep(COAST_Z0, COAST_Z1, z);
+}
+
 /** Height of the floodplain (fields, village mounds) ignoring the river. */
 export function landLevel(x: number, z: number): number {
   let h = 1.8 + (fbm(x * 0.003, z * 0.003, 3, 11) - 0.5) * 0.9;
+  // toward the sea the land sinks to low, level flats, a little above the monsoon's water
+  const c = coastal(z);
+  if (c > 0) h += (0.95 + (fbm(x * 0.01, z * 0.01, 2, 61) - 0.5) * 0.12 - h) * c;
   // villages sit on raised mounds (bhita) above the monsoon floods
   h += 1.25 * smoothstep(1.5, 0.55, villageDistance(x, z));
   return h;
@@ -424,6 +441,89 @@ export function nearBackwater(x: number, z: number, margin: number): boolean {
   return routeDistance(z, u) < CHANNEL_HALF + margin;
 }
 
+/**
+ * Small wetlands (জলা) out in the fields: shallow bowls a few dozen metres across that fill in the rains,
+ * spreading over their marshy rims, and shrink to a pool in the dry months. Each is put near a wanted
+ * place, as close to the river as it can be without crowding a village, a pond, a khal or the bil.
+ */
+export const WETLANDS: readonly (Point2 & { r: number })[] = findWetlands();
+
+function findWetlands(): (Point2 & { r: number })[] {
+  const wanted: readonly (readonly [number, number, number])[] = [
+    [-60, 1, 46],
+    [-700, -1, 52],
+    [-1650, -1, 58],
+    [-2470, 1, 44],
+  ];
+  const out: (Point2 & { r: number })[] = [];
+  for (const [z0, prefer, r] of wanted) {
+    let found: (Point2 & { r: number }) | null = null;
+    search: for (const side of [prefer, -prefer]) {
+      for (const dz of [0, 60, -60, 120, -120]) {
+        for (let inland = r + 45; inland < r + 200; inland += 10) {
+          const z = z0 + dz;
+          const x = riverX(z) + side * (edgeHalfWidth(z, side) + inland);
+          // inside the river's field (the water's depth is read from it) and clear of everything wet or built
+          if (Math.abs(x) > 600 - r * 1.5) continue;
+          if (VILLAGES.some((v, i) => Math.hypot(x - VILLAGE_CENTERS[i].x, z - VILLAGE_CENTERS[i].z) < v.radius + r * 1.4 + 15)) continue;
+          if (PONDS.some((p) => Math.hypot(x - p.x, z - p.z) < p.r + r * 1.4 + 10)) continue;
+          if (nearBackwater(x, z, r * 1.4 + 12)) continue;
+          found = { x, z, r };
+          break search;
+        }
+      }
+    }
+    if (found) out.push(found);
+  }
+  return out;
+}
+
+/** A wetland's irregular outline: its radius in the direction `a`, as a share of `r`. */
+function wetlandOutline(w: Point2, a: number): number {
+  return 1 + 0.16 * Math.sin(3 * a + w.x * 0.01) + 0.09 * Math.sin(5 * a + w.z * 0.013) + 0.06 * Math.sin(8 * a + 1.3);
+}
+
+/** How far (x, z) is from a wetland's middle, measured in its own outline (below 1 is its bowl). */
+export function wetlandReach(w: Point2 & { r: number }, x: number, z: number): number {
+  const dx = x - w.x;
+  const dz = z - w.z;
+  return Math.hypot(dx, dz) / (w.r * wetlandOutline(w, Math.atan2(dz, dx)));
+}
+
+/** The point at reach `d` from a wetland's middle in the direction `a`. */
+export function wetlandPoint(w: Point2 & { r: number }, a: number, d: number): Point2 {
+  const k = d * w.r * wetlandOutline(w, a);
+  return { x: w.x + Math.cos(a) * k, z: w.z + Math.sin(a) * k };
+}
+
+/** The bed of a wetland at reach `d`: an uneven bowl (so its shore wanders at every level), then a marshy rim rising to the fields. */
+function wetlandHeight(d: number, land: number, x: number, z: number): number {
+  if (d < 1) return -1.0 + 0.9 * d * d + 0.45 * (fbm(x * 0.045, z * 0.045, 2, 67) - 0.5) * (1 - d * d);
+  return -0.1 + (land + 0.1) * smoothstep(1, 1.55, d);
+}
+
+/** 1 on a wetland's low, wet rim, 0 elsewhere (wet meadow rather than bare ground). */
+export function wetlandMarsh(x: number, z: number): number {
+  let m = 0;
+  for (const w of WETLANDS) {
+    if (Math.abs(z - w.z) > w.r * 2.3) continue;
+    const d = wetlandReach(w, x, z);
+    m = Math.max(m, smoothstep(0.85, 1.0, d) * smoothstep(1.7, 1.45, d));
+  }
+  return m;
+}
+
+/** Salt pans at (x, z): on the low coastal flats, back from the bank and clear of the villages and backwaters (0..1). */
+export function saltPan(x: number, z: number): number {
+  const c = coastal(z);
+  if (c <= 0) return 0;
+  const u = x - riverX(z);
+  const side = u >= 0 ? 1 : -1;
+  const inland = Math.abs(u) - edgeHalfWidth(z, side);
+  if (inland < 8 || nearBackwater(x, z, 6)) return 0;
+  return c * smoothstep(10, 24, inland) * smoothstep(1.25, 1.8, villageDistance(x, z)) * smoothstep(1100, 800, inland);
+}
+
 export function terrainHeight(x: number, z: number): number {
   const u = x - riverX(z);
   const side = u >= 0 ? 1 : -1;
@@ -446,6 +546,11 @@ export function terrainHeight(x: number, z: number): number {
     if (Math.abs(z - p.z) > p.r * 1.3) continue;
     const d = Math.hypot(x - p.x, z - p.z) / p.r;
     if (d < 1.3) h = Math.min(h, -1.2 + (h + 1.2) * smoothstep(0.7, 1.3, d));
+  }
+  for (const w of WETLANDS) {
+    if (Math.abs(z - w.z) > w.r * 2.1) continue;
+    const d = wetlandReach(w, x, z);
+    if (d < 1.55) h = Math.min(h, wetlandHeight(d, h, x, z));
   }
   return h;
 }

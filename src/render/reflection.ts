@@ -1,9 +1,10 @@
 import { HalfFloatType, Matrix4, PerspectiveCamera, Plane, Vector3, Vector4, WebGLRenderTarget } from 'three';
-import { WATER_Y } from '../world/geography';
+import { G } from '../core/globals';
 
 /**
- * Mirror camera for the river surface (y = WATER_Y), as three's Reflector does it: a reflected
- * camera, a projective texture matrix, and an oblique near plane that clips the riverbed away.
+ * Mirror camera for the river surface (at the season's water level, G.uWaterLevel), as three's Reflector
+ * does it: a reflected camera, a projective texture matrix, and an oblique near plane that clips the
+ * riverbed away.
  */
 export class PlanarReflection {
   readonly camera = new PerspectiveCamera();
@@ -16,7 +17,7 @@ export class PlanarReflection {
   private readonly look = new Vector3();
   private readonly rot = new Matrix4();
   private readonly normal = new Vector3(0, 1, 0);
-  private readonly origin = new Vector3(0, WATER_Y, 0);
+  private readonly origin = new Vector3();
 
   constructor(width: number, height: number) {
     this.target = new WebGLRenderTarget(width, height, { type: HalfFloatType, depthBuffer: true, stencilBuffer: false });
@@ -29,14 +30,16 @@ export class PlanarReflection {
 
   /** Returns false when the camera is at or below the surface (nothing to mirror). */
   update(camera: PerspectiveCamera): boolean {
+    const level = G.uWaterLevel.value;
+    this.origin.set(0, level, 0);
     const pos = this.camPos.setFromMatrixPosition(camera.matrixWorld);
-    if (pos.y <= WATER_Y + 0.02) return false;
+    if (pos.y <= level + 0.02) return false;
     this.rot.extractRotation(camera.matrixWorld);
     this.look.set(0, 0, -1).applyMatrix4(this.rot).add(pos);
     const vc = this.camera;
-    vc.position.set(pos.x, 2 * WATER_Y - pos.y, pos.z);
+    vc.position.set(pos.x, 2 * level - pos.y, pos.z);
     vc.up.set(0, 1, 0).applyMatrix4(this.rot).reflect(this.normal);
-    vc.lookAt(this.look.x, 2 * WATER_Y - this.look.y, this.look.z);
+    vc.lookAt(this.look.x, 2 * level - this.look.y, this.look.z);
     vc.far = camera.far;
     vc.updateMatrixWorld();
     vc.projectionMatrix.copy(camera.projectionMatrix);

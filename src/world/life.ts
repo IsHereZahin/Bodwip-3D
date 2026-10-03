@@ -288,7 +288,7 @@ export class Life {
       const side = this.ffSide[i];
       const x = riverX(z) + side * (edgeHalfWidth(z, side) + 3 + this.ffInland[i]);
       this.ffBase[k] = x;
-      this.ffBase[k + 1] = Math.max(terrainHeight(x, z), 0) + this.ffHeight[i];
+      this.ffBase[k + 1] = Math.max(terrainHeight(x, z), G.uWaterLevel.value) + this.ffHeight[i];
       this.ffBase[k + 2] = z;
       moved = true;
     }

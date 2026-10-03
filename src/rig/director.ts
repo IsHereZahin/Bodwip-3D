@@ -3,7 +3,7 @@ import type { PerspectiveCamera } from 'three';
 import { G } from '../core/globals';
 import { clamp, damp, lerp, smoothstep } from '../core/mathx';
 import { CHARS, VILLAGES, VILLAGE_CENTERS, bilReach, boatLane, charHeight, edgeHalfWidth, riverX, terrainHeight } from '../world/geography';
-import { LIFT_NETS, liftNetCenter } from '../world/village';
+import { LIFT_NETS, liftNetCenter } from '../world/fishing';
 
 /** The boat's frame at this instant: position, forward (downstream) and starboard, all horizontal. */
 interface Frame {
@@ -232,7 +232,7 @@ export class Director {
     // faint hand-held drift; never inside the ground or the water
     this.pos.x += Math.sin(t * 0.37) * 0.06;
     this.pos.y += Math.sin(t * 0.53) * 0.04;
-    this.pos.y = Math.max(this.pos.y, Math.max(terrainHeight(this.pos.x, this.pos.z), 0) + 0.7);
+    this.pos.y = Math.max(this.pos.y, Math.max(terrainHeight(this.pos.x, this.pos.z), G.uWaterLevel.value) + 0.7);
     camera.position.copy(this.pos);
     camera.lookAt(this.look);
     camera.updateMatrixWorld();

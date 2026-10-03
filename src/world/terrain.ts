@@ -10,11 +10,14 @@ import {
   WORLD_Z1,
   bilMarsh,
   charHeight,
+  coastal,
   edgeHalfWidth,
   landLevel,
   riverX,
+  saltPan,
   terrainHeight,
   villageDistance,
+  wetlandMarsh,
 } from './geography';
 
 const Z_STEP = 5;
@@ -30,6 +33,9 @@ const COLORS = {
   grassB: rgb('#647b33'),
   grassDry: rgb('#857e48'),
   dust: rgb('#7d6849'),
+  /** The coastal flats: grey, salty clay with a thin, wiry grass. */
+  saltClay: rgb('#8a8170'),
+  coastGrass: rgb('#6d7442'),
 };
 
 /**
@@ -41,6 +47,8 @@ function columnOffsets(): number[] {
   const near: number[] = [];
   for (let u = -460; u < -240; u += 4) near.push(u);
   for (let u = -240; u <= 260; u += 3) near.push(u);
+  // the estuary's right bank, where the river is widest
+  for (let u = 264; u <= 420; u += 4) near.push(u);
   const far = (from: number, step: number): number[] => {
     const out: number[] = [];
     let u = from;
@@ -57,8 +65,9 @@ function columnOffsets(): number[] {
 }
 
 /**
- * What covers the ground at a point: the painted colour, the paddy zone, and the weights of the photo
- * layers (grass, dirt, sand, and whether pebbles may gather here; mud takes whatever is left).
+ * What covers the ground at a point: the painted colour, the field zone (paddy plots as 0..1, salt pans as
+ * 0..−1), and the weights of the photo layers (grass, dirt, sand, and whether pebbles may gather here; mud
+ * takes whatever is left).
  * The terrain mesh and the near-field grass both read it, so grass grows where the ground is grassy.
  */
 export interface Cover {
@@ -88,19 +97,26 @@ function cover(x: number, z: number, u: number, h: number): Cover {
   }
 
   const land = landLevel(x, z);
-  // the bil's low rim is wet meadow, grassy almost down to the water
-  const top = Math.max(smoothstep(land - 0.8, land - 0.1, h), bilMarsh(z, u) * smoothstep(-0.02, 0.2, h));
+  // the low rims of the bil and the small wetlands are wet meadow, grassy almost down to the water
+  const marsh = Math.max(bilMarsh(z, u), wetlandMarsh(x, z));
+  const top = Math.max(smoothstep(land - 0.8, land - 0.1, h), marsh * smoothstep(-0.02, 0.2, h));
   const mud = mixRgb(COLORS.wetMud, COLORS.dryMud, smoothstep(-0.1, 1.0, h));
   let ground = mixRgb(COLORS.grassA, COLORS.grassB, fbm(x * 0.012, z * 0.012, 3, 21));
+  // on the coast the grass is thin and the clay grey with salt
+  const coast = coastal(z);
+  if (coast > 0) ground = mixRgb(ground, mixRgb(COLORS.coastGrass, COLORS.saltClay, smoothstep(0.4, 0.7, fbm(x * 0.02, z * 0.02, 2, 63))), coast * 0.8);
   const dry = smoothstep(0.6, 0.8, fbm(x * 0.004, z * 0.004, 2, 33));
   ground = mixRgb(ground, COLORS.grassDry, dry);
   const vd = villageDistance(x, z);
   const yard = smoothstep(1.0, 0.35, vd);
   ground = mixRgb(ground, COLORS.dust, yard * 0.6);
   const fields = smoothstep(0.3, 0.42, fbm(x * 0.0025 + 5, z * 0.0025, 2, 44));
-  const zone = top * smoothstep(38, 75, inland) * smoothstep(1.25, 1.9, vd) * fields;
-  // trodden earth round the houses, and bare patches where the grass has dried out
-  const dirt = Math.min(1, yard * 0.9 + dry * 0.35 + 0.25 * smoothstep(0.62, 0.78, fbm(x * 0.05, z * 0.05, 2, 71)));
+  // paddy inland; on the coast, salt pans
+  const salt = top * saltPan(x, z);
+  const paddy = top * smoothstep(38, 75, inland) * smoothstep(1.25, 1.9, vd) * fields * (1 - coast);
+  const zone = salt > 0.01 ? -salt : paddy;
+  // trodden earth round the houses, and bare patches where the grass has dried out; the pans are bare clay
+  const dirt = Math.min(1, yard * 0.9 + dry * 0.35 + 0.25 * smoothstep(0.62, 0.78, fbm(x * 0.05, z * 0.05, 2, 71)) + salt + coast * 0.25);
   // pebbles only along the river; the ponds keep muddy banks
   const pebbles = (1 - top) * smoothstep(30, 14, inland);
   return { color: mixRgb(mud, ground, top), zone, grass: top * (1 - dirt), dirt: top * dirt, sand: 0, pebbles };

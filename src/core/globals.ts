@@ -1,4 +1,4 @@
-import { Color, Vector3, Vector4 } from 'three';
+import { Color, Vector2, Vector3, Vector4 } from 'three';
 
 /**
  * Uniforms every scene shader shares. Materials hold references to these objects, so a single
@@ -24,8 +24,25 @@ export const G = {
   uNight: { value: 0 },
   /** Light scattered back by the silty water body; anything far enough under the surface takes this colour. */
   uWaterBody: { value: new Color() },
-  /** xy: wind direction, z: strength. */
-  uWind: { value: new Vector4(0.55, -0.83, 1, 0) },
+  /** xy: the way the wind blows toward, z: its strength (1 ≈ 4 m/s), w: how gusty (see env/wind.ts). */
+  uWind: { value: new Vector4(0.55, -0.83, 1, 0.5) },
+  /** x: phase of the gust fronts rolling downwind. */
+  uGust: { value: new Vector2(0, 0) },
+  /** Height of the water's surface (m): high in the monsoon, low in the dry season (see env/season.ts). */
+  uWaterLevel: { value: 0 },
+  /** How fast the river runs, against its autumn pace. */
+  uFlowScale: { value: 1 },
+  /** The season on the land: x leafiness, y dryness, z share of trees in flower, w kash in plume. */
+  uSeasonA: { value: new Vector4(0.95, 0.1, 0, 1) },
+  /** x lilies in flower, y water standing in the paddy plots, z wet soil, w salt pans at work. */
+  uSeasonB: { value: new Vector4(0.9, 0.45, 0.55, 0.2) },
+  /** Shares of paddy plots: x seedlings, y green, z golden, w mustard in flower (the rest stubble). */
+  uCrops: { value: new Vector4(0.1, 0.85, 0, 0) },
+  /** How wet everything is from rain (0..1), and how hard it is raining now. */
+  uWet: { value: 0 },
+  uRain: { value: 0 },
+  /** 0..1: how far the sky has closed over with rain cloud (no sun glitter, soft light). */
+  uOvercast: { value: 0 },
 };
 
 /** Drawn by the main camera only: never seen in the mirror pass. */

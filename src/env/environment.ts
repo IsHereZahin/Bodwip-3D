@@ -5,9 +5,14 @@ import { DEG, clamp, smoothstep } from '../core/mathx';
 import type { Sky } from '../world/sky';
 import type { Water } from '../world/water';
 import { moonDirection, moonIllumination, sunDirection } from './astro';
+import type { SeasonState } from './season';
+import type { Weather } from './weather';
 
 // Light and colour for a moment of the day. A table of looks keyed on the sun's elevation gives every
-// colour; the moon lights the night when it is up, as brightly as its phase allows.
+// colour; the moon lights the night when it is up, as brightly as its phase allows. The season and the
+// weather then work on it: cloud dims the sun and greys the sky (its own soft light taking over), the
+// season's haze and fog thicken the air (winter mornings vanish into fog), the river takes the season's
+// silt, and lightning lights everything for an instant.
 
 interface Look {
   elev: number;
@@ -45,6 +50,14 @@ const SKY_GLOW_DIR = new Vector3(0.25, 0.92, -0.3).normalize();
 
 const tmpA = new Color();
 const tmpB = new Color();
+/** The river's silt in autumn, which the looks' water colours were made for. */
+const AUTUMN_SILT = new Color('#7d6a46');
+
+/** Draws a colour toward the grey of its own brightness. */
+function toGrey(c: Color, k: number): void {
+  const lum = c.r * 0.3 + c.g * 0.59 + c.b * 0.11;
+  c.lerp(tmpA.setScalar(lum * 0.92), k);
+}
 
 function mixLook(a: Look, b: Look, t: number, key: keyof Look, scaleKey: keyof Look | null, out: Color): Color {
   tmpA.set(a[key] as string).multiplyScalar(scaleKey ? (a[scaleKey] as number) : 1);
@@ -84,6 +97,9 @@ export class Environment {
   private readonly lastShadowDir = new Vector3();
   private readonly sky: Sky;
   private readonly water: Water;
+  /** The season and the weather this light is made for (set once by main; read each update). */
+  season: SeasonState | null = null;
+  weather: Weather | null = null;
 
   constructor(sky: Sky, water: Water) {
     this.sky = sky;
@@ -124,15 +140,38 @@ export class Environment {
     mixLook(a, b, t, 'glow', 'glowK', G.uGlow.value);
     mixLook(a, b, t, 'sun', null, this.sunColor);
     const sunE = a.sunE + (b.sunE - a.sunE) * t;
+    const s = this.season;
+    const w = this.weather;
+    const cloud = w ? w.cloud : 0.44;
+    const rain = w ? w.rain : 0;
+    const flash = w ? w.flash : 0;
+    // overcast: the sun dims behind the cloud and the sky's own grey light takes over
+    const overcast = smoothstep(0.5, 0.95, cloud);
+    toGrey(this.sky.zenith, overcast * 0.75);
+    toGrey(this.sky.horizon, overcast * 0.7);
+    toGrey(G.uFogColor.value, overcast * 0.6);
+    G.uGlow.value.multiplyScalar(1 - 0.8 * overcast);
+    this.sky.zenith.addScalar(flash * 0.25);
+    this.sky.cloud.value = cloud;
+    G.uOvercast.value = overcast;
+    // the season's sunlight: harsher in the summer, cooler in the winter
+    const warm = s ? s.warm : 0;
+    this.sunColor.multiply(tmpB.setRGB(1 + 0.4 * warm, 1, 1 - 0.6 * warm));
     // the disc sinks below the horizon over the last degree
     const visible = smoothstep(-1.2, 0.6, elev);
-    G.uSunColor.value.copy(this.sunColor).multiplyScalar(sunE * visible);
+    G.uSunColor.value.copy(this.sunColor).multiplyScalar(sunE * visible * (s ? s.light : 1) * (1 - 0.8 * overcast));
     G.uSunDir.value.copy(this.sunDir);
-    this.exposure = a.exposure + (b.exposure - a.exposure) * t;
-    // mist gathers on the river before sunrise and burns off as the sun climbs; evenings stay clear
+    this.exposure = (a.exposure + (b.exposure - a.exposure) * t) * (1 + 0.15 * overcast + 0.6 * flash);
+    // mist gathers on the river before sunrise and burns off as the sun climbs; evenings stay clear. In
+    // the winter and late autumn the mornings drown in fog; dust and rain thicken the air
     const dawn = hour < 12 ? smoothstep(-14, -4, elev) * smoothstep(12, 2, elev) : 0;
-    G.uMist.value = (a.mist + (b.mist - a.mist) * t) * (1 + 0.9 * dawn);
-    G.uFogDensity.value = 0.0006 + 0.0003 * smoothstep(20, -5, elev);
+    const fog = s ? s.fog : 0.3;
+    G.uMist.value = (a.mist + (b.mist - a.mist) * t) * (1 + 0.9 * dawn) * (1 + fog * (0.4 + 3.2 * dawn));
+    // thick fog is white: it drowns the sunrise's colour rather than taking it
+    toGrey(G.uFogColor.value, fog * dawn * 0.75);
+    G.uFogColor.value.multiplyScalar(1 + fog * dawn * 0.35);
+    G.uGlow.value.multiplyScalar(1 - 0.7 * fog * dawn);
+    G.uFogDensity.value = (0.0006 + 0.0003 * smoothstep(20, -5, elev)) * (1 + 0.8 * (s ? s.haze : 0.15) + 2.5 * rain);
     this.night = smoothstep(-3, -12, elev);
     this.lamp = smoothstep(4, -5, elev);
     G.uNight.value = this.night;
@@ -162,10 +201,13 @@ export class Environment {
     this.key.intensity = 1;
 
     this.hemi.color.set(a.hemiSky).lerp(tmpB.set(b.hemiSky), t);
+    toGrey(this.hemi.color, overcast * 0.6);
     this.hemi.groundColor.set(a.hemiGround).lerp(tmpB.set(b.hemiGround), t);
-    this.hemi.intensity = a.hemiE + (b.hemiE - a.hemiE) * t;
+    this.hemi.intensity = (a.hemiE + (b.hemiE - a.hemiE) * t) * (1 + 0.3 * overcast) + flash * 2.5;
 
     this.water.color.set(a.water).lerp(tmpB.set(b.water), t);
+    // the season's silt, against the autumn the looks were made for
+    if (s) this.water.color.multiply(tmpB.copy(s.silt)).multiply(tmpA.setRGB(1 / AUTUMN_SILT.r, 1 / AUTUMN_SILT.g, 1 / AUTUMN_SILT.b));
     this.water.ambient.copy(this.hemi.color).multiplyScalar(this.hemi.intensity * 1.6);
     // what the silty water body sends back: lit by the sky and a little by the key light
     const keyUp = Math.max(G.uKeyDir.value.y, 0);

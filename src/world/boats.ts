@@ -4,6 +4,8 @@ import { Rng } from '../core/rng';
 import { MeshBuilder, rgb } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { plankTexture, sailTexture } from '../render/textures';
+import { G } from '../core/globals';
+import { gustAt } from '../env/wind';
 import { downstream, halfWidth, riverLane, riverX } from './geography';
 import { buildHull, type HullShape } from './hull';
 
@@ -42,6 +44,8 @@ function hullGeometry(shape: HullShape): BufferGeometry {
 
 interface Vessel {
   root: Group;
+  /** Carries a sail (a cargo boat), so the wind heels it hard. */
+  sail: boolean;
   z: number;
   lane: number;
   speed: number;
@@ -109,7 +113,7 @@ export class RiverTraffic {
         if ((o as Mesh).isMesh) (o as Mesh).receiveShadow = true;
       });
       this.group.add(root);
-      this.vessels.push({ root, z, lane, speed, phase: this.rng.range(0, 10) });
+      this.vessels.push({ root, sail: kind === 'cargo', z, lane, speed, phase: this.rng.range(0, 10) });
     };
 
     make('cargo', -1.3, 32, -500);
@@ -131,8 +135,12 @@ export class RiverTraffic {
       // their lanes beside the river's own, squeezed in where the river narrows
       const room = halfWidth(v.z) - 14;
       const x = riverX(v.z) + room * Math.tanh((riverLane(v.z) + v.lane) / room);
-      v.root.position.set(x, 0.04 * Math.sin(t * 1.1 + v.phase), v.z);
-      v.root.rotation.set(0.015 * Math.sin(t * 0.9 + v.phase), heading, 0.025 * Math.sin(t * 0.7 + v.phase * 2));
+      // afloat on the season's water; the wind heels them over its gusts (a sail far more than a dinghy)
+      const w = G.uWind.value;
+      const across = w.x * Math.cos(heading) - w.y * Math.sin(heading);
+      const heel = across * w.z * gustAt(x, v.z) * (v.sail ? 0.05 : 0.012);
+      v.root.position.set(x, G.uWaterLevel.value + 0.04 * Math.sin(t * 1.1 + v.phase), v.z);
+      v.root.rotation.set(0.015 * Math.sin(t * 0.9 + v.phase), heading, 0.025 * Math.sin(t * 0.7 + v.phase * 2) - heel, 'YXZ');
     }
   }
 }

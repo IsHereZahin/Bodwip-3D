@@ -4,6 +4,7 @@ import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, taperedTube, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { hyacinthLeafTexture } from '../render/textures';
+import { windAt } from '../env/wind';
 import { currentAt, type BoatBody } from './boatPhysics';
 import { CHARS, charHeight, halfWidth, riverX, terrainHeight } from './geography';
 import { HERO_HULL, hullHalfWidthAt } from './hull';
@@ -26,8 +27,8 @@ const AHEAD = 620;
 /** Seconds for a plant (or a leaf) to come to the current's speed after a shove. */
 const DRAG_TAU = [1.6, 0.8];
 /** Drift downwind, m/s at full wind. */
-const WIND_DRIFT = [0.05, 0.03];
-const WIND_DIR = { x: 0.55, z: -0.83 };
+/** How much of the wind's speed a plant (its leaves catch the air) and a loose leaf drift at. */
+const WIND_DRIFT = [0.0125, 0.0075];
 /** Roots let go when stretched past this many times their rest length. */
 const SNAP = 2.2;
 const CELL = 0.9;
@@ -180,6 +181,7 @@ export class Drift {
   private readonly s = new Vector3();
   private readonly axis = new Vector3();
   private readonly cur = { x: 0, z: 0 };
+  private readonly air = { x: 0, z: 0 };
   private readonly slope = { x: 0, z: 0 };
   private lastZ = Number.NaN;
   private viewSpeed = 0;
@@ -258,14 +260,14 @@ export class Drift {
 
   private simulate(h: number, boat: BoatBody, blade: Vector3): void {
     const { px, pz, ox, oz, vx, vz } = this;
-    const wind = G.uWind.value.z;
     // forces: the current's drag and the wind's push, then a step forward
     for (let i = 0; i < N; i++) {
       const leaf = i >= PLANTS ? 1 : 0;
       currentAt(px[i], pz[i], this.cur);
       const k = 1 - Math.exp(-h / DRAG_TAU[leaf]);
-      vx[i] += (this.cur.x + WIND_DIR.x * WIND_DRIFT[leaf] * wind - vx[i]) * k;
-      vz[i] += (this.cur.z + WIND_DIR.z * WIND_DRIFT[leaf] * wind - vz[i]) * k;
+      windAt(px[i], pz[i], this.air);
+      vx[i] += (this.cur.x + this.air.x * WIND_DRIFT[leaf] - vx[i]) * k;
+      vz[i] += (this.cur.z + this.air.z * WIND_DRIFT[leaf] - vz[i]) * k;
       // the current runs faster mid-river than at the edge: that shear turns what floats in it
       const hw = halfWidth(pz[i]);
       const u = (px[i] - riverX(pz[i])) / hw;
@@ -330,7 +332,7 @@ export class Drift {
     // aground: a staggered quarter each frame (the terrain lookup is not cheap) is nudged back toward
     // open water and stopped there, so floaters collect along the banks the way they do
     for (let i = this.frame % 4; i < N; i += 4) {
-      if (terrainHeight(px[i], pz[i]) > -0.12) {
+      if (terrainHeight(px[i], pz[i]) > G.uWaterLevel.value - 0.12) {
         px[i] += Math.sign(riverX(pz[i]) - px[i]) * 0.08;
         ox[i] = px[i];
         oz[i] = pz[i];
@@ -406,7 +408,7 @@ export class Drift {
           ? viewZ - this.rng.range(AHEAD * 0.45, AHEAD * 0.98)
           : viewZ + this.rng.range(BEHIND * 0.5, BEHIND * 0.95);
       const u = this.rng.sign() * halfWidth(z) * this.rng.range(0.03, 0.85);
-      if (charHeight(z, u) > -0.8 || CHARS.some((c) => Math.abs(z - c.z) < c.halfLen && Math.abs(u - c.u) < c.halfWid + 6)) continue;
+      if (charHeight(z, u) > G.uWaterLevel.value - 0.8 || CHARS.some((c) => Math.abs(z - c.z) < c.halfLen && Math.abs(u - c.u) < c.halfWid + 6)) continue;
       return [riverX(z) + u, z];
     }
     const z = viewZ - AHEAD * 0.5;
@@ -450,7 +452,7 @@ export class Drift {
     for (let i = 0; i < N; i++) {
       const x = this.px[i];
       const z = this.pz[i];
-      let y = waveHeight(x, z, t, wind);
+      let y = G.uWaterLevel.value + waveHeight(x, z, t, wind);
       const d = Math.hypot(x - boat.pos.x, z - boat.pos.z);
       if (d < 25) y += 0.03 * wash * Math.exp(-d / 5) * Math.sin(d * 2.4 - t * 4.2);
       waveSlope(x, z, t, wind, this.slope);

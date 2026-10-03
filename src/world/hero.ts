@@ -23,7 +23,7 @@ import type { BufferGeometry } from 'three';
 import { MeshBuilder, rgb, scaleRgb, taperedTube } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { checkTexture, hullPlankTexture, softSpotTexture, weaveTexture } from '../render/textures';
-import { G } from '../core/globals';
+import { windAt } from '../env/wind';
 import { Boatman, type OarPose } from './boatman';
 import type { BoatBody } from './boatPhysics';
 import { HERO_HULL, buildHull, hullHalfWidthAt, hullStation } from './hull';
@@ -61,8 +61,6 @@ const SHAFT_TOP = 0.028;
 const SHAFT_THROAT = 0.032;
 const LOWER_HOLD = 0.5;
 const LOWER_HOLD_RADIUS = SHAFT_TOP + ((SHAFT_THROAT - SHAFT_TOP) * LOWER_HOLD) / (PADDLE_REACH - BLADE_LENGTH / 2);
-/** The breeze over the river at full strength (m/s); the wind uniform's strength scales it. */
-const BREEZE = 3;
 /** Middle of the boatman's feet on the stern platform: toward the side he paddles on (+x). */
 const STANCE = new Vector3(0.24, 0.33, -2.95);
 /** Basis vectors for setting the paddle's turn. */
@@ -340,6 +338,7 @@ export class HeroBoat {
     ],
   };
   private readonly wind = new Vector3();
+  private readonly air = { x: 0, z: 0 };
   private readonly gravity = new Vector3();
   private readonly inverse = new Quaternion();
 
@@ -578,10 +577,11 @@ export class HeroBoat {
     right.thumb.copy(P.across);
     left.at.copy(P.grip).addScaledVector(P.shaft, LOWER_HOLD);
     left.thumb.copy(P.shaft).negate();
-    // the air past him: the breeze, less the boat's own way through it; and which way is down, in her frame
-    const air = G.uWind.value;
+    // the air past him (the wind where she is, gusts and all, less her own way through it); and which way
+    // is down, in her frame
+    windAt(body.pos.x, body.pos.z, this.air);
     this.inverse.copy(g.quaternion).invert();
-    this.wind.set(air.x * air.z * BREEZE - body.vel.x, 0, air.y * air.z * BREEZE - body.vel.z).applyQuaternion(this.inverse);
+    this.wind.set(this.air.x - body.vel.x, 0, this.air.z - body.vel.z).applyQuaternion(this.inverse);
     this.gravity.set(0, -9.81, 0).applyQuaternion(this.inverse);
     this.man.update(dt, t, bodyDrive(phase, this.drive), this.hands, body, this.wind, this.gravity);
     this.shadow.position.x = STANCE.x + this.man.crew.x * 0.8;

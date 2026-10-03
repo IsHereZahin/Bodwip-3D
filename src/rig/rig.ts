@@ -1,4 +1,5 @@
 import { PerspectiveCamera, Quaternion, Vector3 } from 'three';
+import { G } from '../core/globals';
 import { angleDelta, clamp, damp, smoothstep } from '../core/mathx';
 import { BoatBody, type Crew } from '../world/boatPhysics';
 import { JOURNEY_Z0, JOURNEY_Z1, boatLane, riverX, terrainHeight } from '../world/geography';
@@ -307,7 +308,7 @@ export class Rig {
     const cp = Math.cos(this.pitch) * this.dist;
     const cam = this.camera.position;
     cam.set(this.target.x + Math.sin(back) * cp, this.target.y + Math.sin(this.pitch) * this.dist, this.target.z + Math.cos(back) * cp);
-    const ground = Math.max(terrainHeight(cam.x, cam.z), 0);
+    const ground = Math.max(terrainHeight(cam.x, cam.z), G.uWaterLevel.value);
     cam.y = Math.max(cam.y, ground + 1.2);
     this.camera.lookAt(this.target);
     this.camera.updateMatrixWorld();

@@ -5,6 +5,9 @@ import { clamp } from './core/mathx';
 import { Clock, SPEEDS } from './env/clock';
 import type { SkyEvent, SkyEventKind } from './env/clock';
 import { Environment } from './env/environment';
+import { applySeason, dayOfYear, makeSeasonState, moonAgeOn, seasonAt, seasonIndex, seasonMiddle } from './env/season';
+import { Weather, type WeatherChoice } from './env/weather';
+import { Wind } from './env/wind';
 import { Pipeline } from './render/pipeline';
 import { loadSurfaces } from './render/surfaces';
 import { setMaxAnisotropy } from './render/textures';
@@ -13,15 +16,20 @@ import { Rig, VIEWS } from './rig/rig';
 import type { ViewName } from './rig/rig';
 import { EVENT_NOW, clockLabel } from './ui/bangla';
 import { Controls } from './ui/controls';
-import type { CameraChoice } from './ui/controls';
+import { WEATHER_PICKS } from './ui/controls';
+import type { CameraChoice, WeatherPick } from './ui/controls';
 import { Hud } from './ui/hud';
 import { Bil } from './world/bil';
+import { buildSaltWorks } from './world/coast';
 import { RiverTraffic } from './world/boats';
+import { WETLANDS, terrainHeight } from './world/geography';
 import { Drift } from './world/drift';
+import { Fishing, fishingClearings } from './world/fishing';
 import { HeroBoat } from './world/hero';
 import { Life } from './world/life';
 import { Meadow } from './world/meadow';
 import { buildPondLife } from './world/ponds';
+import { buildRain } from './world/rain';
 import { buildSky } from './world/sky';
 import { buildTerrain } from './world/terrain';
 import { buildVegetation } from './world/vegetation';
@@ -31,9 +39,10 @@ import { buildWater } from './world/water';
 const BLACK = new Color(0, 0, 0);
 const MIST = new Color(0.8, 0.72, 0.6);
 const DEBUG = new URLSearchParams(location.search).has('debug');
-/** The first evening: golden hour, under a moon just past full that rises half an hour after sunset. */
+/** The first evening: golden hour, on today's date (its season, and its moon). */
 const START_HOUR = 17.5;
-const START_MOON_AGE = 15.6;
+/** How fast the river rises or falls toward the season's level when the season is changed (m/s). */
+const LEVEL_RATE = 0.25;
 /** Untouched this long, the camera turns to watch a sky event by itself; longer, the film tour starts. */
 const WATCH_IDLE_MS = 12000;
 const FILM_IDLE_MS = 75000;
@@ -90,9 +99,10 @@ async function main(hud: Hud): Promise<void> {
   await nextTask();
   const huts = planHuts();
   scene.add(buildVillages(huts));
+  scene.add(buildSaltWorks());
   hud.progress(0.52);
   await nextTask();
-  scene.add(buildVegetation(huts, surfaces.bark));
+  scene.add(buildVegetation(huts, surfaces.bark, fishingClearings()));
   scene.add(buildPondLife());
   const bil = new Bil();
   scene.add(bil.group);
@@ -100,6 +110,8 @@ async function main(hud: Hud): Promise<void> {
   scene.add(meadow.group);
   const drift = new Drift();
   scene.add(drift.group);
+  const fishing = new Fishing();
+  scene.add(fishing.group);
   hud.progress(0.78);
   await nextTask();
 
@@ -110,8 +122,16 @@ async function main(hud: Hud): Promise<void> {
   scene.add(traffic.group);
   const life = new Life();
   scene.add(life.group);
-  const clock = new Clock(START_HOUR, START_MOON_AGE);
+  const today = new Date();
+  const clock = new Clock(START_HOUR, moonAgeOn(today), dayOfYear(today));
+  const season = makeSeasonState();
+  const weather = new Weather();
+  const wind = new Wind();
+  const rain = buildRain();
+  scene.add(rain);
   const env = new Environment(sky, water);
+  env.season = season;
+  env.weather = weather;
   env.addTo(scene);
   env.setShadowMapSize(Math.min(4096, renderer.capabilities.maxTextureSize) >= 4096 && devicePixelRatio <= 1.5 ? 4096 : 2048);
   const rig = new Rig(camera, canvas);
@@ -122,7 +142,7 @@ async function main(hud: Hud): Promise<void> {
   await nextTask();
 
   // ---- size and adaptive resolution ----
-  const perf = { scale: 1, acc: 0, n: 0, frames: 0, cool: 0, locked: false, ms: 16, driftMs: 0 };
+  const perf = { scale: 1, acc: 0, n: 0, frames: 0, cool: 0, locked: false, ms: 16, driftMs: 0, fishMs: 0 };
   const resize = () => {
     const w = Math.max(1, innerWidth);
     const h = Math.max(1, innerHeight);
@@ -240,6 +260,17 @@ async function main(hud: Hud): Promise<void> {
     rig.watch = watch.event && !director.active && (watch.asked || idle) ? (isSun(watch.event.kind) ? env.sunDir : env.moonDir) : null;
   };
 
+  /** Moves to the middle of a season (or back to today's date); the river eases to its new level. */
+  const chooseSeason = (choice: number | 'today') => {
+    clock.setDayOfYear(choice === 'today' ? dayOfYear(new Date()) : seasonMiddle(choice));
+  };
+  /** Holds the weather (and the wind) as the viewer asks, or hands them back to the season. */
+  const chooseWeather = (pick: WeatherPick) => {
+    weatherPick = pick;
+    weather.choice = pick === 'rain' || pick === 'storm' ? pick : pick === 'auto' ? 'auto' : 'clear';
+    wind.override = pick === 'calm' ? 0.15 : pick === 'breeze' ? 0.8 : pick === 'windy' ? 1.8 : null;
+  };
+  let weatherPick: WeatherPick = 'auto';
   const controls = new Controls({
     togglePlay: () => {
       clock.playing = !clock.playing;
@@ -253,6 +284,8 @@ async function main(hud: Hud): Promise<void> {
     camera: chooseCamera,
     view: setView,
     moon: (age) => clock.setMoonAge(age),
+    season: chooseSeason,
+    weather: chooseWeather,
     sound: toggleSound,
     touched: noteInput,
   });
@@ -279,6 +312,15 @@ async function main(hud: Hud): Promise<void> {
         e.preventDefault();
         clock.playing = !clock.playing;
         break;
+      case 'KeyY':
+        chooseSeason((seasonIndex(clock.dayOfYear) + 1) % 6);
+        break;
+      case 'KeyB': {
+        const i = WEATHER_PICKS.findIndex(([v]) => v === weatherPick);
+        chooseWeather(WEATHER_PICKS[(i + 1) % WEATHER_PICKS.length][0]);
+        controls.showWeather(weatherPick);
+        break;
+      }
       case 'BracketLeft':
         stepSpeed(-1, false);
         break;
@@ -332,12 +374,38 @@ async function main(hud: Hud): Promise<void> {
   const debug = { freeze: false };
   let t = 0;
   const focus = new Vector3();
+  /**
+   * The season from the day of the year, the weather on it, and the wind they make; `settle` jumps
+   * straight to where they are heading (for stills and a fresh season) instead of easing there.
+   */
+  const updateSky = (dt: number, settle: boolean) => {
+    seasonAt(clock.dayOfYear, season);
+    applySeason(season);
+    const ease = settle ? 600 : dt;
+    weather.update(ease, t, season);
+    wind.update(ease, t, {
+      strength: season.wind + weather.squall * 1.6,
+      gusts: Math.min(1, season.gusts + weather.squall * 0.4),
+      angle: season.windAngle,
+    });
+    G.uWet.value = weather.wet;
+    G.uRain.value = weather.rain;
+    rain.visible = weather.rain > 0.003;
+    // the river rises and falls toward the season's level rather than jumping
+    const level = G.uWaterLevel.value;
+    G.uWaterLevel.value = settle ? season.water : level + clamp(season.water - level, -LEVEL_RATE * dt, LEVEL_RATE * dt);
+    water.mesh.position.y = G.uWaterLevel.value;
+    // the clouds drift on the wind
+    const w = G.uWind.value;
+    sky.shift.x += w.x * (0.4 + 0.6 * w.z) * dt * 0.0035;
+    sky.shift.y += w.y * (0.4 + 0.6 * w.z) * dt * 0.0035;
+  };
   const step = (dt: number) => {
     t += dt;
     G.uTime.value = t;
-    G.uWind.value.z = 0.75 + 0.25 * Math.sin(t * 0.05) + 0.1 * Math.sin(t * 0.23);
     clock.boost = held.has('KeyT') ? Math.max(1, 40 / clock.speed) : 1;
     if (!scrubbing) clock.advance(dt);
+    updateSky(dt, false);
     env.update(clock.hour, clock.moonAge);
     followSky(performance.now());
     // the boat floats and is paddled by physics; the boatman's weight from last frame trims her
@@ -354,6 +422,10 @@ async function main(hud: Hud): Promise<void> {
     // the bil's lilies give way to her hull and blade and are drawn back by their stems
     bil.update(dt, t, b, hero.blade, hero.bladeWet);
     perf.driftMs += (performance.now() - simStart - perf.driftMs) * 0.1;
+    // the fishermen work their nets; the two nearest ring the water
+    const fishStart = performance.now();
+    fishing.update(dt, t, camera.position, water.nets);
+    perf.fishMs += (performance.now() - fishStart - perf.fishMs) * 0.1;
     // birds and fireflies gather round whoever is being watched: the boat, or the free camera
     life.update(dt, t, rig.subject, rig.subjectHeading, env.night);
     sky.mesh.position.copy(camera.position);
@@ -363,8 +435,10 @@ async function main(hud: Hud): Promise<void> {
     else rig.focus(focus);
     focus.set(Math.round(focus.x / 12) * 12, 0, Math.round(focus.z / 12) * 12);
     if (env.aimShadow(focus, false)) renderer.shadowMap.needsUpdate = true;
-    sound.update(dt, env.night, G.uWind.value.z);
+    if (weather.struck) sound.thunder();
+    sound.update(dt, env.night, G.uWind.value.z, weather.rain);
   };
+  updateSky(0, true);
   step(0);
   renderer.setRenderTarget(pipeline.sceneTarget);
   await renderer.compileAsync(scene, camera);
@@ -436,17 +510,29 @@ async function main(hud: Hud): Promise<void> {
       /** Free camera at [x, y, z, yaw, pitch]. */
       free?: [number, number, number, number, number];
       film?: [number, number];
+      /** Day of the year (0 = 1 January), or a season by index (0 গ্রীষ্ম … 5 বসন্ত, at its middle). */
+      day?: number;
+      season?: number;
+      weather?: WeatherChoice;
+      /** Hold the wind at this strength (null: follow the season again). */
+      wind?: number | null;
     }
     const b0 = () => rig.boat;
     Object.assign(window, {
       __river: {
         ready: true,
         shot(o: ShotOptions) {
-          if (o.journey !== undefined) rig.place(o.journey);
           if (o.moon !== undefined) clock.setMoonAge(o.moon);
           if (o.hour !== undefined) clock.setHour(o.hour);
+          if (o.season !== undefined) clock.setDayOfYear(seasonMiddle(o.season));
+          if (o.day !== undefined) clock.setDayOfYear(o.day);
+          if (o.weather !== undefined) weather.choice = o.weather;
+          if (o.wind !== undefined) wind.override = o.wind;
           watch.event = null;
           watch.asked = false;
+          updateSky(0, true);
+          // the boat goes in after the river has its level
+          if (o.journey !== undefined) rig.place(o.journey);
           env.update(clock.hour, clock.moonAge);
           const body = o.face === 'sun' ? env.sunDir : env.moonDir;
           if (o.free) {
@@ -479,7 +565,38 @@ async function main(hud: Hud): Promise<void> {
         /** The boat's motion now, for checking the physics. */
         boatState() {
           const r = (v: number, k = 1000) => Math.round(v * k) / k;
-          return { x: r(b0().pos.x, 100), z: r(b0().pos.z, 100), heave: r(b0().pos.y), pitch: r(b0().rotX), roll: r(b0().rotZ), heading: r(b0().heading), course: r(b0().course), speed: r(b0().speed), crew: { x: r(hero.crew.x), z: r(hero.crew.z) }, reach: r(hero.reach) };
+          return { x: r(b0().pos.x, 100), z: r(b0().pos.z, 100), heave: r(b0().pos.y), pitch: r(b0().rotX), roll: r(b0().rotZ), heading: r(b0().heading), course: r(b0().course), speed: r(b0().speed), crew: { x: r(hero.crew.x), z: r(hero.crew.z) }, reach: r(hero.reach), depth: r(-terrainHeight(b0().pos.x, b0().pos.z), 100) };
+        },
+        /**
+         * Runs the world forward `seconds` (in 1/30 s steps, without drawing) and samples the boat every
+         * `every` seconds: where she is, the water under her, the boatman's reach. For checking her route.
+         */
+        trace(seconds: number, every = 5) {
+          const out: { z: number; x: number; depth: number; reach: number; speed: number }[] = [];
+          const r = (v: number, k = 100) => Math.round(v * k) / k;
+          debug.freeze = false;
+          clock.playing = true;
+          let worst = 0;
+          for (let i = 1; i <= Math.round(seconds * 30); i++) {
+            step(1 / 30);
+            worst = Math.max(worst, hero.reach);
+            if (i % Math.max(1, Math.round(every * 30)) === 0) {
+              const b = b0();
+              out.push({ z: r(b.pos.z, 10), x: r(b.pos.x, 10), depth: r(-terrainHeight(b.pos.x, b.pos.z)), reach: r(worst), speed: r(b.speed) });
+              worst = 0;
+            }
+          }
+          debug.freeze = true;
+          clock.playing = false;
+          return out;
+        },
+        /** Each lift net's state: where it is, what its fisherman is doing, the lever, his force, the net's load. */
+        nets() {
+          return fishing.state();
+        },
+        /** Where the small wetlands are. */
+        wetlands() {
+          return WETLANDS.map((w) => ({ x: Math.round(w.x), z: Math.round(w.z), r: w.r }));
         },
         /** Today's sky events, as { kind, hour }. */
         events() {
@@ -502,7 +619,7 @@ async function main(hud: Hud): Promise<void> {
         },
         info() {
           const cam = camera.position.toArray().map((v) => Math.round(v * 10) / 10);
-          return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, scale: perf.scale, ms: Math.round(perf.ms * 10) / 10, programs: renderer.info.programs?.length, camera: cam, mode: director.active ? 'film' : rig.mode, hour: Math.round(clock.hour * 100) / 100, driftMs: Math.round(perf.driftMs * 100) / 100 };
+          return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, scale: perf.scale, ms: Math.round(perf.ms * 10) / 10, programs: renderer.info.programs?.length, camera: cam, mode: director.active ? 'film' : rig.mode, hour: Math.round(clock.hour * 100) / 100, driftMs: Math.round(perf.driftMs * 100) / 100, fishMs: Math.round(perf.fishMs * 100) / 100, rain: Math.round(G.uRain.value * 100) / 100, rainShown: rain.visible, wind: Math.round(G.uWind.value.z * 100) / 100 };
         },
       },
     });

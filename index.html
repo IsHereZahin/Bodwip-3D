@@ -266,6 +266,7 @@
         <div class="readout">
           <output id="clock" for="tl">বিকেল ৫:৩০</output>
           <span id="tithi"></span>
+          <span id="bdate"></span>
         </div>
       </div>
 
@@ -292,6 +293,12 @@
         <label class="pick moonpick">
           <svg viewBox="-8 -8 16 16" aria-hidden="true"><circle class="moon-dark" r="7" /><path id="moon-lit" class="moon-lit" d="" /></svg>
           <select id="moon" aria-label="চাঁদের কলা" title="চাঁদের কলা"></select>
+        </label>
+        <label class="pick">
+          <select id="season" aria-label="ঋতু" title="ঋতু (Y)"></select>
+        </label>
+        <label class="pick">
+          <select id="weather" aria-label="আবহাওয়া" title="আবহাওয়া (B)"></select>
         </label>
         <span class="spacer"></span>
         <button id="sound" class="ibtn" type="button" aria-pressed="false" aria-label="শব্দ চালু করুন" title="শব্দ (M)">
@@ -354,6 +361,8 @@
             <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>সময়ের গতি কমানো, বাড়ানো</dd>
             <dt><kbd>T</kbd> চেপে ধরে</dt><dd>সময় খুব দ্রুত</dd>
             <dt><kbd>N</kbd></dt><dd>পরের সূর্যোদয়, সূর্যাস্ত, চন্দ্রোদয় বা চন্দ্রাস্ত</dd>
+            <dt><kbd>Y</kbd></dt><dd>পরের ঋতু (শুরু হয় আজকের তারিখ থেকে)</dd>
+            <dt><kbd>B</kbd></dt><dd>আবহাওয়া: ঋতু অনুযায়ী, পরিষ্কার, হাওয়া, বৃষ্টি, ঝড়</dd>
             <dt>বারের চিহ্ন</dt><dd>সেই মুহূর্তে গিয়ে সেদিকে তাকানো</dd>
           </dl>
         </section>

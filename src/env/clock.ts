@@ -1,6 +1,7 @@
 import { Vector3 } from 'three';
 import { lerp, smoothstep } from '../core/mathx';
-import { SYNODIC_MONTH, moonDirection, sunDirection } from './astro';
+import { SYNODIC_MONTH, moonDirection, setSunDay, sunDirection } from './astro';
+import { YEAR } from './season';
 
 export type SkyEventKind = 'sunrise' | 'sunset' | 'moonrise' | 'moonset';
 
@@ -88,13 +89,30 @@ export class Clock {
   boost = 1;
   /** Moon's age (days since new moon) at time 0. */
   private moonEpoch: number;
+  /** Day of the year (0 = 1 January) at time 0. */
+  private yearEpoch: number;
   private cache: SkyEvent[] = [];
   private cacheDay = Number.NaN;
   private cacheCount = 0;
 
-  constructor(hour: number, moonAge: number) {
+  /** `yearDay`: the day of the year (0 = 1 January) the clock starts on. */
+  constructor(hour: number, moonAge: number, yearDay: number) {
     this.time = hour * HOUR;
     this.moonEpoch = moonAge - this.time;
+    this.yearEpoch = Math.floor(yearDay) - Math.floor(this.time);
+    setSunDay(this.dayOfYear);
+  }
+
+  /** Day of the year now (0 = 1 January), fractional; the seasons and the sun's path follow it. */
+  get dayOfYear(): number {
+    return (((this.yearEpoch + this.time) % YEAR) + YEAR) % YEAR;
+  }
+
+  /** Moves to the same hour on another day of the year (the moon goes on with its own count). */
+  setDayOfYear(day: number): void {
+    this.yearEpoch = Math.floor(day) - this.day;
+    setSunDay(this.dayOfYear);
+    this.cacheDay = Number.NaN;
   }
 
   get day(): number {
@@ -152,6 +170,8 @@ export class Clock {
   events(): readonly SkyEvent[] {
     const day = this.day;
     if (day !== this.cacheDay) {
+      // the sun's path for today (it moves too little within a day to matter)
+      setSunDay(this.dayOfYear);
       const out: SkyEvent[] = [];
       crossings(day - 1, day + 2, (t) => sunDirection(hourOf(t), tmp).y, 'sunrise', 'sunset', out);
       crossings(day - 1, day + 2, (t) => moonDirection(hourOf(t), this.ageAt(t), tmp).y, 'moonrise', 'moonset', out);

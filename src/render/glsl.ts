@@ -18,6 +18,15 @@ uniform float uMist;
 uniform float uNight;
 uniform vec3 uWaterBody;
 uniform vec4 uWind;
+uniform vec2 uGust;
+uniform float uWaterLevel;
+uniform float uFlowScale;
+uniform vec4 uSeasonA;
+uniform vec4 uSeasonB;
+uniform vec4 uCrops;
+uniform float uWet;
+uniform float uRain;
+uniform float uOvercast;
 
 float hash12(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -58,6 +67,16 @@ float fbm5(vec2 p) {
   return s / 0.96875;
 }
 
+// The gusts' factor on the mean wind at p: fronts of stronger air rolling downwind (twin of gustAt in
+// env/wind.ts). 1 on average.
+float windGust(vec2 p) {
+  float along = dot(p, uWind.xy);
+  float across = dot(p, vec2(-uWind.y, uWind.x));
+  float front = along * 0.045 - uGust.x;
+  float g = 0.62 * sin(front) + 0.38 * sin(front * 2.3 + across * 0.031 + 1.7);
+  return max(0.0, 1.0 + uWind.w * g);
+}
+
 // colour of the haze along a view ray: the horizon tint, warmed on the sun's side
 vec3 hazeColor(vec3 rd) {
   float hl = length(rd.xz);
@@ -70,8 +89,8 @@ vec3 hazeColor(vec3 rd) {
 // Seen from above the river, anything under the surface fades into the silty water body with the
 // length of water the eye looks through it; the surface itself adds only reflection, glitter and foam
 vec3 underwater(vec3 col, vec3 wpos) {
-  if (wpos.y >= 0.0 || uReflPass > 0.5 || uCamPos.y <= 0.0) return col;
-  float path = length(wpos - uCamPos) * -wpos.y / (uCamPos.y - wpos.y);
+  if (wpos.y >= uWaterLevel || uReflPass > 0.5 || uCamPos.y <= uWaterLevel) return col;
+  float path = length(wpos - uCamPos) * (uWaterLevel - wpos.y) / (uCamPos.y - wpos.y);
   return mix(uWaterBody, col * vec3(0.78, 0.86, 0.72), exp(-path * 2.8));
 }
 
@@ -83,8 +102,8 @@ vec3 applyAtmosphere(vec3 col, vec3 wpos) {
   rd /= max(dist, 1e-4);
   // the mirror pass fogs only the stretch from the water surface up to the object;
   // the water shader fogs the stretch from the camera down to the surface
-  if (uReflPass > 0.5 && ro.y < 0.0 && rd.y > 1e-4) {
-    float t0 = -ro.y / rd.y;
+  if (uReflPass > 0.5 && ro.y < uWaterLevel && rd.y > 1e-4) {
+    float t0 = (uWaterLevel - ro.y) / rd.y;
     ro += rd * t0;
     dist = max(dist - t0, 0.0);
   }

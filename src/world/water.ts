@@ -29,7 +29,7 @@ const FIELD_X0 = -620;
 const FIELD_SX = 1240;
 /** About 3 m a texel across, so the khals and the bil's channels have a depth of their own. */
 const FIELD_W = 384;
-const FIELD_H = 1024;
+const FIELD_H = 1280;
 
 /** Tiling ripple normals, generated once. */
 function rippleNormals(maxAnisotropy: number): DataTexture {
@@ -120,6 +120,10 @@ uniform vec4 uField;
 uniform vec4 uBoat;      // x, z, heading, speed through the water
 uniform vec4 uOar;       // the paddle's blade in the boat's frame (x across, z along), how hard it pulls, how deep it is (0..1)
 uniform vec4 uSwirl;     // where the blade last came out (world x, z), seconds since, how hard it had pulled
+uniform vec4 uNetA0;     // the lift net nearest the camera: its square's middle (x, z), half its side, its yaw
+uniform vec4 uNetB0;     // ... how hard its rim is cutting the surface, how much water is running out of it
+uniform vec4 uNetA1;     // the next nearest
+uniform vec4 uNetB1;
 uniform vec3 uAmb;
 varying vec3 vWorld;
 
@@ -127,6 +131,44 @@ ${hullWaterlineGlsl(HERO_HULL)}
 ${waveSlopeGlsl()}
 
 vec2 ripple(vec2 uv) { return texture2D(tNormal, uv).xy * 2.0 - 1.0; }
+
+// rings spreading from raindrops: in each cell of two offset grids a drop lands now and then, and its
+// ring widens and fades (squared by hand: pow() of a negative base is undefined in GLSL)
+vec2 rainRings(vec2 p) {
+  vec2 s = vec2(0.0);
+  for (int i = 0; i < 2; i++) {
+    vec2 q = p * (1.6 + float(i) * 0.9) + float(i) * 7.3;
+    vec2 c = floor(q);
+    float h = hash12(c + float(i) * 13.0);
+    float ph = fract(uTime * (0.9 + h) + h * 7.0);
+    vec2 o = fract(q) - 0.5 - (vec2(hash12(c + 3.1), hash12(c + 5.7)) - 0.5) * 0.6;
+    float d = length(o);
+    float k = (d - ph * 0.45) * 18.0;
+    s += o / max(d, 1e-3) * exp(-k * k) * (1.0 - ph);
+  }
+  return s;
+}
+
+// a lift net: rings spreading from its square's rim as it comes up through the surface or goes in, foam
+// where it cuts the water, and drops pattering inside the square once it is up (separate uniforms rather
+// than an indexed array, which ANGLE runs slowly)
+void netRings(vec4 na, vec4 nb, vec2 p, inout vec2 slope, inout float foam) {
+  if (nb.x + nb.y < 0.01) return;
+  vec2 o = p - na.xy;
+  vec2 ax = vec2(cos(na.w), -sin(na.w));
+  vec2 az = vec2(sin(na.w), cos(na.w));
+  vec2 l = vec2(dot(o, ax), dot(o, az));
+  vec2 e = abs(l) - na.z;
+  float edge = length(max(e, 0.0)) + min(max(e.x, e.y), 0.0);
+  float ae = abs(edge);
+  if (ae < 5.0 && nb.x > 0.01) {
+    vec2 nl = edge > 0.0 ? normalize(max(e, 0.0) + 1e-4) * sign(l) : (e.x > e.y ? vec2(sign(l.x), 0.0) : vec2(0.0, sign(l.y)));
+    vec2 nw = (ax * nl.x + az * nl.y) * (edge > 0.0 ? 1.0 : -1.0);
+    slope += nw * cos(ae * 8.0 - uTime * 6.5) * exp(-ae * 0.9) * nb.x * 0.22;
+    foam += nb.x * exp(-ae * 4.0) * 0.35 * smoothstep(0.35, 0.75, vnoise(p * 6.0 + uTime * 2.0));
+  }
+  if (nb.y > 0.01 && e.x < 0.0 && e.y < 0.0) slope += rainRings(p * 1.4 + 11.0) * nb.y * 0.5;
+}
 
 // ---- the boat: Kelvin wake, rings round the hull, the paddle ----
 float wakeField(vec2 q, float spd) {
@@ -174,8 +216,9 @@ void main() {
   float boatSpd = clamp(uBoat.w / 2.0, 0.0, 1.4);
 
   vec4 fld = texture2D(tField, (wp.xz - uField.xy) * uField.zw);
-  float depth = max(-fld.r, 0.0);
-  vec2 flow = fld.gb;
+  float depth = max(uWaterLevel - fld.r, 0.0);
+  // the season sets the river's pace: fast and full in the rains, slack in the dry months
+  vec2 flow = fld.gb * uFlowScale;
   float spd = length(flow);
   vec2 along = spd > 0.02 ? flow / spd : vec2(0.0, -1.0);
   vec2 across = vec2(-along.y, along.x);
@@ -199,10 +242,19 @@ void main() {
   // still water (the bil, the khals, the slack by the banks) lies glassier than the running river
   float running = smoothstep(0.0, 0.2, spd);
   vec2 slope = nA * (0.07 + 0.13 * running) + nB * (0.06 + 0.1 * uWind.z) * (0.6 + 0.4 * running) * far + nC * (0.04 + 0.06 * running);
-  // the long waves the boat and the floating plants ride (see waves.ts), damped where the water is sheltered
+  // the long waves the boat and the floating plants ride (see waves.ts), damped where the water is sheltered;
+  // under a gust front the ripples darken and roughen the water (cat's paws)
   slope += waveSlope(wp.xz) * mix(${SHELTERED.toFixed(2)}, 1.0, running);
+  slope += nB * 0.1 * uWind.z * max(windGust(wp.xz) - 1.0, 0.0) * far;
+  // rain: every drop rings the surface
+  if (uRain > 0.01) slope += rainRings(wp.xz) * uRain * 0.7 * far;
+  // a strong wind breaks the tops of the waves into whitecaps, streaked downwind, under the gusts
+  float blow = uWind.z * windGust(wp.xz);
+  vec2 wq = vec2(dot(wp.xz, vec2(-uWind.y, uWind.x)) * 2.2, dot(wp.xz, uWind.xy) * 0.55 - uTime * 0.9);
+  float crest = vnoise(wq) * 0.65 + vnoise(wq * 2.7 + 3.1) * 0.35;
+  float whitecaps = smoothstep(1.4, 2.6, blow) * smoothstep(0.72, 0.9, crest) * (0.5 + 0.5 * vnoise(wp.xz * 0.15 - uTime * 0.05));
 
-  float foam = 0.0;
+  float foam = whitecaps * 0.6 * running;
   // water lapping along the hull at the waterline, livelier with way on
   if (abs(sAlong) < 1.0) {
     float edge = abs(q.x) - hullHalfBeamAtWater(sAlong);
@@ -238,6 +290,9 @@ void main() {
     foam += ring * 0.35 * smoothstep(0.4, 0.8, vnoise(wp.xz * 9.0 + uTime));
   }
 
+  netRings(uNetA0, uNetB0, wp.xz, slope, foam);
+  netRings(uNetA1, uNetB1, wp.xz, slope, foam);
+
   // flecks of foam and silt riding the current, thickest in the slack water by the banks (none on still water)
   vec2 fq = vec2(fp.x * 0.9, fp.y * 0.22);
   float fa = smoothstep(0.74, 0.92, vnoise(fq - vec2(0.0, spd * 2.2 * p0)));
@@ -263,7 +318,7 @@ void main() {
   // sun (or moon) glitter
   vec3 H = normalize(uKeyDir + V);
   float nh = max(dot(N, H), 0.0);
-  col += uKeyColor * (pow(nh, 1100.0) * 26.0 + pow(nh, 160.0) * 0.7) * step(0.0, uKeyDir.y);
+  col += uKeyColor * (pow(nh, 1100.0) * 26.0 + pow(nh, 160.0) * 0.7) * step(0.0, uKeyDir.y) * (1.0 - uOvercast);
 
   // a lapping line where the river meets the bank, faint round still water
   float shore = smoothstep(0.5, 0.06, depth) * smoothstep(0.0, 0.04, depth) * (0.35 + 0.65 * smoothstep(0.03, 0.25, spd));
@@ -279,6 +334,12 @@ void main() {
 }
 `;
 
+/** For the two lift nets nearest the camera: a = (x, z, half-side, yaw) of the net's square, b = (splash, drip, 0, 0). */
+export interface NetRipples {
+  a: [Vector4, Vector4];
+  b: [Vector4, Vector4];
+}
+
 export interface Water {
   mesh: Mesh;
   /** The hero boat: x, z, heading, speed through the water. */
@@ -287,6 +348,8 @@ export interface Water {
   oar: Vector4;
   /** The eddy the blade left where it last came out: world x, z, seconds since, strength. */
   swirl: Vector4;
+  /** The rings of the two lift nets nearest the camera. */
+  nets: NetRipples;
   color: Color;
   ambient: Color;
 }
@@ -296,6 +359,7 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
   const boat = new Vector4();
   const oar = new Vector4();
   const swirl = new Vector4(0, 0, 99, 0);
+  const nets: NetRipples = { a: [new Vector4(), new Vector4()], b: [new Vector4(), new Vector4()] };
   const color = new Color();
   const ambient = new Color();
   const material = new ShaderMaterial({
@@ -309,6 +373,10 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
       uBoat: { value: boat },
       uOar: { value: oar },
       uSwirl: { value: swirl },
+      uNetA0: { value: nets.a[0] },
+      uNetB0: { value: nets.b[0] },
+      uNetA1: { value: nets.a[1] },
+      uNetB1: { value: nets.b[1] },
       uAmb: { value: ambient },
     },
     vertexShader: VERT,
@@ -328,6 +396,6 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
   // first of the see-through things, so fireflies and motes over the river draw on top of it
   mesh.renderOrder = -1;
   mesh.name = 'water';
-  return { mesh, boat, oar, swirl, color, ambient };
+  return { mesh, boat, oar, swirl, nets, color, ambient };
 }
 
