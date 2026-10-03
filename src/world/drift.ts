@@ -13,7 +13,7 @@ import { waveHeight, waveSlope } from './waves';
 // neighbours in loose mats by tangled roots; and fallen leaves. Each is dragged toward the local current
 // (and a touch downwind), bobs and tilts on the shared waves, turns with the current's shear, jostles its
 // neighbours, runs aground and gathers along the banks, and is shouldered aside by the boat's hull and
-// stirred by the oar's blade, then eases back to the current's pace. Roots stretched too far let go, so
+// stirred by the paddle's blade, then eases back to the current's pace. Roots stretched too far let go, so
 // the boat leaves a lane through a mat. Solved as position-based dynamics: stable at any frame rate.
 
 const UP = new Vector3(0, 1, 0);
@@ -241,7 +241,7 @@ export class Drift {
     this.pz.fill(Number.NaN);
   }
 
-  /** `viewZ`: where the viewer is along the river; `boat`: the hull that parts them; `blade`: the oar's blade (world). */
+  /** `viewZ`: where the viewer is along the river; `boat`: the hull that parts them; `blade`: the paddle's blade (world). */
   update(dt: number, t: number, viewZ: number, boat: BoatBody, blade: Vector3): void {
     this.frame++;
     // which way the river moves past the viewer decides where newcomers drift in from; a jump (a film
@@ -316,12 +316,12 @@ export class Drift {
             pz[i] = boat.pos.z + fz * along + sz * a;
           }
         }
-        // the blade sweeping through the water shoves what it meets
+        // the blade drawn through the water shoves what it meets (not while it is swung through the air)
         const dbx = px[i] - blade.x;
         const dbz = pz[i] - blade.z;
         const db = Math.hypot(dbx, dbz);
         const reach = 0.32 + this.radius[i];
-        if (db < reach && db > 1e-6) {
+        if (blade.y < 0.05 && db < reach && db > 1e-6) {
           px[i] = blade.x + (dbx / db) * reach;
           pz[i] = blade.z + (dbz / db) * reach;
         }

@@ -17,6 +17,7 @@ import {
   TorusGeometry,
   Vector2,
   Vector3,
+  Vector4,
 } from 'three';
 import type { BufferGeometry } from 'three';
 import { MeshBuilder, rgb, scaleRgb, taperedTube } from '../render/builder';
@@ -24,13 +25,26 @@ import { patchMaterial } from '../render/patch';
 import { checkTexture, hullPlankTexture, softSpotTexture, weaveTexture } from '../render/textures';
 import { G } from '../core/globals';
 import { Boatman, type OarPose } from './boatman';
-import { scull, strokePhase, type BoatBody, type Scull } from './boatPhysics';
+import type { BoatBody } from './boatPhysics';
 import { HERO_HULL, buildHull, hullHalfWidthAt, hullStation } from './hull';
+import {
+  BLADE_LENGTH,
+  MEAN_THRUST,
+  PADDLE_REACH,
+  bodyDrive,
+  makeBodyDrive,
+  makePaddlePose,
+  paddleForce,
+  paddlePose,
+  strokePhase,
+  type PaddleForce,
+} from './paddle';
 
 // The hero boat: a Bengal dinghy, planked and cramped with iron, tarred below and weathered above, with
 // her frames and floorboards inside, a chhoi of woven bamboo over her middle, cargo in the bow, a
-// lantern hung from the chhoi, and the boatman sculling from a platform at the stern. The boat's
-// motion comes from BoatBody; this file builds her and poses everything aboard.
+// lantern hung from the chhoi, and the boatman paddling with a বৈঠা from a platform at the stern. The
+// boat's motion comes from BoatBody (which the same stroke drives); this file builds her and poses
+// everything aboard.
 
 const LEN = HERO_HULL.len;
 const zAt = (s: number) => (s - 0.5) * LEN;
@@ -38,25 +52,23 @@ const sAt = (z: number) => z / LEN + 0.5;
 const UP = new Vector3(0, 1, 0);
 const Z_AXIS = new Vector3(0, 0, 1);
 
-/** Oar pivot (the rope grommet on the post) on the starboard quarter, and the shaft's rest line (handle → blade). */
-const OAR_PIVOT = new Vector3(0.4, 0.98, -3.55);
-const OAR_REST = new Vector3(0.45, -0.5, -1).normalize();
-const OAR_INBOARD = 1.25;
-const OAR_LENGTH = OAR_INBOARD + 3.1;
-/** The loom's radius at its inboard end and at the post. */
-const LOOM_END = 0.03;
-const LOOM_POST = 0.038;
-/** The cross-grip on the oar's end: half its length and its radius; his right hand holds it this far out on his side. */
-const CROSS_HALF = 0.12;
+/** The cross-grip at the top of the paddle: half its length and its radius; his right hand holds it this far out on his side of the shaft. */
+const CROSS_HALF = 0.11;
 const CROSS_RADIUS = 0.022;
-const CROSS_HOLD = 0.072;
-/** How far down the loom from the handle his left hand holds it, and the loom's radius there. */
-const LOOM_HOLD = 0.36;
-const LOOM_HOLD_RADIUS = LOOM_END + (LOOM_POST - LOOM_END) * (LOOM_HOLD / OAR_INBOARD);
+const CROSS_HOLD = 0.068;
+/** The shaft's radius at the grip and at the blade's throat; his left hand holds it this far down from the grip. */
+const SHAFT_TOP = 0.028;
+const SHAFT_THROAT = 0.032;
+const LOWER_HOLD = 0.5;
+const LOWER_HOLD_RADIUS = SHAFT_TOP + ((SHAFT_THROAT - SHAFT_TOP) * LOWER_HOLD) / (PADDLE_REACH - BLADE_LENGTH / 2);
 /** The breeze over the river at full strength (m/s); the wind uniform's strength scales it. */
 const BREEZE = 3;
-/** Middle of the boatman's feet on the stern platform: just to port of the oar's shaft. */
-const STANCE = new Vector3(-0.2, 0.33, -2.95);
+/** Middle of the boatman's feet on the stern platform: toward the side he paddles on (+x). */
+const STANCE = new Vector3(0.24, 0.33, -2.95);
+/** Basis vectors for setting the paddle's turn. */
+const basisX = new Vector3();
+const basisY = new Vector3();
+const basisZ = new Vector3();
 
 // multipliers on the plank texture (which carries the wood's own colour): weathered, darker timber, tar
 const WOOD: [number, number, number] = [0.92, 0.88, 0.82];
@@ -175,10 +187,6 @@ function hullGeometry(): BufferGeometry {
     const pts = [tip, tip.clone().add(new Vector3(0, 0.22, dir * 0.06)), tip.clone().add(new Vector3(0, 0.36, dir * 0.0))];
     taperedTube(b, pts, [0.06, 0.045, 0.03], 6, dir > 0 ? rgb('#8a2a1e') : WOOD_DARK, 0.4);
   }
-
-  // the post the oar works against, on the starboard quarter
-  const post = OAR_PIVOT.clone();
-  taperedTube(b, [post.clone().add(new Vector3(0.02, -0.14, 0)), post.clone().add(new Vector3(0.02, 0.16, 0))], [0.05, 0.04], 6, WOOD_DARK, 0.4);
   return b.build();
 }
 
@@ -297,20 +305,27 @@ function sackGeometry(): BufferGeometry {
 export class HeroBoat {
   readonly group = new Group();
   readonly lantern: PointLight;
-  /** Fired once per sculling cycle (for the splash sound). */
+  /** Fired as the blade goes in at each stroke (for the splash sound). */
   onStroke: (() => void) | null = null;
-  /** Where the oar's blade works in the water (world), and how hard (its swing rate, rad/s). */
+  /** The paddle's blade (world); `bladeWet` how much of it is in the water (0..1), `bladeDrive` how hard it pulls (1 = the mean). */
   readonly blade = new Vector3();
-  bladeRate = 0;
+  bladeWet = 0;
+  bladeDrive = 0;
   /** The blade's position in the boat's own frame (x across, z along), for the water's rings. */
   readonly bladeLocal = new Vector3();
+  /** The eddy the blade left where it last came out: world x, z, seconds since, strength. */
+  readonly swirl = new Vector4(0, 0, 99, 0);
 
   private readonly glass: MeshStandardMaterial;
-  private readonly oar = new Group();
+  private readonly paddle = new Group();
   private readonly man: Boatman;
   private readonly lanternPivot = new Group();
   private readonly shadow: Mesh;
-  private readonly stroke: Scull = { sweep: 0, rate: 0, thrust: 0, side: 0 };
+  private readonly stroke = makePaddlePose();
+  private readonly drive = makeBodyDrive();
+  private readonly force: PaddleForce = { thrust: 0, side: 0, x: 0, z: 0 };
+  private readonly basis = new Matrix4();
+  private wasWet = false;
   private lastPhase = 0;
   private swingX = 0;
   private swingZ = 0;
@@ -318,11 +333,7 @@ export class HeroBoat {
   private vSwingZ = 0;
   private lastRollRate = 0;
   private lastPitchRate = 0;
-  private readonly dir = new Vector3();
-  private readonly handle = new Vector3();
-  private readonly cross = new Vector3();
-  private readonly pose: OarPose = {
-    handle: this.handle,
+  private readonly hands: OarPose = {
     holds: [
       { at: new Vector3(), thumb: new Vector3() },
       { at: new Vector3(), thumb: new Vector3() },
@@ -330,8 +341,6 @@ export class HeroBoat {
   };
   private readonly wind = new Vector3();
   private readonly gravity = new Vector3();
-  private readonly q = new Quaternion();
-  private readonly twist = new Quaternion();
   private readonly inverse = new Quaternion();
 
   constructor() {
@@ -382,9 +391,8 @@ export class HeroBoat {
     this.shadow.position.set(STANCE.x, 0.318, STANCE.z);
     g.add(this.shadow);
 
-    this.buildOar(wood);
-    const restHandle = OAR_PIVOT.clone().addScaledVector(OAR_REST, -OAR_INBOARD);
-    this.man = new Boatman(STANCE, restHandle, [CROSS_RADIUS, LOOM_HOLD_RADIUS]);
+    this.buildPaddle(wood);
+    this.man = new Boatman(STANCE, [CROSS_RADIUS, LOWER_HOLD_RADIUS]);
     g.add(this.man.group);
   }
 
@@ -393,7 +401,7 @@ export class HeroBoat {
     return this.man.crew;
   }
 
-  /** How far the boatman reached for the oar this frame, over his arms' length (debug). */
+  /** How far the boatman reached for the paddle this frame, over his arms' length (debug). */
   get reach(): number {
     return this.man.stretch;
   }
@@ -495,48 +503,46 @@ export class HeroBoat {
     return light;
   }
 
-  private buildOar(wood: MeshStandardMaterial): void {
+  /** The বৈঠা: a T-grip, a long round shaft and a leaf-shaped blade. Built with the grip at its origin and the shaft down −y. */
+  private buildPaddle(wood: MeshStandardMaterial): void {
     const b = new MeshBuilder();
-    const outboard = OAR_LENGTH - OAR_INBOARD;
-    // the loom, thickest at the post, a T-grip on its end
-    taperedTube(b, [new Vector3(0, 0, -OAR_INBOARD), new Vector3(0, 0, 0), new Vector3(0, 0, outboard - 0.75)], [LOOM_END, LOOM_POST, 0.032], 7, rgb('#9a8466'), 0.8);
-    // the cross-grip along the oar's y, so it turns as the blade is feathered
-    b.add(new CylinderGeometry(CROSS_RADIUS, CROSS_RADIUS, CROSS_HALF * 2, 8), new Matrix4().makeTranslation(0, 0, -OAR_INBOARD), rgb('#7d6a50'));
-    // the blade: a long flat leaf of wood, its edges thinned
+    const throat = PADDLE_REACH - BLADE_LENGTH / 2;
+    // the cross-grip along x, darkened by his hand
+    b.add(new CylinderGeometry(CROSS_RADIUS, CROSS_RADIUS, CROSS_HALF * 2, 8), new Matrix4().makeRotationZ(Math.PI / 2), rgb('#6e5c44'));
+    b.add(new CylinderGeometry(SHAFT_TOP, SHAFT_THROAT, throat, 10), new Matrix4().makeTranslation(0, -throat / 2, 0), rgb('#9a8466'));
+    // the blade: a long leaf, widest past its middle and rounded at the tip, its edges thinned, darker where it stays wet
     const top = b.vertexCount;
-    const steps = 10;
+    const steps = 12;
     for (let i = 0; i <= steps; i++) {
       const t = i / steps;
-      const z = outboard - 0.85 + t * 0.85;
-      const w = 0.13 * Math.pow(Math.sin(Math.PI * Math.min(1, 0.15 + t * 0.95)), 0.6) + 0.02;
-      for (const [x, y] of [
+      const y = -throat - t * BLADE_LENGTH;
+      const w = 0.112 * Math.pow(Math.sin(Math.PI * Math.min(1, 0.12 + t * 0.92)), 0.55) + 0.016;
+      const th = 0.016 - 0.008 * t;
+      const tint = rgb('#a89070', 1 - 0.3 * t);
+      for (const [x, z] of [
         [-w, 0],
-        [0, 0.016],
+        [0, th],
         [w, 0],
-        [0, -0.016],
+        [0, -th],
       ] as const) {
-        b.vertex(new Vector3(x, y, z), new Vector3(x === 0 ? 0 : Math.sign(x), y === 0 ? 0 : Math.sign(y), 0).normalize(), t, x > 0 ? 1 : 0, rgb('#a89070'));
+        b.vertex(new Vector3(x, y, z), new Vector3(x === 0 ? 0 : Math.sign(x), 0, z === 0 ? 0 : Math.sign(z)), t, x > 0 ? 1 : 0, tint);
       }
     }
     for (let i = 0; i < steps; i++) {
       for (let k = 0; k < 4; k++) {
         const a = top + i * 4 + k;
         const c = top + i * 4 + ((k + 1) % 4);
-        b.quad(a, a + 4, c + 4, c);
+        b.quad(a, c, c + 4, a + 4);
       }
     }
-    // rope lashings where the blade is bound to the loom
-    for (const z of [outboard - 0.82, outboard - 0.6]) {
-      b.add(new TorusGeometry(0.036, 0.008, 4, 10), new Matrix4().makeTranslation(0, 0, z), rgb('#8e7a52'));
-    }
-    this.oar.add(new Mesh(b.build(), wood));
-    this.oar.position.copy(OAR_PIVOT);
-    this.group.add(this.oar);
-    // the grommet round the loom at the post
-    const grommet = new Mesh(new TorusGeometry(0.05, 0.013, 6, 14), new MeshStandardMaterial({ color: '#8e7a52', roughness: 0.95 }));
-    grommet.position.copy(OAR_PIVOT);
-    grommet.rotation.x = Math.PI / 2;
-    this.group.add(grommet);
+    // a rope lashing where the blade is bound to the shaft
+    b.add(
+      new TorusGeometry(SHAFT_THROAT + 0.004, 0.007, 4, 10),
+      new Matrix4().makeTranslation(0, -throat + 0.04, 0).multiply(new Matrix4().makeRotationX(Math.PI / 2)),
+      rgb('#8e7a52'),
+    );
+    this.paddle.add(new Mesh(b.build(), wood));
+    this.group.add(this.paddle);
   }
 
   setShadows(cast: boolean): void {
@@ -549,10 +555,9 @@ export class HeroBoat {
     });
   }
 
-  /** Sets the boat where `body` has her, works the oar, poses the boatman, swings the lantern. */
+  /** Sets the boat where `body` has her, works the paddle, poses the boatman, swings the lantern. */
   update(dt: number, t: number, lamp: number, body: BoatBody): void {
     const phase = strokePhase(t);
-    const s = scull(phase, this.stroke);
     if (phase < this.lastPhase && this.onStroke) this.onStroke();
     this.lastPhase = phase;
 
@@ -560,29 +565,25 @@ export class HeroBoat {
     g.position.copy(body.pos);
     g.rotation.set(body.rotX, body.heading, body.rotZ, 'YXZ');
 
-    // the oar: swung across astern, dipping a little at each end, the blade feathered the way it moves
-    const a = phase * Math.PI * 2;
-    this.dir.copy(OAR_REST).applyAxisAngle(UP, s.sweep);
-    this.dir.y -= 0.05 * Math.cos(2 * a);
-    this.dir.normalize();
-    this.q.setFromUnitVectors(Z_AXIS, this.dir);
-    this.twist.setFromAxisAngle(Z_AXIS, 0.75 * Math.tanh(s.rate * 3));
-    this.oar.quaternion.copy(this.q).multiply(this.twist);
-    this.handle.copy(OAR_PIVOT).addScaledVector(this.dir, -OAR_INBOARD);
-    // his right hand on the cross-grip on his side of the shaft, thumb toward it; his left round the loom
-    // by his hip, thumb toward the handle
-    this.cross.set(0, 1, 0).applyQuaternion(this.oar.quaternion);
-    const [right, left] = this.pose.holds;
-    right.at.copy(this.handle).addScaledVector(this.cross, -CROSS_HOLD);
-    right.thumb.copy(this.cross);
-    left.at.copy(this.handle).addScaledVector(this.dir, LOOM_HOLD);
-    left.thumb.copy(this.dir).negate();
+    // the paddle: its grip at the mesh's origin, its shaft down the mesh's −y, the blade's width along x
+    const P = paddlePose(phase, this.stroke);
+    basisX.copy(P.across);
+    basisY.copy(P.shaft).negate();
+    basisZ.crossVectors(basisX, basisY);
+    this.paddle.position.copy(P.grip);
+    this.paddle.quaternion.setFromRotationMatrix(this.basis.makeBasis(basisX, basisY, basisZ));
+    // his right hand on the cross-grip on his side of the shaft, thumb toward it; his left down the shaft, thumb up it
+    const [right, left] = this.hands.holds;
+    right.at.copy(P.grip).addScaledVector(P.across, -CROSS_HOLD);
+    right.thumb.copy(P.across);
+    left.at.copy(P.grip).addScaledVector(P.shaft, LOWER_HOLD);
+    left.thumb.copy(P.shaft).negate();
     // the air past him: the breeze, less the boat's own way through it; and which way is down, in her frame
     const air = G.uWind.value;
     this.inverse.copy(g.quaternion).invert();
     this.wind.set(air.x * air.z * BREEZE - body.vel.x, 0, air.y * air.z * BREEZE - body.vel.z).applyQuaternion(this.inverse);
     this.gravity.set(0, -9.81, 0).applyQuaternion(this.inverse);
-    this.man.update(dt, t, phase, s.sweep, this.pose, body, this.wind, this.gravity);
+    this.man.update(dt, t, bodyDrive(phase, this.drive), this.hands, body, this.wind, this.gravity);
     this.shadow.position.x = STANCE.x + this.man.crew.x * 0.8;
     this.shadow.position.z = STANCE.z + this.man.crew.z * 0.8;
 
@@ -601,11 +602,16 @@ export class HeroBoat {
     this.lastPitchRate = body.pitchRate;
     this.lanternPivot.rotation.set(this.swingX, 0, this.swingZ);
 
-    // where the blade works, for the water's rings and the plants it shoves
-    this.bladeLocal.copy(OAR_PIVOT).addScaledVector(this.dir, OAR_LENGTH - OAR_INBOARD - 0.45);
+    // where the blade works, for the water's rings, the plants it shoves and the eddies it leaves
+    this.bladeLocal.copy(P.blade);
     g.updateMatrixWorld();
-    this.blade.copy(this.bladeLocal).applyMatrix4(g.matrixWorld);
-    this.bladeRate = s.rate;
+    this.blade.copy(P.blade).applyMatrix4(g.matrixWorld);
+    this.bladeWet = P.wet;
+    this.bladeDrive = paddleForce(phase, this.force).thrust / MEAN_THRUST;
+    const wet = P.wet > 0.3;
+    if (this.wasWet && !wet) this.swirl.set(this.blade.x, this.blade.z, 0, 1);
+    else this.swirl.z += dt;
+    this.wasWet = wet;
 
     const flicker = 0.9 + 0.06 * Math.sin(t * 13.1) + 0.04 * Math.sin(t * 29.7 + 1.3);
     this.glass.emissiveIntensity = lamp * 3.2 * flicker;

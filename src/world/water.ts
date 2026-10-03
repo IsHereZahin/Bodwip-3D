@@ -22,12 +22,13 @@ import { G, LAYER_WATER } from '../core/globals';
 import { periodicNoise } from '../core/noise';
 import { GLSL_COMMON } from '../render/glsl';
 import { HERO_HULL, hullWaterlineGlsl } from './hull';
-import { waveSlopeGlsl } from './waves';
-import { WORLD_Z0, WORLD_Z1, downstream, halfWidth, riverX, terrainHeight } from './geography';
+import { SHELTERED, waveSlopeGlsl } from './waves';
+import { WORLD_Z0, WORLD_Z1, downstream, halfWidth, riverX, streamSpeed, terrainHeight } from './geography';
 
 const FIELD_X0 = -620;
 const FIELD_SX = 1240;
-const FIELD_W = 256;
+/** About 3 m a texel across, so the khals and the bil's channels have a depth of their own. */
+const FIELD_W = 384;
 const FIELD_H = 1024;
 
 /** Tiling ripple normals, generated once. */
@@ -72,7 +73,7 @@ function rippleNormals(maxAnisotropy: number): DataTexture {
   return t;
 }
 
-/** r: riverbed height, gb: surface current (m/s). Lets the water know its depth and flow anywhere. */
+/** r: riverbed height, gb: surface current (m/s). Lets the water know its depth and flow anywhere (khals and the bil lie still). */
 function riverField(): { texture: DataTexture; bounds: Vector4 } {
   const SZ = WORLD_Z0 - WORLD_Z1;
   const data = new Uint16Array(FIELD_W * FIELD_H * 4);
@@ -81,11 +82,12 @@ function riverField(): { texture: DataTexture; bounds: Vector4 } {
     const cx = riverX(z);
     const hw = halfWidth(z);
     const [fx, fz] = downstream(z);
+    const mid = streamSpeed(z);
     for (let i = 0; i < FIELD_W; i++) {
       const x = FIELD_X0 + ((i + 0.5) / FIELD_W) * FIELD_SX;
       const h = terrainHeight(x, z);
       const t = (x - cx) / hw;
-      const speed = h < 0 ? 0.85 * Math.max(0, 1 - t * t) : 0;
+      const speed = h < 0 ? mid * Math.max(0, 1 - t * t) : 0;
       const k = (j * FIELD_W + i) * 4;
       data[k] = DataUtils.toHalfFloat(Math.max(-12, Math.min(12, h)));
       data[k + 1] = DataUtils.toHalfFloat(fx * speed);
@@ -116,7 +118,8 @@ uniform sampler2D tNormal;
 uniform sampler2D tField;
 uniform vec4 uField;
 uniform vec4 uBoat;      // x, z, heading, speed through the water
-uniform vec4 uOar;       // the blade in the boat's frame (x across, z along), its swing rate
+uniform vec4 uOar;       // the paddle's blade in the boat's frame (x across, z along), how hard it pulls, how deep it is (0..1)
+uniform vec4 uSwirl;     // where the blade last came out (world x, z), seconds since, how hard it had pulled
 uniform vec3 uAmb;
 varying vec3 vWorld;
 
@@ -125,7 +128,7 @@ ${waveSlopeGlsl()}
 
 vec2 ripple(vec2 uv) { return texture2D(tNormal, uv).xy * 2.0 - 1.0; }
 
-// ---- the boat: Kelvin wake, rings round the hull, the sculling oar ----
+// ---- the boat: Kelvin wake, rings round the hull, the paddle ----
 float wakeField(vec2 q, float spd) {
   float L = ${(HERO_HULL.len / 2).toFixed(3)};
   float h = 0.0;
@@ -137,7 +140,7 @@ float wakeField(vec2 q, float spd) {
     float wdt = 0.45 + d * 0.05;
     float g = exp(-pow((ax - arm) / wdt, 2.0));
     h += g * sin(d * 2.4 - uTime * 4.2 + ax * 1.5) * exp(-d * 0.024);
-    // transverse waves inside the V, and a churned trail behind the oar
+    // transverse waves inside the V, and a churned trail behind the stern
     float inside = smoothstep(arm + 0.4, arm - 2.0, ax);
     h += inside * 0.45 * sin(d * 1.15 - uTime * 3.1) * exp(-d * 0.04);
   }
@@ -147,9 +150,9 @@ float wakeField(vec2 q, float spd) {
   float dd = length(vec2(max(abs(q.x) - hb, 0.0), q.y - s * L));
   h += 0.4 * exp(-dd * 0.55) * sin(dd * 5.0 - uTime * 3.4);
   h *= 0.35 + 0.65 * spd;
-  // rings spreading from where the blade works, strongest mid-sweep whatever the boat's speed
+  // rings spreading from where the blade pulls, only while it is in the water
   float ro = length(q - uOar.xy);
-  h += 0.35 * (0.3 + uOar.z) * exp(-ro * 0.5) * sin(ro * 6.0 - uTime * 5.0);
+  h += 0.12 * min(uOar.z, 4.0) * uOar.w * exp(-ro * 0.6) * sin(ro * 7.0 - uTime * 6.0);
   return h;
 }
 
@@ -193,9 +196,11 @@ void main() {
   // a slow broad swell
   vec2 nC = ripple(wp.xz / 46.0 + vec2(uTime * 0.004, -uTime * 0.006));
   float far = 1.0 / (1.0 + dist * 0.01);
-  vec2 slope = nA * 0.2 + nB * (0.06 + 0.1 * uWind.z) * far + nC * 0.1;
-  // the long waves the boat and the floating plants ride (see waves.ts)
-  slope += waveSlope(wp.xz);
+  // still water (the bil, the khals, the slack by the banks) lies glassier than the running river
+  float running = smoothstep(0.0, 0.2, spd);
+  vec2 slope = nA * (0.07 + 0.13 * running) + nB * (0.06 + 0.1 * uWind.z) * (0.6 + 0.4 * running) * far + nC * (0.04 + 0.06 * running);
+  // the long waves the boat and the floating plants ride (see waves.ts), damped where the water is sheltered
+  slope += waveSlope(wp.xz) * mix(${SHELTERED.toFixed(2)}, 1.0, running);
 
   float foam = 0.0;
   // water lapping along the hull at the waterline, livelier with way on
@@ -217,11 +222,27 @@ void main() {
     }
   }
 
-  // flecks of foam and silt riding the current, thickest in the slack water by the banks
+  // the paddle: white water where the blade bites, and the eddies it leaves where it came out
+  float rb = length(q - uOar.xy);
+  foam += uOar.w * smoothstep(0.6, 0.0, rb) * (0.25 + 0.12 * min(uOar.z, 4.0)) * smoothstep(0.3, 0.75, vnoise(q * 7.0 + uTime * 3.0));
+  vec2 sd = wp.xz - uSwirl.xy;
+  float sr = length(sd);
+  if (sr < 3.0 && uSwirl.w > 0.0) {
+    float age = uSwirl.z;
+    // squared by hand: pow() of a negative base is undefined in GLSL
+    float rr = (sr - 0.2 - age * 0.45) / (0.12 + age * 0.06);
+    float ring = exp(-rr * rr) * exp(-age * 1.1) * uSwirl.w;
+    slope += sd / max(sr, 1e-3) * ring * 0.18;
+    // the dimple turning at the eddy's heart
+    slope += vec2(-sd.y, sd.x) * exp(-sr * sr * 6.0) * exp(-age * 1.4) * uSwirl.w * 0.6;
+    foam += ring * 0.35 * smoothstep(0.4, 0.8, vnoise(wp.xz * 9.0 + uTime));
+  }
+
+  // flecks of foam and silt riding the current, thickest in the slack water by the banks (none on still water)
   vec2 fq = vec2(fp.x * 0.9, fp.y * 0.22);
   float fa = smoothstep(0.74, 0.92, vnoise(fq - vec2(0.0, spd * 2.2 * p0)));
   float fb = smoothstep(0.74, 0.92, vnoise(fq - vec2(0.0, spd * 2.2 * p1) + 3.7));
-  foam += (fa * w0 + fb * (1.0 - w0)) * smoothstep(3.5, 0.6, depth) * 0.35 * far;
+  foam += (fa * w0 + fb * (1.0 - w0)) * smoothstep(3.5, 0.6, depth) * smoothstep(0.03, 0.25, spd) * 0.35 * far;
 
   vec3 N = normalize(vec3(-slope.x, 1.0, -slope.y));
   float NdV = max(dot(N, V), 0.0);
@@ -244,8 +265,8 @@ void main() {
   float nh = max(dot(N, H), 0.0);
   col += uKeyColor * (pow(nh, 1100.0) * 26.0 + pow(nh, 160.0) * 0.7) * step(0.0, uKeyDir.y);
 
-  // a lapping line where the river meets the bank
-  float shore = smoothstep(0.5, 0.06, depth) * smoothstep(0.0, 0.04, depth);
+  // a lapping line where the river meets the bank, faint round still water
+  float shore = smoothstep(0.5, 0.06, depth) * smoothstep(0.0, 0.04, depth) * (0.35 + 0.65 * smoothstep(0.03, 0.25, spd));
   foam += shore * smoothstep(0.35, 0.8, vnoise(wp.xz * 0.8 + vec2(uTime * 0.25, -uTime * 0.1)));
   vec3 foamCol = vec3(0.62, 0.58, 0.5) * light * 0.3183;
   float fA = clamp(foam, 0.0, 1.0) * 0.55;
@@ -262,8 +283,10 @@ export interface Water {
   mesh: Mesh;
   /** The hero boat: x, z, heading, speed through the water. */
   boat: Vector4;
-  /** Its oar blade in the boat's frame (x across, z along), and its swing rate. */
+  /** Its paddle blade in the boat's frame (x across, z along), how hard it pulls, how deep it is (0..1). */
   oar: Vector4;
+  /** The eddy the blade left where it last came out: world x, z, seconds since, strength. */
+  swirl: Vector4;
   color: Color;
   ambient: Color;
 }
@@ -272,6 +295,7 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
   const field = riverField();
   const boat = new Vector4();
   const oar = new Vector4();
+  const swirl = new Vector4(0, 0, 99, 0);
   const color = new Color();
   const ambient = new Color();
   const material = new ShaderMaterial({
@@ -284,6 +308,7 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
       uField: { value: field.bounds },
       uBoat: { value: boat },
       uOar: { value: oar },
+      uSwirl: { value: swirl },
       uAmb: { value: ambient },
     },
     vertexShader: VERT,
@@ -303,6 +328,6 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
   // first of the see-through things, so fireflies and motes over the river draw on top of it
   mesh.renderOrder = -1;
   mesh.name = 'water';
-  return { mesh, boat, oar, color, ambient };
+  return { mesh, boat, oar, swirl, color, ambient };
 }
 

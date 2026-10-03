@@ -519,6 +519,77 @@ export function clothTexture(base: string, stripe: string, thin: string, seed: n
   return { map: toTexture(ctx, { repeat: true }), normal: normalFromHeight(hgt, 2.5) };
 }
 
+/**
+ * A raft of water-lily pads seen from above (notched, pale-rimmed, veined, in greens from fresh to old),
+ * with here and there a white or pink flower among them; transparent between. Tiles.
+ */
+export function lilyCarpetTexture(seed: number): DataTexture {
+  const S = 512;
+  const rng = new Rng(seed);
+  const greens = [
+    [46, 80, 28],
+    [56, 94, 33],
+    [68, 106, 38],
+    [84, 116, 42],
+    [102, 112, 50],
+  ];
+  const ctx = paint(S, S, (c) => {
+    c.clearRect(0, 0, S, S);
+    for (let i = 0; i < 150; i++) {
+      const x = rng.range(0, S);
+      const y = rng.range(0, S);
+      const r = rng.range(15, 32);
+      const col = rng.pick(greens);
+      const k = rng.range(0.85, 1.12);
+      const notch = rng.range(0, Math.PI * 2);
+      // drawn again across each edge it crosses, so the tile repeats without a seam
+      for (const ox of [-S, 0, S]) {
+        for (const oy of [-S, 0, S]) {
+          const cx = x + ox;
+          const cy = y + oy;
+          if (cx < -r || cx > S + r || cy < -r || cy > S + r) continue;
+          c.fillStyle = css(col, k);
+          c.beginPath();
+          c.moveTo(cx, cy);
+          c.arc(cx, cy, r, notch + 0.18, notch + Math.PI * 2 - 0.18);
+          c.closePath();
+          c.fill();
+          c.strokeStyle = css(col, k * 1.25);
+          c.lineWidth = 1.2;
+          c.beginPath();
+          c.arc(cx, cy, r - 1, notch + 0.2, notch + Math.PI * 2 - 0.2);
+          c.stroke();
+          c.strokeStyle = 'rgba(30,50,18,0.35)';
+          c.lineWidth = 0.8;
+          for (let v = 0; v < 7; v++) {
+            const a = notch + 0.4 + (v / 7) * (Math.PI * 2 - 0.8);
+            c.beginPath();
+            c.moveTo(cx, cy);
+            c.lineTo(cx + Math.cos(a) * r * 0.9, cy + Math.sin(a) * r * 0.9);
+            c.stroke();
+          }
+        }
+      }
+    }
+    for (let i = 0; i < 9; i++) {
+      const x = rng.range(20, S - 20);
+      const y = rng.range(20, S - 20);
+      c.fillStyle = rng.next() < 0.35 ? '#e9a1b8' : '#f3efe6';
+      for (let p = 0; p < 12; p++) {
+        const a = (p / 12) * Math.PI * 2 + rng.range(-0.1, 0.1);
+        c.beginPath();
+        c.ellipse(x + Math.cos(a) * 7, y + Math.sin(a) * 7, 8, 3, a, 0, Math.PI * 2);
+        c.fill();
+      }
+      c.fillStyle = '#f0c33a';
+      c.beginPath();
+      c.arc(x, y, 4, 0, Math.PI * 2);
+      c.fill();
+    }
+  });
+  return toTexture(ctx, { repeat: true, bleed: true });
+}
+
 /** A tangent-space normal map from a grey height canvas (white = raised), by central differences. Tiles. */
 function normalFromHeight(height: Ctx, strength: number): DataTexture {
   const { width: w, height: h } = height.canvas;

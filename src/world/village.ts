@@ -18,12 +18,15 @@ import { patchMaterial } from '../render/patch';
 import { netTexture, strawTexture, tinTexture } from '../render/textures';
 import {
   CHARS,
+  KHALS,
   VILLAGES,
   VILLAGE_CENTERS,
   bankInfo,
   downstream,
   edgeHalfWidth,
+  khalPoint,
   landLevel,
+  nearBackwater,
   riverX,
   terrainHeight,
 } from './geography';
@@ -75,7 +78,7 @@ export function planHuts(): HutPlan[] {
       const d = v.radius * Math.sqrt(rng.range(0, 0.5));
       const x = c.x + Math.cos(a) * d;
       const z = c.z + Math.sin(a) * d;
-      if (bankInfo(x, z).inland < 14) continue;
+      if (bankInfo(x, z).inland < 14 || nearBackwater(x, z, 8)) continue;
       if (out.some((h) => Math.hypot(h.x - x, h.z - z) < 12)) continue;
       const l = rng.range(5.2, 7.5);
       const w = rng.range(3.4, 4.4);
@@ -334,7 +337,7 @@ export function buildVillages(huts: readonly HutPlan[]): Group {
       const a = rng.range(0, Math.PI * 2);
       const x = c.x + Math.cos(a) * v.radius * 0.55;
       const z = c.z + Math.sin(a) * v.radius * 0.55;
-      if (bankInfo(x, z).inland > 10 && !huts.some((h) => Math.hypot(h.x - x, h.z - z) < 7)) haystack(hay, x, z, rng, wood);
+      if (bankInfo(x, z).inland > 10 && !nearBackwater(x, z, 6) && !huts.some((h) => Math.hypot(h.x - x, h.z - z) < 7)) haystack(hay, x, z, rng, wood);
     }
     ghat(walls, GHATS[i].z, v.side);
     mooredBoat(wood, v.z + v.radius * 0.3 + 6, v.side, rng);
@@ -342,6 +345,21 @@ export function buildVillages(huts: readonly HutPlan[]): Group {
   });
 
   for (const n of LIFT_NETS) liftNet(wood, nets, n.z, n.side);
+
+  // a dinghy tied up in each khal, against one bank
+  KHALS.forEach((_, k) => {
+    const c = khalPoint(k, rng.range(0.25, 0.5));
+    const side = rng.sign();
+    const off = Math.max(0, c.halfWidth - 1.1);
+    const hull = new MeshBuilder();
+    buildHull(hull, SMALL_BOAT, { tar: rgb('#2a2018'), top: rgb('#5a4a38') });
+    const m = new Matrix4().compose(
+      new Vector3(c.x + Math.cos(c.heading) * side * off, 0.05, c.z - Math.sin(c.heading) * side * off),
+      new Quaternion().setFromEuler(new Euler(rng.range(-0.03, 0.03), c.heading + rng.range(-0.15, 0.15), side * rng.range(0.02, 0.06))),
+      new Vector3(1, 1, 1),
+    );
+    wood.add(hull.build(), m, rgb('#3a2c20'));
+  });
 
   for (const ch of CHARS) {
     const z = ch.z + ch.halfLen * 0.75;

@@ -50,6 +50,23 @@ export function waveSlope(x: number, z: number, t: number, strength: number, out
   return out;
 }
 
+/** GLSL twin of waveHeight, using the shared uTime and uWind.z. */
+export function waveHeightGlsl(): string {
+  const f = (n: number) => n.toFixed(5);
+  const terms = WAVES.map(
+    (v) => `  h += ${f(v.amp)} * sin(${f(v.k)} * dot(p, vec2(${f(v.dx)}, ${f(v.dz)})) - ${f(v.w)} * uTime + ${f(v.phase)});`,
+  ).join('\n');
+  return /* glsl */ `
+float waveHeight(vec2 p) {
+  float h = 0.0;
+${terms}
+  return h * uWind.z;
+}`;
+}
+
+/** Still water (khals, the bil, the slack by the banks) is sheltered: its waves are this share of the river's. */
+export const SHELTERED = 0.35;
+
 /** GLSL twin of waveSlope, using the shared uTime and uWind.z. */
 export function waveSlopeGlsl(): string {
   const f = (n: number) => n.toFixed(5);

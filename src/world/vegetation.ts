@@ -17,17 +17,24 @@ import {
   palmFrondTexture,
 } from '../render/textures';
 import {
+  BIL,
   CHARS,
+  KHALS,
   PONDS,
   VILLAGES,
   VILLAGE_CENTERS,
   WORLD_Z0,
   WORLD_Z1,
   bankInfo,
+  bilDepth,
+  bilReach,
   charHeight,
   edgeHalfWidth,
+  khalPoint,
   landLevel,
+  nearBackwater,
   riverX,
+  routeGap,
   terrainHeight,
   villageDistance,
 } from './geography';
@@ -387,7 +394,7 @@ function onDryLand(x: number, z: number, minInland: number): boolean {
   const info = bankInfo(x, z);
   if (info.inland < minInland) return false;
   for (const p of PONDS) if (Math.hypot(x - p.x, z - p.z) < p.r * 1.35) return false;
-  return true;
+  return !nearBackwater(x, z, 3);
 }
 
 function at(x: number, z: number, rng: Rng, s: number, sink = 0.15): Placement {
@@ -556,6 +563,46 @@ export function buildVegetation(huts: readonly HutPlan[], bark: Surfaces['bark']
     }
   }
 
+  // palms, bananas and the odd bamboo clump along the khals' banks, as along any village canal
+  KHALS.forEach((_, k) => {
+    for (let s = 0.08; s < 0.95; s += rng.range(0.025, 0.05)) {
+      const c = khalPoint(k, s);
+      if (fbm(c.z * 0.02, k * 3.7, 2, 15) < 0.4) continue;
+      const side = rng.sign();
+      const off = c.halfWidth + rng.range(4, 9);
+      const x = c.x + Math.cos(c.heading) * side * off;
+      const z = c.z - Math.sin(c.heading) * side * off;
+      if (villageDistance(x, z) < 1.2 || !onDryLand(x, z, 6) || !occ.free(x, z, 2.5)) continue;
+      occ.add(x, z, 2.5);
+      const r = rng.next();
+      put(r < 0.3 ? B.coconut : r < 0.55 ? B.supari : r < 0.75 ? B.date : r < 0.92 ? B.banana : B.bamboo, at(x, z, rng, rng.range(0.85, 1.15)));
+    }
+  });
+
+  // round the bil: groves standing back from its marshy rim, and hijol trees out in its shallows
+  for (let k = 0; k < 260; k++) {
+    const a = rng.range(0, Math.PI * 2);
+    const e = rng.range(1.5, 1.9);
+    const z = BIL.z + Math.cos(a) * BIL.halfLen * e;
+    const x = riverX(z) + BIL.u + Math.sin(a) * BIL.halfWid * e;
+    if (fbm(z * 0.01, x * 0.01, 2, 23) < 0.42 || !onDryLand(x, z, 20) || !occ.free(x, z, 3.5)) continue;
+    occ.add(x, z, 3.5);
+    const r = rng.next();
+    put(r < 0.4 ? B.mango : r < 0.6 ? B.rain : r < 0.85 ? B.date : B.coconut, at(x, z, rng, rng.range(0.85, 1.2)));
+  }
+  for (let k = 0, placed = 0; k < 400 && placed < 9; k++) {
+    const z = BIL.z + rng.range(-1, 1) * BIL.halfLen;
+    const u = BIL.u + rng.range(-1.2, 1.2) * BIL.halfWid;
+    const e = bilReach(z, u);
+    const depth = bilDepth(z, u);
+    const x = riverX(z) + u;
+    if (e < 0.88 || e > 0.98 || depth < 0.1 || depth > 0.45 || routeGap(x, z) < 15 || !occ.free(x, z, 6)) continue;
+    occ.add(x, z, 6);
+    // their trunks stand in the water
+    put(B.mango, at(x, z, rng, rng.range(0.7, 0.95), 0.05));
+    placed++;
+  }
+
   // lone date palms and supari along the field bunds
   for (let k = 0; k < 160; k++) {
     const side = rng.sign();
@@ -571,6 +618,7 @@ export function buildVegetation(huts: readonly HutPlan[], bark: Surfaces['bark']
       for (const band of [rng.range(260, 420), rng.range(480, 700)]) {
         if (fbm(z * 0.004 + band * 0.01, side * 2.7, 2, 8) < 0.42) continue;
         const x = riverX(z) + side * (edgeHalfWidth(z, side) + band);
+        if (!onDryLand(x, z, 30)) continue;
         put(B.far, at(x, z, rng, rng.range(1.2, 1.9), 0.4));
       }
     }

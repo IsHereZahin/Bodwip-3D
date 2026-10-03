@@ -4,7 +4,7 @@ import { Rng } from '../core/rng';
 import { MeshBuilder, rgb } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { plankTexture, sailTexture } from '../render/textures';
-import { boatLane, downstream, riverX } from './geography';
+import { downstream, halfWidth, riverLane, riverX } from './geography';
 import { buildHull, type HullShape } from './hull';
 
 const CARGO_HULL: HullShape = { len: 11, beam: 1.05, keelMid: -0.4, keelRise: 1.0, sheerMid: 0.55, sheerRise: 1.3 };
@@ -65,7 +65,7 @@ export class RiverTraffic {
     });
     const poleMat = patchMaterial(new MeshStandardMaterial({ color: '#6a5538', roughness: 0.85 }), { grime: 0.3 });
     const clothMat = patchMaterial(new MeshStandardMaterial({ color: '#c9c2b0', roughness: 0.9 }), {});
-    const skinMat = patchMaterial(new MeshStandardMaterial({ color: '#5a3a26', roughness: 0.65 }), {});
+    const skinMat = patchMaterial(new MeshStandardMaterial({ color: '#8d5a3b', roughness: 0.65 }), {});
 
     const cargo = hullGeometry(CARGO_HULL);
     const dinghy = hullGeometry(DINGHY_HULL);
@@ -128,7 +128,9 @@ export class RiverTraffic {
       if (v.z > heroZ + 240 || v.z < heroZ - 2200) v.z = heroZ - this.rng.range(900, 1700);
       const [dx, dz] = downstream(v.z);
       const heading = Math.atan2(dx, dz) + (v.speed > 0 ? Math.PI : 0);
-      const x = riverX(v.z) + boatLane(v.z) + v.lane;
+      // their lanes beside the river's own, squeezed in where the river narrows
+      const room = halfWidth(v.z) - 14;
+      const x = riverX(v.z) + room * Math.tanh((riverLane(v.z) + v.lane) / room);
       v.root.position.set(x, 0.04 * Math.sin(t * 1.1 + v.phase), v.z);
       v.root.rotation.set(0.015 * Math.sin(t * 0.9 + v.phase), heading, 0.025 * Math.sin(t * 0.7 + v.phase * 2));
     }

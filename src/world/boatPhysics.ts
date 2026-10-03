@@ -1,54 +1,21 @@
 import { Vector3 } from 'three';
-import { angleDelta } from '../core/mathx';
-import { downstream, halfWidth, riverX } from './geography';
+import { angleDelta, smoothstep } from '../core/mathx';
+import { downstream, halfWidth, riverX, streamSpeed } from './geography';
 import { HERO_HULL, hullHalfWidthAt } from './hull';
-import { waveHeight } from './waves';
+import { PADDLE_MOMENT, paddleForce, strokePhase, type PaddleForce } from './paddle';
+import { SHELTERED, waveHeight } from './waves';
 
 // The hero boat as a floating body. In the plane: mass and added mass, drag through the water (light
-// fore and aft, heavy sideways, like a keel), the river's current, the oar's thrust and the boatman's
-// steering. Out of it: heave, pitch and roll, each a damped spring toward the wave surface as the hull
-// averages it (short chop cancels along a 9 m hull; long swell lifts it), plus the boatman's weight
-// and his push on the oar. Angles are the group's Euler x (bow down +) and z (starboard up +).
+// fore and aft, heavy sideways, like a keel), the river's current, the paddle's pulses of drive from one
+// side, and the boatman's steering. Out of it: heave, pitch and roll, each a damped spring toward the wave
+// surface as the hull averages it (short chop cancels along a 9 m hull; long swell lifts it), plus the
+// boatman's weight as he leans into each stroke. Angles are the group's Euler x (bow down +) and z
+// (starboard up +).
 
-/** Seconds per sculling cycle: the blade sweeps across astern and back. */
-export const STROKE_SECONDS = 3.4;
-/** Half-angle (radians) of the blade's sweep. */
-export const SWEEP = 0.32;
-
-const MEAN_THRUST = 130;
-const SIDE_FORCE = 70;
-
-export interface Scull {
-  /** Oar's swing from its rest line (radians, + toward starboard at the blade). */
-  sweep: number;
-  /** Rate of swing, rad/s. */
-  rate: number;
-  /** Forward drive (N). */
-  thrust: number;
-  /** Sideways push at the stern (N, + to starboard). */
-  side: number;
-}
-
-export const strokePhase = (t: number) => (((t / STROKE_SECONDS) % 1) + 1) % 1;
-
-/**
- * One sculling cycle at phase 0..1. The blade drives on both sweeps, hardest mid-sweep where it moves
- * fastest; the water resisting it pushes the stern against the way the blade is moving.
- */
-export function scull(phase: number, out: Scull): Scull {
-  const a = phase * Math.PI * 2;
-  const c = Math.cos(a);
-  out.sweep = SWEEP * Math.sin(a);
-  out.rate = SWEEP * c * ((Math.PI * 2) / STROKE_SECONDS);
-  out.thrust = MEAN_THRUST * 2 * c * c;
-  out.side = -SIDE_FORCE * c;
-  return out;
-}
-
-/** Surface current (m/s): fastest mid-river, slack at the banks, as in the water shader's flow field. */
+/** Surface current (m/s): fastest mid-river and through the narrows, slack at the banks and in the backwaters. */
 export function currentAt(x: number, z: number, out: { x: number; z: number }): { x: number; z: number } {
   const t = (x - riverX(z)) / halfWidth(z);
-  const speed = 0.85 * Math.max(0, 1 - t * t);
+  const speed = streamSpeed(z) * Math.max(0, 1 - t * t);
   const [dx, dz] = downstream(z);
   out.x = dx * speed;
   out.z = dz * speed;
@@ -62,9 +29,9 @@ const YAW_INERTIA = 6200;
 const DRAG = { lin: 20, quad: 45 }; // ≈ 130 N at 1.5 m/s through the water
 const SWAY_DRAG = { lin: 450, quad: 900 };
 const YAW_DAMP = 2600;
-/** From the middle of the boat to where the oar works, m. */
+/** From the middle of the boat to where his steering acts, m. */
 const STERN_ARM = 3.5;
-/** The boatman steers by angling the blade: a heading controller with a limit on what one man can do. */
+/** The boatman steers with the blade's twist and his weight: a heading controller with a limit on what one man can do. */
 const STEER = { kp: 1500, kd: 3000, max: 400 };
 const GRAVITY = 9.81;
 const MAN_MASS = 65;
@@ -75,7 +42,7 @@ const ROLL = { f: 0.6, zeta: 0.12 };
 /** Moment (N·m) to heel the boat one radian, and to trim it one radian. */
 const ROLL_STIFF = 3200;
 const PITCH_STIFF = 200000;
-/** Height above the deck of the oar handle the boatman pushes on, m. */
+/** Height above her roll axis at which the blade's sideways push reaches her (through his hands and feet), m. */
 const PUSH_HEIGHT = 0.8;
 
 /** Points along the waterline where the hull feels the water. */
@@ -95,7 +62,7 @@ export interface Crew {
 }
 
 const tmp = { x: 0, z: 0 };
-const stroke: Scull = { sweep: 0, rate: 0, thrust: 0, side: 0 };
+const stroke: PaddleForce = { thrust: 0, side: 0, x: 0, z: 0 };
 
 function spring(x: number, v: number, target: number, f: number, zeta: number, dt: number): [number, number] {
   const w = f * Math.PI * 2;
@@ -144,7 +111,7 @@ export class BoatBody {
   }
 
   private substep(dt: number, t: number, target: { x: number; z: number }, crew: Crew, wind: number): void {
-    scull(strokePhase(t), stroke);
+    paddleForce(strokePhase(t), stroke);
     const fx = Math.sin(this.heading);
     const fz = Math.cos(this.heading);
     const sx = Math.cos(this.heading);
@@ -159,26 +126,31 @@ export class BoatBody {
     this.speed = ur;
     const desired = Math.atan2(target.x - this.pos.x, target.z - this.pos.z);
     const err = angleDelta(this.heading, desired);
-    const steer = Math.max(-STEER.max, Math.min(STEER.max, STEER.kp * err - STEER.kd * this.yawRate));
-    const side = stroke.side - steer / STERN_ARM;
+    const helm = Math.max(-STEER.max, Math.min(STEER.max, STEER.kp * err - STEER.kd * this.yawRate));
+    // the helm acts as a push across the stern; the paddle drives in pulses, and pushes a little across
+    const side = stroke.side - helm / STERN_ARM;
     const surge = (stroke.thrust - DRAG.lin * ur - DRAG.quad * ur * Math.abs(ur)) / SURGE_MASS;
     const sway = (side - SWAY_DRAG.lin * wr - SWAY_DRAG.quad * wr * Math.abs(wr)) / SWAY_MASS;
     this.vel.x += (fx * surge + sx * sway) * dt;
     this.vel.z += (fz * surge + sz * sway) * dt;
     this.pos.x += this.vel.x * dt;
     this.pos.z += this.vel.z * dt;
-    // a push at the stern to starboard swings the bow to port
-    this.yawRate += ((-side * STERN_ARM - YAW_DAMP * this.yawRate) / YAW_INERTIA) * dt;
+    // pulled on one side, the blade swings her bow away from it with each stroke; the twist he gives it
+    // at the end of the stroke takes that out on average (so she wags a little), and the helm does the rest
+    const turn = stroke.z * stroke.side - stroke.x * stroke.thrust - PADDLE_MOMENT + helm;
+    this.yawRate += ((turn - YAW_DAMP * this.yawRate) / YAW_INERTIA) * dt;
     this.heading += this.yawRate * dt;
 
-    // out of the plane: the wave surface as the hull averages it, a plane through the sample points
+    // out of the plane: the wave surface as the hull averages it, a plane through the sample points (the
+    // water's shelter as the shader has it: still water carries a share of the river's waves)
+    const sea = wind * (SHELTERED + (1 - SHELTERED) * smoothstep(0, 0.2, Math.hypot(tmp.x, tmp.z)));
     let mean = 0;
     let sxh = 0;
     let szh = 0;
     for (const p of SAMPLES) {
       const wx = this.pos.x + sx * p.x + fx * p.z;
       const wz = this.pos.z + sz * p.x + fz * p.z;
-      const hgt = waveHeight(wx, wz, t, wind);
+      const hgt = waveHeight(wx, wz, t, sea);
       mean += hgt;
       sxh += hgt * p.x;
       szh += hgt * p.z;
@@ -187,8 +159,8 @@ export class BoatBody {
     // local height = heave + x·rotZ − z·rotX, so the surface's slopes give the angles it would set
     let rollTarget = sxh / SUM_XX;
     let pitchTarget = -szh / SUM_ZZ;
-    // the boatman's weight heels and trims her; his push on the oar rocks her with each sweep;
-    // at speed the stern squats a little and the bow lifts
+    // the boatman's weight heels and trims her as he leans out into each stroke; the blade's sideways
+    // push rocks her a little; at speed the stern squats and the bow lifts
     rollTarget += (-MAN_MASS * GRAVITY * crew.x - stroke.side * PUSH_HEIGHT) / ROLL_STIFF;
     pitchTarget += (MAN_MASS * GRAVITY * crew.z) / PITCH_STIFF - 0.003 * ur * ur;
     [this.pos.y, this.vHeave] = spring(this.pos.y, this.vHeave, mean, HEAVE.f, HEAVE.zeta, dt);

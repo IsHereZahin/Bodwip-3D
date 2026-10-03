@@ -48,7 +48,7 @@ const MODIFIERS = new Set(['ShiftLeft', 'ShiftRight']);
 
 /** The boat's journey down the river, and the camera: an orbit that follows the boat, or a free flyer. */
 export class Rig {
-  /** The boat as a floating body, sculled down its lane. */
+  /** The boat as a floating body, paddled down its lane (and through the bil). */
   readonly boat = new BoatBody();
   /** 0..1 mist fade while the journey loops back to its start. */
   fade = 0;
@@ -239,7 +239,7 @@ export class Rig {
       if (k.has('Minus') || k.has('NumpadSubtract')) this.zoom(Math.exp(dt));
     }
 
-    // the boat: the boatman sculls her down the lane, steering for a point a little way ahead
+    // the boat: the boatman paddles her down the lane, steering for a point a little way ahead
     const b = this.boat;
     this.steerTo.z = b.pos.z - LOOK_AHEAD;
     this.steerTo.x = laneX(this.steerTo.z);

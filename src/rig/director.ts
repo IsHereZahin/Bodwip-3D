@@ -2,7 +2,7 @@ import { Quaternion, Vector3 } from 'three';
 import type { PerspectiveCamera } from 'three';
 import { G } from '../core/globals';
 import { clamp, damp, lerp, smoothstep } from '../core/mathx';
-import { CHARS, VILLAGES, VILLAGE_CENTERS, boatLane, charHeight, edgeHalfWidth, riverX, terrainHeight } from '../world/geography';
+import { CHARS, VILLAGES, VILLAGE_CENTERS, bilReach, boatLane, charHeight, edgeHalfWidth, riverX, terrainHeight } from '../world/geography';
 import { LIFT_NETS, liftNetCenter } from '../world/village';
 
 /** The boat's frame at this instant: position, forward (downstream) and starboard, all horizontal. */
@@ -30,7 +30,8 @@ function rel(f: Frame, a: number, s: number, h: number, out: Vector3): Vector3 {
 
 /**
  * A film tour of the river, cut like a short documentary: an aerial establishing shot, the boatman,
- * the golden water, a village, the kash on a char, a lift net against the sun, and a pull-back.
+ * the golden water, a village, the kash on a char, a lift net against the sun, the boat among the
+ * lilies of the shapla bil (while she is in it), and a pull-back.
  * Cuts dip through black, the frame is letterboxed, and each place is named in a caption.
  */
 export class Director {
@@ -153,6 +154,16 @@ export class Director {
         pose: (u, _f, pos, look) => {
           pos.copy(a).addScaledVector(b, lerp(32, 22, u)).setY(lerp(1.6, 2.4, u));
           look.copy(a).setY(lerp(2.6, 3.2, u));
+        },
+      },
+      {
+        caption: 'শাপলা বিল',
+        seconds: 12,
+        // only while she is crossing the bil: low over the lilies beside her, drifting past
+        begin: (f) => bilReach(f.boat.z, f.boat.x - riverX(f.boat.z)) < 0.95,
+        pose: (u, f, pos, look) => {
+          rel(f, lerp(-7, 5, u), -6.5, lerp(0.75, 1.1, u), pos);
+          rel(f, 1.5, 0, 0.7, look);
         },
       },
       {

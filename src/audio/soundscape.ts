@@ -91,7 +91,7 @@ export class Soundscape {
     return g;
   }
 
-  /** The oar blade turning in the water. */
+  /** The paddle's blade going into the water. */
   splash(): void {
     const ctx = this.ctx;
     if (!ctx || !this.master || this.muted) return;

@@ -15,6 +15,7 @@ import { EVENT_NOW, clockLabel } from './ui/bangla';
 import { Controls } from './ui/controls';
 import type { CameraChoice } from './ui/controls';
 import { Hud } from './ui/hud';
+import { Bil } from './world/bil';
 import { RiverTraffic } from './world/boats';
 import { Drift } from './world/drift';
 import { HeroBoat } from './world/hero';
@@ -93,6 +94,8 @@ async function main(hud: Hud): Promise<void> {
   await nextTask();
   scene.add(buildVegetation(huts, surfaces.bark));
   scene.add(buildPondLife());
+  const bil = new Bil();
+  scene.add(bil.group);
   const meadow = new Meadow(huts);
   scene.add(meadow.group);
   const drift = new Drift();
@@ -337,16 +340,19 @@ async function main(hud: Hud): Promise<void> {
     if (!scrubbing) clock.advance(dt);
     env.update(clock.hour, clock.moonAge);
     followSky(performance.now());
-    // the boat floats and is sculled by physics; the boatman's weight from last frame trims her
+    // the boat floats and is paddled by physics; the boatman's weight from last frame trims her
     rig.update(dt, t, hero.crew, G.uWind.value.z);
     const b = rig.boat;
     director.update(dt, t, camera, b.pos, b.course);
     hero.update(dt, t, env.lamp, b);
     water.boat.set(b.pos.x, b.pos.z, b.heading, b.speed);
-    water.oar.set(hero.bladeLocal.x, hero.bladeLocal.z, Math.abs(hero.bladeRate), 0);
+    water.oar.set(hero.bladeLocal.x, hero.bladeLocal.z, hero.bladeDrive, hero.bladeWet);
+    water.swirl.copy(hero.swirl);
     traffic.update(dt, t, b.pos.z);
     const simStart = performance.now();
     drift.update(dt, t, camera.position.z, b, hero.blade);
+    // the bil's lilies give way to her hull and blade and are drawn back by their stems
+    bil.update(dt, t, b, hero.blade, hero.bladeWet);
     perf.driftMs += (performance.now() - simStart - perf.driftMs) * 0.1;
     // birds and fireflies gather round whoever is being watched: the boat, or the free camera
     life.update(dt, t, rig.subject, rig.subjectHeading, env.night);

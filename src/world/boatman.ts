@@ -20,17 +20,19 @@ import { clothTexture, weaveTexture } from '../render/textures';
 import { ellipticLimb, handGeometry, limbGeometry, type HandShape } from './anatomy';
 import type { Crew } from './boatPhysics';
 import { ClothRibbon, ClothTube, type Ring } from './cloth';
+import type { BodyDrive } from './paddle';
 
-// The majhi: a lean, weathered boatman sculling at the stern, standing and facing the bow. Faceless and
-// stylised; a wide palm-leaf mathal shades where a face would be. He is built to real proportions, and
-// each frame his feet stay planted on the boards while the rest of him balances: he keeps upright as the
-// deck rolls under him (a beat late, as people do), his weight follows the oar handle across his chest,
-// his knees give with each push, he leans in when the handle runs away from him, and his head keeps
-// looking down the river. His hands are closed round the oar, his right on the cross-grip at its end
-// (turning with it as he feathers the blade), his left round the loom by his hip; his arms reach them
-// from his shoulders. His lungi, vest and gamchha are cloth: they follow him a beat late, swing and
-// settle, and stir in the wind. Where his weight is goes back to the boat, which heels and trims under it.
-// He faces +z, so his right side is −x.
+// The majhi: a lean, weathered boatman paddling with a বৈঠা at the stern, standing and facing the bow.
+// Faceless and stylised; a wide palm-leaf mathal shades where a face would be. He is built to real
+// proportions, and each frame his feet stay planted on the boards while the rest of him balances: he
+// keeps upright as the deck rolls under him (a beat late, as people do) and works the stroke with his
+// whole body (wound up and reaching at the catch, unwinding, sinking at the knees and leaning out over
+// the blade through the pull), bending further in when the paddle runs out of his arms' reach. His head
+// keeps looking down the river. His hands are closed round the paddle, his right on the cross-grip at
+// its top (turning with it as he feathers the blade), his left down the shaft; his arms reach them from
+// his shoulders. His lungi, vest and gamchha are cloth: they follow him a beat late, swing and settle,
+// and stir in the wind. Where his weight is goes back to the boat, which heels and trims under it.
+// He faces +z, so his right side is −x; he paddles on his left (+x).
 
 const UP = new Vector3(0, 1, 0);
 const SHIN = 0.41;
@@ -48,8 +50,10 @@ const SHOULDER = new Vector3(0.18, 0.4, 0);
 const NECK_BASE = new Vector3(0, 0.46, 0.01);
 /** Balance: how fast he rights himself as the deck tilts, and how far (he leaves a little to the deck). */
 const BALANCE = { f: 1.3, zeta: 0.55, share: 0.85 };
-/** How far he leans his chest in when a hold runs out of his arms' reach (m). */
-const LEAN_MAX = 0.08;
+/** His skin: a sun-browned, shyamla Bengali complexion (sRGB). */
+const SKIN_TONE = '#8d5a3b';
+/** How far he bends in when a hold runs out of his arms' reach (m): his hips take part of it, his chest the rest. */
+const LEAN_MAX = 0.16;
 
 /** The trunk's lathe profile, [radius, height above the chest's base]; front to back it is TRUNK_DEPTH of this. */
 const TRUNK: readonly (readonly [number, number])[] = [
@@ -241,9 +245,7 @@ export interface Hold {
 }
 
 export interface OarPose {
-  /** The shaft's inboard end, at the cross-grip. */
-  handle: Vector3;
-  /** His right hand's hold (on the cross-grip) and his left's (round the loom). */
+  /** His right hand's hold (on the cross-grip) and his left's (down the shaft). */
   holds: readonly [Hold, Hold];
 }
 
@@ -285,7 +287,6 @@ export class Boatman {
   private readonly gamchhaNormal: Vector3[] = [];
   /** Carries the knot of the lungi at the waist; follows the hips. */
   private readonly knot = new Group();
-  private readonly restHandle: Vector3;
   private readonly restPelvis = new Vector3();
   private posed = false;
   private balX = 0;
@@ -327,16 +328,15 @@ export class Boatman {
   private readonly ad = new Vector3();
 
   /**
-   * `stance`: the middle of his feet on the boards (boat frame); `restHandle`: the oar handle at rest;
-   * `barRadii`: the cross-grip's radius and the loom's where his left hand holds it.
+   * `stance`: the middle of his feet on the boards (boat frame); `barRadii`: the cross-grip's radius and the
+   * shaft's where his left hand holds it.
    */
-  constructor(stance: Vector3, restHandle: Vector3, barRadii: readonly [number, number]) {
+  constructor(stance: Vector3, barRadii: readonly [number, number]) {
     this.stance = stance.clone();
-    this.restHandle = restHandle.clone();
     this.group.name = 'boatman';
-    const skin = patchMaterial(new MeshStandardMaterial({ color: '#5a3925', roughness: 0.55 }), { translucency: 0.35 });
+    const skin = patchMaterial(new MeshStandardMaterial({ color: SKIN_TONE, roughness: 0.55 }), { translucency: 0.35 });
     // the hands carry paler palms and nails in their vertex colours
-    const handSkin = patchMaterial(new MeshStandardMaterial({ color: '#5a3925', roughness: 0.55, vertexColors: true }), { translucency: 0.35 });
+    const handSkin = patchMaterial(new MeshStandardMaterial({ color: SKIN_TONE, roughness: 0.55, vertexColors: true }), { translucency: 0.35 });
     const cloth = (weave: ReturnType<typeof clothTexture>, roughness: number, relief = 0.7) =>
       new MeshStandardMaterial({
         map: weave.map,
@@ -431,7 +431,7 @@ export class Boatman {
     this.head.add(hatHolder);
     g.add(this.head);
 
-    // arms: a deltoid capping the shoulder, a forearm broad across the wrist, and a hand closed on the oar
+    // arms: a deltoid capping the shoulder, a forearm broad across the wrist, and a hand closed on the paddle
     [-1, 1].forEach((side, i) => {
       const shape = handGeometry(barRadii[i], side > 0);
       const upper = new Mesh(limbGeometry(UPPER_ARM, [0.052, 0.054, 0.046, 0.04, 0.036], 0.056), skin);
@@ -649,37 +649,28 @@ export class Boatman {
   }
 
   /**
-   * Poses him for this instant. `time`: seconds, for the cloth's flutter; `phase`: 0..1 through the
-   * stroke; `sweep`: the oar's swing; `oar`: its handle and where his hands hold it; `tilt`: the deck's
-   * angles; `wind`: the air moving past him (m/s) and `gravity`, both in the boat's frame.
+   * Poses him for this instant. `time`: seconds, for the cloth's flutter; `drive`: how his body works the
+   * stroke now; `oar`: where his hands hold the paddle; `tilt`: the deck's angles; `wind`: the air moving
+   * past him (m/s) and `gravity`, both in the boat's frame.
    */
-  update(dt: number, time: number, phase: number, sweep: number, oar: OarPose, tilt: BoatTilt, wind: Vector3, gravity: Vector3): void {
-    const { handle } = oar;
-    const a = phase * Math.PI * 2;
-    const drive = Math.cos(a);
+  update(dt: number, time: number, drive: BodyDrive, oar: OarPose, tilt: BoatTilt, wind: Vector3, gravity: Vector3): void {
     // balance: he leans against the deck's tilt to stay upright, a beat late
     [this.balX, this.vBalX] = spring(this.balX, this.vBalX, -tilt.rotX * BALANCE.share, BALANCE.f, BALANCE.zeta, dt);
     [this.balZ, this.vBalZ] = spring(this.balZ, this.vBalZ, -tilt.rotZ * BALANCE.share, BALANCE.f, BALANCE.zeta, dt);
 
-    // hips: weight follows the handle across, knees give as he drives mid-sweep
-    const lateral = (handle.x - this.restHandle.x) * 0.38;
-    const fore = (handle.z - this.restHandle.z) * 0.3;
-    const drop = 0.03 * drive * drive;
+    // hips: they sink as his knees give into the pull, move with him toward the bow and out over the
+    // side, tip forward as he bends from them, and turn with a share of his twist
     this.e.set(this.balX, 0, this.balZ, 'YXZ');
-    this.v.set(lateral, PELVIS_HEIGHT - drop, fore).applyEuler(this.e);
+    this.v.set(0.12 * drive.lean, PELVIS_HEIGHT - drive.crouch, drive.shift).applyEuler(this.e);
     this.pelvis.copy(this.stance).add(this.v);
-    const toHandle = Math.atan2(handle.x - this.pelvis.x, handle.z - this.pelvis.z);
-    this.pelvisQ.setFromEuler(this.e.set(this.balX + 0.04, 0.25 * toHandle + 0.12, this.balZ, 'YXZ'));
-    this.knot.position.copy(this.pelvis);
-    this.knot.quaternion.copy(this.pelvisQ);
+    this.pelvisQ.setFromEuler(this.e.set(this.balX + 0.04 + 0.35 * drive.bend, 0.4 * drive.twist, this.balZ - 0.3 * drive.lean, 'YXZ'));
 
-    // chest: twists after the handle, leans into the drive, bends a little with the sweep
-    const twist = 0.5 * toHandle;
-    this.q.setFromEuler(this.e.set(0.13 + 0.06 * drive * drive, twist, -sweep * 0.3, 'YXZ'));
+    // chest: the rest of the bend, the twist and the lean
+    this.q.setFromEuler(this.e.set(0.13 + 0.65 * drive.bend, 0.6 * drive.twist, -0.7 * drive.lean, 'YXZ'));
     this.chestQ.copy(this.pelvisQ).multiply(this.q);
     this.chest.position.copy(this.pelvis).add(this.v.set(0, SPINE, 0).applyQuaternion(this.pelvisQ));
 
-    // hands first, for they are where the oar is; then he leans in if a hold is out of his arms' reach
+    // hands first, for they are where the paddle is; then he bends in if a hold is out of his arms' reach
     this.stretch = 0;
     this.lean.set(0, 0, 0);
     this.arms.forEach((arm, i) => {
@@ -694,13 +685,17 @@ export class Boatman {
       if (excess > 0) this.lean.addScaledVector(off, excess / dist);
     });
     if (this.lean.length() > LEAN_MAX) this.lean.setLength(LEAN_MAX);
+    this.pelvis.addScaledVector(this.lean, 0.5);
     this.chest.position.add(this.lean);
     this.chest.quaternion.copy(this.chestQ);
     this.chestInv.copy(this.chestQ).invert();
+    this.knot.position.copy(this.pelvis);
+    this.knot.quaternion.copy(this.pelvisQ);
 
-    // head: level in the world and looking down the river, whatever the body and the deck do
+    // head: level in the world and looking down the river (a little down, toward the blade, as he bends),
+    // whatever the body and the deck do
     const neckBase = this.v.copy(NECK_BASE).applyQuaternion(this.chestQ).add(this.chest.position).clone();
-    this.headQ.setFromEuler(this.e.set(-tilt.rotX * 0.9 + 0.06, 0.15 * toHandle, -tilt.rotZ * 0.9, 'YXZ'));
+    this.headQ.setFromEuler(this.e.set(-tilt.rotX * 0.9 + 0.08 + 0.2 * drive.bend, 0.25 * drive.twist, -tilt.rotZ * 0.9, 'YXZ'));
     const headCentre = neckBase.clone().add(this.v.set(0, 0.15, 0.005).applyQuaternion(this.headQ));
     this.head.position.copy(headCentre);
     this.head.quaternion.copy(this.headQ);
@@ -740,8 +735,8 @@ export class Boatman {
     this.vest.update(dt, time, this.vestRing, wind);
     this.gamchha.update(dt, time, this.gamchhaPin, this.awayFromChest, this.keepOffChest, wind, gravity);
 
-    // his weight, for the boat: mostly where his hips are
-    this.crew.x = (this.pelvis.x - this.restPelvis.x) * 0.9;
-    this.crew.z = (this.pelvis.z - this.restPelvis.z) * 0.9;
+    // his weight, for the boat: his hips and his chest (which leans out over the blade with each pull)
+    this.crew.x = (this.pelvis.x - this.restPelvis.x) * 0.6 + (this.chest.position.x - this.stance.x) * 0.4;
+    this.crew.z = (this.pelvis.z - this.restPelvis.z) * 0.6 + (this.chest.position.z - this.stance.z) * 0.4;
   }
 }

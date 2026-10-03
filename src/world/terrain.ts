@@ -8,6 +8,7 @@ import {
   WORLD_U,
   WORLD_Z0,
   WORLD_Z1,
+  bilMarsh,
   charHeight,
   edgeHalfWidth,
   landLevel,
@@ -33,20 +34,26 @@ const COLORS = {
 
 /**
  * Columns are laid out across the river from its centre line, so the grid is dense where
- * the banks are (and follows them round every bend) and coarse out in the fields.
+ * the banks and khals are (and follows them round every bend), still fine over the bil behind
+ * the left bank, and coarse out in the fields.
  */
 function columnOffsets(): number[] {
   const near: number[] = [];
-  for (let u = -240; u <= 240; u += 3) near.push(u);
-  const far: number[] = [];
-  let u = 240;
-  let d = 3;
-  while (u < WORLD_U) {
-    d *= 1.09;
-    u = Math.min(u + d, WORLD_U);
-    far.push(u);
-  }
-  return [...far.map((v) => -v).reverse(), ...near, ...far];
+  for (let u = -460; u < -240; u += 4) near.push(u);
+  for (let u = -240; u <= 260; u += 3) near.push(u);
+  const far = (from: number, step: number): number[] => {
+    const out: number[] = [];
+    let u = from;
+    let d = step;
+    while (u < WORLD_U) {
+      d *= 1.09;
+      u = Math.min(u + d, WORLD_U);
+      out.push(u);
+    }
+    return out;
+  };
+  const left = far(-near[0], 4).map((v) => -v).reverse();
+  return [...left, ...near, ...far(near[near.length - 1], 3)];
 }
 
 /**
@@ -72,13 +79,17 @@ function cover(x: number, z: number, u: number, h: number): Cover {
         : mixRgb(COLORS.sandWet, COLORS.sand, smoothstep(0.0, 0.55, h));
     return { color, zone: 0, grass: 0, dirt: 0, sand: 1, pebbles: 0 };
   }
+  const side = u >= 0 ? 1 : -1;
+  const inland = Math.abs(u) - edgeHalfWidth(z, side);
   if (h < -0.15) {
     const color = mixRgb(COLORS.bedDeep, COLORS.wetMud, smoothstep(-4, -0.15, h));
-    return { color, zone: 0, grass: 0, dirt: 0, sand: 0, pebbles: h > -1.3 ? 1 : 0 };
+    // gravel only along the river; khals and the bil keep a soft muddy bed
+    return { color, zone: 0, grass: 0, dirt: 0, sand: 0, pebbles: h > -1.3 && inland < 6 ? 1 : 0 };
   }
 
   const land = landLevel(x, z);
-  const top = smoothstep(land - 0.8, land - 0.1, h);
+  // the bil's low rim is wet meadow, grassy almost down to the water
+  const top = Math.max(smoothstep(land - 0.8, land - 0.1, h), bilMarsh(z, u) * smoothstep(-0.02, 0.2, h));
   const mud = mixRgb(COLORS.wetMud, COLORS.dryMud, smoothstep(-0.1, 1.0, h));
   let ground = mixRgb(COLORS.grassA, COLORS.grassB, fbm(x * 0.012, z * 0.012, 3, 21));
   const dry = smoothstep(0.6, 0.8, fbm(x * 0.004, z * 0.004, 2, 33));
@@ -86,8 +97,6 @@ function cover(x: number, z: number, u: number, h: number): Cover {
   const vd = villageDistance(x, z);
   const yard = smoothstep(1.0, 0.35, vd);
   ground = mixRgb(ground, COLORS.dust, yard * 0.6);
-  const side = u >= 0 ? 1 : -1;
-  const inland = Math.abs(u) - edgeHalfWidth(z, side);
   const fields = smoothstep(0.3, 0.42, fbm(x * 0.0025 + 5, z * 0.0025, 2, 44));
   const zone = top * smoothstep(38, 75, inland) * smoothstep(1.25, 1.9, vd) * fields;
   // trodden earth round the houses, and bare patches where the grass has dried out
