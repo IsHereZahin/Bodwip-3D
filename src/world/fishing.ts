@@ -25,6 +25,7 @@ import { downstream, edgeHalfWidth, halfWidth, riverLane, riverX, terrainHeight 
 import { buildHull, hullHalfWidthAt, hullStation, type HullShape } from './hull';
 import { LiftNet, type LiftNetMaterials, type LiftNetSpec } from './liftNet';
 import { makeBodyDrive, type BodyDrive } from './paddle';
+import type { DriftObstacles } from './drift';
 import type { NetRipples } from './water';
 import { waveHeight } from './waves';
 
@@ -177,6 +178,8 @@ interface ShorePlan {
   stance: Vector3;
   /** The middle of the net when it soaks (at the year's mean water). */
   centre: Vector3;
+  /** The A-frame's poles, each from its foot (driven into the bed or bank) to its head: two legs and a brace. */
+  poles: [Vector3, Vector3][];
 }
 
 function shorePlan(site: { z: number; side: 1 | -1 }): ShorePlan {
@@ -195,7 +198,16 @@ function shorePlan(site: { z: number; side: 1 | -1 }): ShorePlan {
   pivot.y = (stance.y + BUTT_UP + T * k) / (1 + k);
   const down = Math.asin(clamp((-SHORE_SOAK + SHORE.drop + SHORE.hang - pivot.y) / SHORE.tip, -0.9, 0.9));
   const centre = pivot.clone().addScaledVector(out, SHORE.tip * Math.cos(down)).setY(1.1);
-  return { out, yaw: Math.atan2(out.x, out.z), pivot, stance, centre };
+  // the A-frame: two legs splayed across the lever, driven into the bed, and a brace back to the bank
+  const side = new Vector3().crossVectors(UP, out).normalize();
+  const at = (s: number, o: number, y: number) => pivot.clone().addScaledVector(side, s).addScaledVector(out, o).setY(y);
+  const footed = (v: Vector3, sink: number) => v.setY(terrainHeight(v.x, v.z) - sink);
+  const poles: [Vector3, Vector3][] = [
+    [footed(at(-1.15, -0.35, 0), 0.4), at(-0.12, 0, pivot.y + 0.18)],
+    [footed(at(1.15, -0.35, 0), 0.4), at(0.12, 0, pivot.y + 0.18)],
+    [footed(at(0, -2.4, 0), 0.2), at(0, -0.1, pivot.y + 0.1)],
+  ];
+  return { out, yaw: Math.atan2(out.x, out.z), pivot, stance, centre, poles };
 }
 
 /** Centre of a bank net's square, out over the water (for the film tour). */
@@ -219,18 +231,10 @@ function shoreStructure(b: MeshBuilder, p: ShorePlan, rng: Rng): void {
   const side = new Vector3().crossVectors(UP, p.out).normalize();
   const ground = (v: Vector3) => terrainHeight(v.x, v.z);
   const at = (base: Vector3, s: number, o: number, y: number) => base.clone().addScaledVector(side, s).addScaledVector(p.out, o).setY(y);
-  // A-frame: two legs driven into the bed, splayed across the lever, an axle lashed at their crossing,
-  // and a brace back to the bank
+  // A-frame: its legs and brace (see shorePlan), an axle lashed at the legs' crossing
   const top = p.pivot.y;
-  for (const s of [-1, 1]) {
-    const foot = at(p.pivot, s * 1.15, -0.35, 0);
-    foot.y = ground(foot) - 0.4;
-    taperedTube(b, [foot, at(p.pivot, s * 0.12, 0, top + 0.18)], [0.075, 0.06], 6, BAMBOO_OLD, 0.6);
-  }
+  p.poles.forEach(([foot, head], i) => taperedTube(b, [foot, head], i < 2 ? [0.075, 0.06] : [0.06, 0.05], 6, BAMBOO_OLD, 0.6));
   taperedTube(b, [at(p.pivot, -0.42, 0, top - 0.11), at(p.pivot, 0.42, 0, top - 0.11)], [0.045, 0.045], 6, BAMBOO);
-  const brace = at(p.pivot, 0, -2.4, 0);
-  brace.y = ground(brace) - 0.2;
-  taperedTube(b, [brace, at(p.pivot, 0, -0.1, top + 0.1)], [0.06, 0.05], 6, BAMBOO_OLD, 0.6);
   taperedTube(b, [at(p.pivot, -0.16, 0, top - 0.11), at(p.pivot, 0.16, 0, top - 0.11)], [0.07, 0.07], 6, CORD);
 
   // the machan: four posts, two bearers, split-bamboo slats; he stands at its front edge
@@ -445,7 +449,10 @@ class ShoreNet {
     const d = camera.distanceTo(this.plan.centre);
     this.net.group.visible = this.mount.visible = d < SHOW_NET;
     this.man.group.visible = this.station.visible = d < SHOW_MAN;
-    if (d > ACTIVE) return;
+    if (d > ACTIVE) {
+      this.net.simulated = false;
+      return;
+    }
     const { net, routine } = this;
     const down = angleFor(SHORE, this.plan.pivot.y, -SHORE_SOAK);
     const up = angleFor(SHORE, this.plan.pivot.y, SHORE_CLEAR);
@@ -767,7 +774,10 @@ class NetBoat {
     const pitch = this.moment(net.theta, net.load.y, this.man.crew.z) - this.rest;
     body.update(dt, t, pitch, -this.man.crew.x * MAN_MASS * GRAVITY);
     this.placeBoat();
-    if (d > ACTIVE) return;
+    if (d > ACTIVE) {
+      net.simulated = false;
+      return;
+    }
     this.boat.updateMatrixWorld();
     const pivotY = this.mount.getWorldPosition(tmpA).y;
     const down = angleFor(BOAT_NET, pivotY, -BOAT_SOAK);
@@ -804,6 +814,9 @@ export class Fishing {
   private readonly shores: ShoreNet[] = [];
   private readonly boats: NetBoat[] = [];
   private readonly order: { net: LiftNet; d: number }[] = [];
+  private readonly hulls: { shape: typeof FISH_HULL; x: number; z: number; heading: number }[] = [];
+  private readonly posts: { x: number; z: number; r: number }[] = [];
+  private readonly nearNets: LiftNet[] = [];
 
   constructor() {
     this.group.name = 'fishing';
@@ -846,6 +859,28 @@ export class Fishing {
       ripples.a[k].set(o.net.centre.x, o.net.centre.z, o.net.spec.half, o.net.yaw);
       ripples.b[k].set(o.net.splash, o.net.drip, 0, 0);
     }
+  }
+
+  /**
+   * What floating plants must keep out of now: the anchored boats' hulls, the A-frames' poles where the
+   * water stands round them, and the nets simulated this frame (see Drift).
+   */
+  obstacles(): DriftObstacles {
+    this.hulls.length = 0;
+    for (const b of this.boats) this.hulls.push({ shape: FISH_HULL, x: b.body.pos.x, z: b.body.pos.z, heading: b.body.heading });
+    this.posts.length = 0;
+    const level = G.uWaterLevel.value;
+    for (const s of this.shores) {
+      for (const [foot, head] of s.plan.poles) {
+        if (foot.y >= level) continue;
+        const t = (level - foot.y) / (head.y - foot.y);
+        this.posts.push({ x: foot.x + (head.x - foot.x) * t, z: foot.z + (head.z - foot.z) * t, r: 0.08 });
+      }
+    }
+    this.nearNets.length = 0;
+    for (const s of this.shores) if (s.net.simulated) this.nearNets.push(s.net);
+    for (const b of this.boats) if (b.net.simulated) this.nearNets.push(b.net);
+    return { hulls: this.hulls, posts: this.posts, nets: this.nearNets };
   }
 
   /** Each net's state (debug). */

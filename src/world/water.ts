@@ -249,10 +249,14 @@ void main() {
   // rain: every drop rings the surface
   if (uRain > 0.01) slope += rainRings(wp.xz) * uRain * 0.7 * far;
   // a strong wind breaks the tops of the waves into whitecaps, streaked downwind, under the gusts
-  float blow = uWind.z * windGust(wp.xz);
-  vec2 wq = vec2(dot(wp.xz, vec2(-uWind.y, uWind.x)) * 2.2, dot(wp.xz, uWind.xy) * 0.55 - uTime * 0.9);
-  float crest = vnoise(wq) * 0.65 + vnoise(wq * 2.7 + 3.1) * 0.35;
-  float whitecaps = smoothstep(1.4, 2.6, blow) * smoothstep(0.72, 0.9, crest) * (0.5 + 0.5 * vnoise(wp.xz * 0.15 - uTime * 0.05));
+  // (none at all below a fresh breeze, even in its gusts: then the noise is not worth reading)
+  float whitecaps = 0.0;
+  if (uWind.z * (1.0 + uWind.w) > 1.4) {
+    float blow = uWind.z * windGust(wp.xz);
+    vec2 wq = vec2(dot(wp.xz, vec2(-uWind.y, uWind.x)) * 2.2, dot(wp.xz, uWind.xy) * 0.55 - uTime * 0.9);
+    float crest = vnoise(wq) * 0.65 + vnoise(wq * 2.7 + 3.1) * 0.35;
+    whitecaps = smoothstep(1.4, 2.6, blow) * smoothstep(0.72, 0.9, crest) * (0.5 + 0.5 * vnoise(wp.xz * 0.15 - uTime * 0.05));
+  }
 
   float foam = whitecaps * 0.6 * running;
   // water lapping along the hull at the waterline, livelier with way on

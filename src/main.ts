@@ -418,7 +418,8 @@ async function main(hud: Hud): Promise<void> {
     water.swirl.copy(hero.swirl);
     traffic.update(dt, t, b.pos.z);
     const simStart = performance.now();
-    drift.update(dt, t, camera.position.z, b, hero.blade);
+    // the hyacinth meets the hero's hull and blade, and the fishermen's boats, poles and nets
+    drift.update(dt, t, camera.position.z, b, hero.blade, fishing.obstacles());
     // the bil's lilies give way to her hull and blade and are drawn back by their stems
     bil.update(dt, t, b, hero.blade, hero.bladeWet);
     perf.driftMs += (performance.now() - simStart - perf.driftMs) * 0.1;
@@ -561,6 +562,14 @@ async function main(hud: Hud): Promise<void> {
         mats(ahead = 14, count = 3) {
           const b = rig.boat;
           drift.placeMats(b.pos.x + Math.sin(b.heading) * ahead, b.pos.z + Math.cos(b.heading) * ahead, count);
+        },
+        /** Puts `count` mats of water hyacinth at (x, z) (to watch them meet a net or a moored boat). */
+        matsAt(x: number, z: number, count = 3) {
+          drift.placeMats(x, z, count);
+        },
+        /** How many floating plants the nets are holding up now. */
+        caught() {
+          return drift.caughtCount;
         },
         /** The boat's motion now, for checking the physics. */
         boatState() {

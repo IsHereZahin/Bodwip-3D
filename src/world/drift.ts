@@ -7,7 +7,8 @@ import { hyacinthLeafTexture } from '../render/textures';
 import { windAt } from '../env/wind';
 import { currentAt, type BoatBody } from './boatPhysics';
 import { CHARS, charHeight, halfWidth, riverX, terrainHeight } from './geography';
-import { HERO_HULL, hullHalfWidthAt } from './hull';
+import { HERO_HULL, hullHalfWidthAt, type HullShape } from './hull';
+import type { LiftNet } from './liftNet';
 import { waveHeight, waveSlope } from './waves';
 
 // What the river carries: water hyacinth (kochuripana), each plant its own floating body, held to its
@@ -17,6 +18,19 @@ import { waveHeight, waveSlope } from './waves';
 // stirred by the paddle's blade, then eases back to the current's pace. Roots stretched too far let go, so
 // the boat leaves a lane through a mat. Solved as position-based dynamics: stable at any frame rate.
 
+/**
+ * What else floating plants meet: other boats' hulls (by shape, place and heading), posts standing in the
+ * water, and the lift nets near enough to be simulated.
+ */
+export interface DriftObstacles {
+  hulls: readonly { shape: HullShape; x: number; z: number; heading: number }[];
+  posts: readonly { x: number; z: number; r: number }[];
+  nets: readonly LiftNet[];
+}
+
+const NO_OBSTACLES: DriftObstacles = { hulls: [], posts: [], nets: [] };
+/** A net counts as rising (scooping up what floats over it) above this lever rate (rad/s). */
+const SCOOP_RATE = 0.005;
 const UP = new Vector3(0, 1, 0);
 const PLANTS = 720;
 const LEAVES = 160;
@@ -167,6 +181,9 @@ export class Drift {
   private readonly yaw = new Float32Array(N);
   private readonly spin = new Float32Array(N);
   private readonly radius = new Float32Array(N);
+  /** Held up by a net that rose under it, and how high above the water. */
+  private readonly caught = new Uint8Array(N);
+  private readonly lift = new Float32Array(N);
   private readonly scale = new Float32Array(N);
   private readonly meshOf = new Uint8Array(N);
   private readonly slot = new Uint16Array(N);
@@ -243,8 +260,11 @@ export class Drift {
     this.pz.fill(Number.NaN);
   }
 
-  /** `viewZ`: where the viewer is along the river; `boat`: the hull that parts them; `blade`: the paddle's blade (world). */
-  update(dt: number, t: number, viewZ: number, boat: BoatBody, blade: Vector3): void {
+  /**
+   * `viewZ`: where the viewer is along the river; `boat`: the hull that parts them; `blade`: the paddle's
+   * blade (world); `obstacles`: the other boats, posts and nets.
+   */
+  update(dt: number, t: number, viewZ: number, boat: BoatBody, blade: Vector3, obstacles: DriftObstacles = NO_OBSTACLES): void {
     this.frame++;
     // which way the river moves past the viewer decides where newcomers drift in from; a jump (a film
     // cut, the journey looping, a still being set up) scatters everything afresh round the new spot
@@ -254,11 +274,71 @@ export class Drift {
     this.lastZ = viewZ;
     this.recycle(viewZ, jumped);
     const h = Math.min(dt, 0.05);
-    if (h > 0) this.simulate(h, boat, blade);
+    if (h > 0) this.simulate(h, t, boat, blade, obstacles);
     this.draw(t, boat);
   }
 
-  private simulate(h: number, boat: BoatBody, blade: Vector3): void {
+  /** Pushes floater `i` out sideways from a hull's waterline, so it slides along her flank. */
+  private keepOutOfHull(i: number, shape: HullShape, x: number, z: number, heading: number): void {
+    const fx = Math.sin(heading);
+    const fz = Math.cos(heading);
+    const bx = this.px[i] - x;
+    const bz = this.pz[i] - z;
+    const along = bx * fx + bz * fz;
+    if (Math.abs(along) >= shape.len / 2) return;
+    const across = bx * fz - bz * fx;
+    const beam = hullHalfWidthAt(shape, along / shape.len + 0.5, 0) + this.radius[i] * 0.7;
+    if (Math.abs(across) >= beam) return;
+    const a = across < 0 ? -beam : beam;
+    this.px[i] = x + fx * along + fz * a;
+    this.pz[i] = z + fz * along - fx * a;
+  }
+
+  /**
+   * The lift nets. Where the netting crosses the surface it is a wall a floater cannot drift through (it
+   * stops against it); where it lies deep it floats over, and where the net hangs well above it, under.
+   * A net coming up under a floater scoops it up: it rides on the netting until the net goes back in.
+   */
+  private meetNets(h: number, t: number, nets: readonly LiftNet[]): void {
+    const { px, pz, ox, oz, caught, lift } = this;
+    const level = G.uWaterLevel.value;
+    const wind = G.uWind.value.z;
+    for (let i = 0; i < N; i++) {
+      let held = false;
+      for (const net of nets) {
+        const reach = net.spec.half + 1;
+        if (Math.abs(px[i] - net.centre.x) > reach || Math.abs(pz[i] - net.centre.z) > reach) continue;
+        const under = net.heightAt(px[i], pz[i]);
+        if (under === null) continue;
+        const surface = level + waveHeight(px[i], pz[i], t, wind);
+        if (caught[i]) {
+          // still on the netting until it sinks back under the water
+          if (under < surface - 0.02) continue;
+          held = true;
+          lift[i] = under - surface + 0.03;
+        } else if (under > surface - 0.02 && under < surface + 0.25 && net.omega > SCOOP_RATE) {
+          held = true;
+          caught[i] = 1;
+          lift[i] = Math.max(0, under - surface) + 0.03;
+        } else if (under > surface - 0.35 && under < surface + 0.6) {
+          // against the netting at the waterline: it goes no farther this step
+          px[i] = ox[i];
+          pz[i] = oz[i];
+        }
+        break;
+      }
+      if (held) {
+        px[i] = ox[i];
+        pz[i] = oz[i];
+      } else {
+        caught[i] = 0;
+        // let back onto the water, it settles onto it
+        lift[i] *= Math.exp(-h / 0.25);
+      }
+    }
+  }
+
+  private simulate(h: number, t: number, boat: BoatBody, blade: Vector3, obstacles: DriftObstacles): void {
     const { px, pz, ox, oz, vx, vz } = this;
     // forces: the current's drag and the wind's push, then a step forward
     for (let i = 0; i < N; i++) {
@@ -318,6 +398,18 @@ export class Drift {
             pz[i] = boat.pos.z + fz * along + sz * a;
           }
         }
+        // other boats' hulls, and posts standing in the water
+        for (const hull of obstacles.hulls) this.keepOutOfHull(i, hull.shape, hull.x, hull.z, hull.heading);
+        for (const post of obstacles.posts) {
+          const dx = px[i] - post.x;
+          const dz = pz[i] - post.z;
+          const d = Math.hypot(dx, dz);
+          const r = post.r + this.radius[i] * 0.7;
+          if (d < r && d > 1e-6) {
+            px[i] = post.x + (dx / d) * r;
+            pz[i] = post.z + (dz / d) * r;
+          }
+        }
         // the blade drawn through the water shoves what it meets (not while it is swung through the air)
         const dbx = px[i] - blade.x;
         const dbz = pz[i] - blade.z;
@@ -328,6 +420,11 @@ export class Drift {
           pz[i] = blade.z + (dbz / db) * reach;
         }
       }
+    }
+    if (obstacles.nets.length) this.meetNets(h, t, obstacles.nets);
+    else {
+      this.caught.fill(0);
+      this.lift.fill(0);
     }
     // aground: a staggered quarter each frame (the terrain lookup is not cheap) is nudged back toward
     // open water and stopped there, so floaters collect along the banks the way they do
@@ -391,6 +488,8 @@ export class Drift {
       const [x, z] = this.spot(viewZ, jumped);
       this.px[i] = x;
       this.pz[i] = z;
+      this.caught[i] = 0;
+      this.lift[i] = 0;
       currentAt(x, z, this.cur);
       this.vx[i] = this.cur.x;
       this.vz[i] = this.cur.z;
@@ -415,6 +514,13 @@ export class Drift {
     return [riverX(z), z];
   }
 
+  /** Debug: how many floaters a net is holding up. */
+  get caughtCount(): number {
+    let n = 0;
+    for (let i = 0; i < N; i++) n += this.caught[i];
+    return n;
+  }
+
   /** Debug: moves the next `count` mats to (x, z) and round it, for watching the boat meet them. */
   placeMats(x: number, z: number, count: number): void {
     for (let k = 0; k < count && k < this.mats.length; k++) this.spawnMat(this.mats[k], 0, false, [x + (k % 2) * 2.5, z - k * 3.5]);
@@ -433,6 +539,8 @@ export class Drift {
       this.pz[i] = cz + Math.sin(a) * r * stretch + this.rng.range(-0.05, 0.05);
       this.vx[i] = this.cur.x;
       this.vz[i] = this.cur.z;
+      this.caught[i] = 0;
+      this.lift[i] = 0;
     });
     mat.links = [];
     for (let x = 0; x < mat.members.length; x++) {
@@ -452,7 +560,8 @@ export class Drift {
     for (let i = 0; i < N; i++) {
       const x = this.px[i];
       const z = this.pz[i];
-      let y = G.uWaterLevel.value + waveHeight(x, z, t, wind);
+      // on the water, or up on a net that has lifted it
+      let y = G.uWaterLevel.value + waveHeight(x, z, t, wind) + this.lift[i];
       const d = Math.hypot(x - boat.pos.x, z - boat.pos.z);
       if (d < 25) y += 0.03 * wash * Math.exp(-d / 5) * Math.sin(d * 2.4 - t * 4.2);
       waveSlope(x, z, t, wind, this.slope);

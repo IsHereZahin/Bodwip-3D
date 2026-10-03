@@ -175,6 +175,8 @@ export class LiftNet {
   wet = 1;
   /** Fish in the net; they show only out of the water. */
   catchCount = 0;
+  /** The net was simulated this frame (near the camera), so floating plants can meet it. */
+  simulated = false;
 
   /** In the mount's frame: the lever, turning about the mount's x axis. */
   readonly lever = new Group();
@@ -345,6 +347,34 @@ export class LiftNet {
     return leverMass * ((tip - butt) / 2) * gd - counterMass * butt * gd + tip * (armsMass * gd + ld);
   }
 
+  /**
+   * The net's height under (x, z) (world), or null outside its square: read off the particles by where
+   * they belong in the square round the hub (the bag draws them in a little, which this ignores).
+   */
+  heightAt(x: number, z: number): number | null {
+    if (!this.started) return null;
+    const { half } = this.spec;
+    const dx = x - this.hub.x;
+    const dz = z - this.hub.z;
+    const c = Math.cos(this.yaw);
+    const s = Math.sin(this.yaw);
+    const lx = dx * c - dz * s;
+    const lz = dx * s + dz * c;
+    if (Math.abs(lx) >= half || Math.abs(lz) >= half) return null;
+    const n = this.n;
+    const fc = ((lx + half) / (2 * half)) * (n - 1);
+    const fr = ((lz + half) / (2 * half)) * (n - 1);
+    const c0 = Math.min(n - 2, Math.floor(fc));
+    const r0 = Math.min(n - 2, Math.floor(fr));
+    const u = fc - c0;
+    const v = fr - r0;
+    const i = r0 * n + c0;
+    const py = this.py;
+    const a = py[i] + (py[i + 1] - py[i]) * u;
+    const b = py[i + n] + (py[i + n + 1] - py[i + n]) * u;
+    return a + (b - a) * v;
+  }
+
   /** Puts `k` fish in the net (as it comes up). */
   addCatch(k: number): void {
     this.extra.fill(0);
@@ -445,6 +475,7 @@ export class LiftNet {
       this.started = true;
     }
     // a tiny step (a still being set up) would turn the strings' corrections into huge forces
+    this.simulated = full;
     if (full && h > 0.004) this.stepNet(h, time);
     else this.carryNet();
   }
