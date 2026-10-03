@@ -1,36 +1,79 @@
-import { PerspectiveCamera, Vector3 } from 'three';
+import { PerspectiveCamera, Quaternion, Vector3 } from 'three';
 import { angleDelta, clamp, damp, smoothstep } from '../core/mathx';
 import { JOURNEY_Z0, JOURNEY_Z1, boatLane, riverX, terrainHeight } from '../world/geography';
+import { FlyCam } from './flycam';
 
 const laneX = (z: number) => riverX(z) + boatLane(z);
+/** Heading along the boat's own track, one metre ahead. */
+const headingAt = (z: number) => Math.atan2(laneX(z - 1) - laneX(z), -1);
 
 const SPEED = 3.2;
 const LOOP_FADE = 3;
 const IDLE_SECONDS = 7;
+const DIST_MIN = 6;
+const DIST_MAX = 80;
+const PITCH_MIN = -0.04;
+const PITCH_MAX = 1.2;
+/** How quickly an idle camera turns: slowly for its resting drift, briskly when asked to look. */
+const TURN_IDLE = 0.25;
+const TURN_ASKED = 1.6;
+/** Seconds to ease from the free camera back to the boat. */
+const BLEND_SECONDS = 1.4;
 
-/** Where the camera rests when left alone: behind and a little to starboard, looking down the river. */
-const REST = { yaw: 0.42, pitch: 0.12, dist: 17 };
+export interface View {
+  yaw: number;
+  pitch: number;
+  dist: number;
+}
 
-/** The boat's drift down the river, and the orbiting camera that follows it. */
+/** Viewpoints around the boat. The camera rests at the chosen one; `stern` is the default. */
+export const VIEWS = {
+  stern: { yaw: 0.42, pitch: 0.12, dist: 17 },
+  boatman: { yaw: 1.9, pitch: 0.08, dist: 7 },
+  bow: { yaw: Math.PI - 0.35, pitch: 0.1, dist: 15 },
+  high: { yaw: -1.4, pitch: 0.55, dist: 75 },
+} satisfies Record<string, View>;
+export type ViewName = keyof typeof VIEWS;
+
+/** Low and close, so the boat sits in front of a rising or setting sun or moon. */
+const WATCH_VIEW = { pitch: 0.05, dist: 16 };
+
+export type CameraMode = 'follow' | 'free';
+
+const ORBIT_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Equal', 'Minus', 'NumpadAdd', 'NumpadSubtract']);
+const FLY_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'PageUp', 'PageDown']);
+const MODIFIERS = new Set(['ShiftLeft', 'ShiftRight']);
+
+/** The boat's drift down the river, and the camera: an orbit that follows the boat, or a free flyer. */
 export class Rig {
   readonly boat = { pos: new Vector3(), heading: Math.PI, speed: SPEED, pitch: 0, roll: 0 };
   /** 0..1 mist fade while the journey loops back to its start. */
   fade = 0;
   dragging = false;
+  mode: CameraMode = 'follow';
+  /** A direction to turn toward once nobody is steering (a rising moon, say); null to rest. */
+  watch: Vector3 | null = null;
 
   private z = JOURNEY_Z0;
   private loopT = -1;
-  private yaw = REST.yaw;
-  private pitch = REST.pitch;
-  private dist = REST.dist;
-  private yawT = REST.yaw;
-  private pitchT = REST.pitch;
-  private distT = REST.dist;
+  private rest: View = VIEWS.stern;
+  private yaw = this.rest.yaw;
+  private pitch = this.rest.pitch;
+  private dist = this.rest.dist;
+  private yawT = this.rest.yaw;
+  private pitchT = this.rest.pitch;
+  private distT = this.rest.dist;
   private idle = 0;
+  private turnRate = TURN_IDLE;
+  private blend = 1;
+  private readonly fromPos = new Vector3();
+  private readonly fromQuat = new Quaternion();
+  private readonly toQuat = new Quaternion();
   private readonly pointers = new Map<number, { x: number; y: number }>();
   private pinch = 0;
   private readonly keys = new Set<string>();
   private readonly target = new Vector3();
+  private readonly fly = new FlyCam();
 
   readonly camera: PerspectiveCamera;
 
@@ -51,11 +94,16 @@ export class Rig {
         prev.x = e.clientX;
         prev.y = e.clientY;
         const after = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
-        if (this.pinch > 0) this.distT = clamp(this.distT * (before / Math.max(after, 1)), 6, 80);
+        if (this.pinch > 0) this.zoom(before / Math.max(after, 1));
         this.pinch = after;
       } else {
-        this.yawT -= (e.clientX - prev.x) * 0.005;
-        this.pitchT = clamp(this.pitchT + (e.clientY - prev.y) * 0.004, -0.04, 1.2);
+        const dx = e.clientX - prev.x;
+        const dy = e.clientY - prev.y;
+        if (this.mode === 'free') this.fly.drag(dx, dy);
+        else {
+          this.yawT -= dx * 0.005;
+          this.pitchT = clamp(this.pitchT + dy * 0.004, PITCH_MIN, PITCH_MAX);
+        }
         prev.x = e.clientX;
         prev.y = e.clientY;
       }
@@ -72,26 +120,82 @@ export class Rig {
       'wheel',
       (e) => {
         e.preventDefault();
-        this.distT = clamp(this.distT * Math.exp(e.deltaY * 0.0012), 6, 80);
+        this.zoom(Math.exp(e.deltaY * 0.0012));
         this.idle = 0;
       },
       { passive: false },
     );
-    // arrow keys orbit, +/- zoom: the scene is explorable without a pointer
-    window.addEventListener('keydown', (e) => this.keys.add(e.code));
-    window.addEventListener('keyup', (e) => this.keys.delete(e.code));
-    window.addEventListener('blur', () => this.keys.clear());
+  }
+
+  /**
+   * Keys routed from the page; only camera keys are kept. Arrows orbit and +/- zoom when following
+   * the boat; WASD, Q/E and the arrows fly the free camera. Returns whether the key steers the camera.
+   */
+  press(code: string, down: boolean): boolean {
+    if (!down) {
+      this.keys.delete(code);
+      return false;
+    }
+    const steers = (this.mode === 'free' ? FLY_KEYS : ORBIT_KEYS).has(code);
+    if (steers || MODIFIERS.has(code)) this.keys.add(code);
+    return steers;
+  }
+
+  releaseKeys(): void {
+    this.keys.clear();
+  }
+
+  setMode(mode: CameraMode): void {
+    if (mode === this.mode) return;
+    if (mode === 'free') this.fly.startFrom(this.camera);
+    else {
+      this.fromPos.copy(this.camera.position);
+      this.fromQuat.copy(this.camera.quaternion);
+      this.blend = 0;
+    }
+    this.mode = mode;
+    this.idle = 0;
+  }
+
+  /** Follows the boat from one of the viewpoints, and rests there from now on. */
+  setView(name: ViewName): void {
+    this.setMode('follow');
+    this.rest = VIEWS[name];
+    this.yawT += angleDelta(this.yawT, this.rest.yaw);
+    this.pitchT = this.rest.pitch;
+    this.distT = this.rest.dist;
+    this.idle = 0;
+  }
+
+  /** Starts turning toward `watch` now, rather than after the camera has sat idle. */
+  lookNow(): void {
+    this.idle = IDLE_SECONDS;
+    this.turnRate = TURN_ASKED;
   }
 
   /** Puts the boat at a point of the journey (0 = start, 1 = end). */
   place(t: number): void {
     this.z = JOURNEY_Z0 + (JOURNEY_Z1 - JOURNEY_Z0) * clamp(t, 0, 1);
+    this.boat.heading = headingAt(this.z);
     this.loopT = -1;
     this.fade = 0;
   }
 
+  /** Points the follow camera's targets at `dir`, framed as when watching a sky event; for stills. */
+  aim(dir: Vector3): void {
+    this.yawT = Math.atan2(dir.x, dir.z) - this.boat.heading;
+    this.pitchT = WATCH_VIEW.pitch;
+    this.distT = WATCH_VIEW.dist;
+  }
+
+  /** Puts the free camera at a point; for stills. */
+  placeFree(x: number, y: number, z: number, yaw: number, pitch: number): void {
+    this.setMode('free');
+    this.fly.place(x, y, z, yaw, pitch);
+  }
+
   /** Jumps the camera to its targets (no easing), for stills. */
-  settle(view?: { yaw?: number; pitch?: number; dist?: number }): void {
+  settle(view?: Partial<View>): void {
     if (view?.yaw !== undefined) this.yawT = view.yaw;
     if (view?.pitch !== undefined) this.pitchT = view.pitch;
     if (view?.dist !== undefined) this.distT = view.dist;
@@ -99,18 +203,36 @@ export class Rig {
     this.pitch = this.pitchT;
     this.dist = this.distT;
     this.idle = -1e9;
+    this.blend = 1;
+  }
+
+  /** Where the camera looks, on the ground some way ahead; the shadow map follows it. */
+  focus(out: Vector3): Vector3 {
+    if (this.mode === 'free') return this.fly.focus(out);
+    const b = this.boat;
+    return out.set(b.pos.x + Math.sin(b.heading) * 60, 0, b.pos.z + Math.cos(b.heading) * 60);
+  }
+
+  /** What the river's life gathers around: the boat, or the free camera. */
+  get subject(): Vector3 {
+    return this.mode === 'free' ? this.fly.position : this.boat.pos;
+  }
+
+  get subjectHeading(): number {
+    return this.mode === 'free' ? this.fly.heading : this.boat.heading;
   }
 
   update(dt: number, t: number, stroke: number): void {
-    // keyboard orbit
     const k = this.keys;
-    if (k.has('ArrowLeft')) this.yawT += dt * 1.2;
-    if (k.has('ArrowRight')) this.yawT -= dt * 1.2;
-    if (k.has('ArrowUp')) this.pitchT = clamp(this.pitchT + dt * 0.6, -0.04, 1.2);
-    if (k.has('ArrowDown')) this.pitchT = clamp(this.pitchT - dt * 0.6, -0.04, 1.2);
-    if (k.has('Equal') || k.has('NumpadAdd')) this.distT = clamp(this.distT * Math.exp(-dt), 6, 80);
-    if (k.has('Minus') || k.has('NumpadSubtract')) this.distT = clamp(this.distT * Math.exp(dt), 6, 80);
-    if (k.size) this.idle = 0;
+    for (const code of k) if (!MODIFIERS.has(code)) this.idle = 0;
+    if (this.mode === 'follow') {
+      if (k.has('ArrowLeft')) this.yawT += dt * 1.2;
+      if (k.has('ArrowRight')) this.yawT -= dt * 1.2;
+      if (k.has('ArrowUp')) this.pitchT = clamp(this.pitchT + dt * 0.6, PITCH_MIN, PITCH_MAX);
+      if (k.has('ArrowDown')) this.pitchT = clamp(this.pitchT - dt * 0.6, PITCH_MIN, PITCH_MAX);
+      if (k.has('Equal') || k.has('NumpadAdd')) this.zoom(Math.exp(-dt));
+      if (k.has('Minus') || k.has('NumpadSubtract')) this.zoom(Math.exp(dt));
+    }
 
     // the boat: a surge with each oar stroke
     this.boat.speed = SPEED * (1 + 0.07 * Math.sin(stroke * Math.PI * 2 - 0.6));
@@ -127,25 +249,55 @@ export class Rig {
 
     const z = this.z;
     const x = laneX(z);
-    // heading along the boat's own track, one metre ahead
-    this.boat.heading = Math.atan2(laneX(z - 1) - x, -1);
+    const h = headingAt(z);
+    this.boat.heading = h;
     this.boat.pos.set(x, 0.03 * Math.sin(t * 1.3) + 0.02 * Math.sin(t * 2.1 + 1), z);
     this.boat.pitch = 0.012 * Math.sin(t * 1.1) + 0.006 * Math.sin(stroke * Math.PI * 2);
     this.boat.roll = 0.018 * Math.sin(t * 0.9 + 0.4) + 0.012 * Math.sin(stroke * Math.PI * 2 + 1.2);
 
-    // camera: eases back to the resting view after a while, drifting slowly so it never sits still
+    // left alone, the camera turns to watch a sky event, or eases back to its resting view and drifts
+    // slowly there so it never sits still
     this.idle += dt;
-    if (this.idle > IDLE_SECONDS) {
-      const drift = REST.yaw + 0.28 * Math.sin(t * 0.035);
-      this.yawT += angleDelta(this.yawT, drift) * (1 - Math.exp(-dt * 0.25));
-      this.pitchT = damp(this.pitchT, REST.pitch, 0.25, dt);
-      this.distT = damp(this.distT, REST.dist, 0.2, dt);
+    this.turnRate = damp(this.turnRate, TURN_IDLE, 0.3, dt);
+    const idle = this.idle > IDLE_SECONDS;
+    if (this.mode === 'free') this.fly.update(dt, k, this.camera, idle ? this.watch : null, this.turnRate);
+    else {
+      const turn = 1 - Math.exp(-dt * this.turnRate);
+      if (idle && this.watch) {
+        this.yawT += angleDelta(this.yawT, Math.atan2(this.watch.x, this.watch.z) - h) * turn;
+        this.pitchT = damp(this.pitchT, WATCH_VIEW.pitch, this.turnRate, dt);
+        this.distT = damp(this.distT, WATCH_VIEW.dist, this.turnRate, dt);
+      } else if (idle) {
+        const drift = this.rest.yaw + 0.28 * Math.sin(t * 0.035);
+        this.yawT += angleDelta(this.yawT, drift) * turn;
+        this.pitchT = damp(this.pitchT, this.rest.pitch, 0.25, dt);
+        this.distT = damp(this.distT, this.rest.dist, 0.2, dt);
+      }
+      this.orbit(x, z, h, dt);
     }
+
+    // ease over from wherever the free camera was
+    if (this.blend < 1) {
+      this.blend = Math.min(1, this.blend + dt / BLEND_SECONDS);
+      const e = smoothstep(0, 1, this.blend);
+      this.toQuat.copy(this.camera.quaternion);
+      this.camera.position.lerpVectors(this.fromPos, this.camera.position, e);
+      this.camera.quaternion.slerpQuaternions(this.fromQuat, this.toQuat, e);
+      this.camera.updateMatrixWorld();
+    }
+  }
+
+  /** Scales the orbit distance by `factor`; the free camera moves forward or back instead. */
+  private zoom(factor: number): void {
+    if (this.mode === 'free') this.fly.nudge(-Math.log(factor) * 40);
+    else this.distT = clamp(this.distT * factor, DIST_MIN, DIST_MAX);
+  }
+
+  /** Places the follow camera on its orbit round a point just ahead of the boat. */
+  private orbit(x: number, z: number, h: number, dt: number): void {
     this.yaw = damp(this.yaw, this.yawT, 4, dt);
     this.pitch = damp(this.pitch, this.pitchT, 4, dt);
     this.dist = damp(this.dist, this.distT, 3, dt);
-
-    const h = this.boat.heading;
     const fx = Math.sin(h);
     const fz = Math.cos(h);
     this.target.set(x + fx * 4, 2.4, z + fz * 4);

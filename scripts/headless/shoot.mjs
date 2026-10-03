@@ -1,7 +1,8 @@
 // Headless stills of the river for visual checks. Dev tooling only; never part of the build.
 // Start the dev server first (`npm run dev`), then:
 //   node scripts/headless/shoot.mjs <outDir> [--base http://127.0.0.1:5173/] [--swiftshader] [--shots '<json>']
-// Each shot is { name, journey?, phase?, yaw?, pitch?, dist?, film?: [shotIndex, u] } and becomes <outDir>/<name>.png.
+// Each shot is { name, journey?, hour?, moon?, yaw?, pitch?, dist?, face?: 'sun' | 'moon', free?: [x, y, z, yaw, pitch],
+// film?: [shotIndex, u] } and becomes <outDir>/<name>.png. See window.__river.shot in src/main.ts.
 // Env: W / H set the viewport (default 1280×720); HUD=1 keeps the page UI in the frame.
 // Prints draw calls, triangles and frame time per shot, then every console message from the page.
 // cdp.mjs is a copy of the main repo's scripts/headless/cdp.mjs.
@@ -17,7 +18,7 @@ const arg = (name, fallback) => {
 const OUT = path.resolve(argv[0] && !argv[0].startsWith('--') ? argv[0] : 'shots');
 const BASE = arg('base', 'http://127.0.0.1:5173/');
 const SWIFT = argv.includes('--swiftshader');
-const SHOTS = JSON.parse(arg('shots', '[{"name":"golden","journey":0.05,"phase":0.02}]'));
+const SHOTS = JSON.parse(arg('shots', '[{"name":"golden","journey":0.05,"hour":17.5}]'));
 const W = Number(process.env.W ?? 1280);
 const H = Number(process.env.H ?? 720);
 fs.mkdirSync(OUT, { recursive: true });
@@ -34,7 +35,7 @@ try {
   console.log('ready in', Date.now() - t0, 'ms');
   if (!process.env.HUD) {
     await page.eval(
-      `(() => { const s = document.createElement('style'); s.textContent = '#title,#hint,#sound,#film{display:none!important}'; document.head.appendChild(s); })()`,
+      `(() => { const s = document.createElement('style'); s.textContent = '#title,#hint,#dock,#toast,#ui-restore{display:none!important}'; document.head.appendChild(s); })()`,
     );
   }
   // let the loader fade and the adaptive resolution settle before the first still

@@ -141,7 +141,7 @@
       #hint {
         position: fixed;
         left: 50%;
-        bottom: max(22px, env(safe-area-inset-bottom));
+        top: max(18px, env(safe-area-inset-top));
         transform: translateX(-50%);
         margin: 0;
         padding: 8px 16px;
@@ -185,54 +185,6 @@
         pointer-events: none;
         z-index: 2;
         white-space: nowrap;
-      }
-      #sound,
-      #film {
-        position: fixed;
-        right: max(16px, env(safe-area-inset-right));
-        bottom: max(16px, env(safe-area-inset-bottom));
-        width: 44px;
-        height: 44px;
-        border-radius: 50%;
-        border: 1px solid rgba(236, 211, 168, 0.3);
-        background: rgba(12, 10, 8, 0.35);
-        backdrop-filter: blur(6px);
-        color: var(--ink);
-        display: grid;
-        place-items: center;
-        cursor: pointer;
-        opacity: 0;
-        transition: opacity 1.2s ease, background 0.2s ease;
-        z-index: 2;
-      }
-      #film {
-        right: calc(max(16px, env(safe-area-inset-right)) + 54px);
-      }
-      #sound.show,
-      #film.show {
-        opacity: 0.85;
-      }
-      #sound:hover,
-      #sound:focus-visible,
-      #film:hover,
-      #film:focus-visible {
-        opacity: 1;
-        background: rgba(12, 10, 8, 0.6);
-      }
-      #film.on {
-        background: rgba(236, 211, 168, 0.18);
-      }
-      #sound:focus-visible,
-      #film:focus-visible {
-        outline: 2px solid var(--ink);
-        outline-offset: 2px;
-      }
-      #sound .waves {
-        opacity: 0.25;
-        transition: opacity 0.3s ease;
-      }
-      #sound.on .waves {
-        opacity: 1;
       }
       #err {
         position: fixed;
@@ -286,27 +238,139 @@
     </div>
 
     <p id="hint">
-      টেনে চারপাশ দেখুন · স্ক্রল করে কাছে-দূরে · <kbd>C</kbd> চলচ্চিত্র · <kbd>T</kbd> চেপে ধরলে সময় দ্রুত · <kbd>M</kbd> শব্দ
+      টেনে চারপাশ দেখুন · স্ক্রল করে কাছে-দূরে · নিচের বারে সময় আর ক্যামেরা · <kbd>?</kbd> সব নিয়ন্ত্রণ
     </p>
 
     <p id="caption" aria-live="polite"></p>
 
-    <button id="film" type="button" aria-pressed="false" aria-label="চলচ্চিত্র দেখুন">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <rect x="3" y="6" width="13" height="12" rx="2" />
-        <path d="M16 10.5l5-3v9l-5-3z" />
-      </svg>
+    <div id="toast" role="status" aria-live="polite">
+      <span id="toast-text"></span>
+      <button id="toast-look" type="button" hidden>দেখুন</button>
+    </div>
+
+    <section id="dock" aria-label="দৃশ্যের নিয়ন্ত্রণ">
+      <div class="dock-time">
+        <button id="play" class="ibtn" type="button" aria-label="সময় থামান" title="সময় চালান বা থামান (Space)">
+          <svg class="i-pause" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6v12M15 6v12" /></svg>
+          <svg class="i-play" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 5.5v13l10-6.5z" /></svg>
+        </button>
+        <button id="speed" class="chip" type="button" title="সময়ের গতি ([ ])">১×</button>
+        <div class="timeline">
+          <div id="tl-sun" class="tl-row tl-sun"></div>
+          <div id="tl-track" class="tl-track">
+            <div id="tl-band" class="tl-band"></div>
+            <input id="tl" type="range" min="0" max="1439" step="1" value="1050" aria-label="দিনের সময়" />
+          </div>
+          <div id="tl-moon" class="tl-row tl-moon"></div>
+        </div>
+        <div class="readout">
+          <output id="clock" for="tl">বিকেল ৫:৩০</output>
+          <span id="tithi"></span>
+        </div>
+      </div>
+
+      <div class="dock-tools">
+        <div id="camera" class="seg" role="group" aria-label="ক্যামেরা">
+          <button type="button" data-mode="follow" aria-pressed="true" title="নৌকার সাথে (1)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 15.5h18l-2.6 3.5H5.6z" /><path d="M12 4.5v11" /><path d="M12 5.5l5.5 8H12" /></svg>
+            <span>নৌকা</span>
+          </button>
+          <button type="button" data-mode="free" aria-pressed="false" title="মুক্ত ক্যামেরা: W A S D দিয়ে চলুন (2)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18M3 12h18M9.5 5.5 12 3l2.5 2.5M9.5 18.5 12 21l2.5-2.5M5.5 9.5 3 12l2.5 2.5M18.5 9.5 21 12l-2.5 2.5" /></svg>
+            <span>মুক্ত</span>
+          </button>
+          <button type="button" data-mode="film" aria-pressed="false" title="চলচ্চিত্র (C)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2" /><path d="M16 10.5l5-3v9l-5-3z" /></svg>
+            <span>চলচ্চিত্র</span>
+          </button>
+        </div>
+        <label class="pick">
+          <select id="views" aria-label="নৌকার চারপাশের দৃশ্য" title="দৃশ্য (V)">
+            <option value="" disabled selected hidden>দৃশ্য</option>
+          </select>
+        </label>
+        <label class="pick moonpick">
+          <svg viewBox="-8 -8 16 16" aria-hidden="true"><circle class="moon-dark" r="7" /><path id="moon-lit" class="moon-lit" d="" /></svg>
+          <select id="moon" aria-label="চাঁদের কলা" title="চাঁদের কলা"></select>
+        </label>
+        <span class="spacer"></span>
+        <button id="sound" class="ibtn" type="button" aria-pressed="false" aria-label="শব্দ চালু করুন" title="শব্দ (M)">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" />
+            <g class="waves">
+              <path d="M15.5 9a4 4 0 0 1 0 6" />
+              <path d="M18 6.5a7.5 7.5 0 0 1 0 11" />
+            </g>
+          </svg>
+        </button>
+        <button id="fullscreen" class="ibtn" type="button" aria-pressed="false" aria-label="পূর্ণ পর্দা" title="পূর্ণ পর্দা (F)">
+          <svg class="i-enter" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" /></svg>
+          <svg class="i-exit" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5" /></svg>
+        </button>
+        <button id="hide-ui" class="ibtn" type="button" aria-label="নিয়ন্ত্রণ লুকান" title="নিয়ন্ত্রণ লুকান (H)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12S7 6.5 12 6.5 20.5 12 20.5 12 17 17.5 12 17.5 3.5 12 3.5 12z" /><circle cx="12" cy="12" r="2.5" /><path d="M4 20 20 4" /></svg>
+        </button>
+        <button id="help-btn" class="ibtn" type="button" aria-label="সব নিয়ন্ত্রণ" title="সব নিয়ন্ত্রণ (?)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.6" /><path d="M12 17h.01" /></svg>
+        </button>
+      </div>
+    </section>
+
+    <button id="ui-restore" class="ibtn" type="button" aria-label="নিয়ন্ত্রণ দেখান" title="নিয়ন্ত্রণ দেখান (H)">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12S7 6.5 12 6.5 20.5 12 20.5 12 17 17.5 12 17.5 3.5 12 3.5 12z" /><circle cx="12" cy="12" r="2.5" /></svg>
     </button>
 
-    <button id="sound" type="button" aria-pressed="false" aria-label="শব্দ চালু করুন">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-        <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" />
-        <g class="waves">
-          <path d="M15.5 9a4 4 0 0 1 0 6" />
-          <path d="M18 6.5a7.5 7.5 0 0 1 0 11" />
-        </g>
-      </svg>
-    </button>
+    <dialog id="help" aria-labelledby="help-title">
+      <h2 id="help-title">নিয়ন্ত্রণ</h2>
+      <form method="dialog">
+        <button class="ibtn close" type="submit" aria-label="বন্ধ করুন">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+        </button>
+      </form>
+      <div class="help-grid">
+        <section>
+          <h3>নৌকার ক্যামেরা</h3>
+          <dl>
+            <dt>টেনে · <kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></dt><dd>নৌকার চারপাশে ঘোরা</dd>
+            <dt>স্ক্রল · পিঞ্চ · <kbd>+</kbd> <kbd>−</kbd></dt><dd>কাছে-দূরে</dd>
+            <dt><kbd>V</kbd></dt><dd>পরের দৃশ্য: পেছন, মাঝির পাশ, সামনে, উঁচু</dd>
+            <dt><kbd>R</kbd></dt><dd>শুরুর দৃশ্যে ফেরা</dd>
+          </dl>
+        </section>
+        <section>
+          <h3>মুক্ত ক্যামেরা</h3>
+          <dl>
+            <dt><kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> · <kbd>↑</kbd> <kbd>↓</kbd></dt><dd>চলা</dd>
+            <dt>টেনে · <kbd>←</kbd> <kbd>→</kbd></dt><dd>তাকানো, ঘোরা</dd>
+            <dt><kbd>E</kbd> <kbd>Q</kbd></dt><dd>ওপরে, নিচে</dd>
+            <dt><kbd>Shift</kbd></dt><dd>দ্রুত</dd>
+            <dt>স্ক্রল · পিঞ্চ</dt><dd>সামনে-পেছনে</dd>
+          </dl>
+        </section>
+        <section>
+          <h3>সময় ও আকাশ</h3>
+          <dl>
+            <dt><kbd>Space</kbd></dt><dd>সময় চালু বা থামানো</dd>
+            <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>সময়ের গতি কমানো, বাড়ানো</dd>
+            <dt><kbd>T</kbd> চেপে ধরে</dt><dd>সময় খুব দ্রুত</dd>
+            <dt><kbd>N</kbd></dt><dd>পরের সূর্যোদয়, সূর্যাস্ত, চন্দ্রোদয় বা চন্দ্রাস্ত</dd>
+            <dt>বারের চিহ্ন</dt><dd>সেই মুহূর্তে গিয়ে সেদিকে তাকানো</dd>
+          </dl>
+        </section>
+        <section>
+          <h3>অন্যান্য</h3>
+          <dl>
+            <dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>নৌকা, মুক্ত, চলচ্চিত্র</dd>
+            <dt><kbd>C</kbd></dt><dd>চলচ্চিত্র চালু বা বন্ধ</dd>
+            <dt><kbd>M</kbd></dt><dd>শব্দ</dd>
+            <dt><kbd>F</kbd></dt><dd>পূর্ণ পর্দা</dd>
+            <dt><kbd>H</kbd></dt><dd>নিয়ন্ত্রণ লুকানো বা দেখানো</dd>
+            <dt><kbd>?</kbd></dt><dd>এই তালিকা</dd>
+          </dl>
+        </section>
+      </div>
+      <p class="help-note">কিছুক্ষণ কিছু না ছুঁলে ক্যামেরা নিজে থেকেই সূর্য বা চাঁদের ওঠা-নামার দিকে ঘুরে যায়, আর আরও পরে চলচ্চিত্র শুরু হয়।</p>
+    </dialog>
 
     <div id="err" role="alert" hidden></div>
 

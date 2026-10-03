@@ -4,12 +4,10 @@ import { G } from '../core/globals';
 import { DEG, clamp, smoothstep } from '../core/mathx';
 import type { Sky } from '../world/sky';
 import type { Water } from '../world/water';
+import { moonDirection, moonIllumination, sunDirection } from './astro';
 
-// Time of day. A simple solar model for a Bengal autumn (latitude 23.7° N) gives the sun's path;
-// a table of looks keyed on its elevation gives every colour. Golden hour and dusk are lingered over.
-
-const LATITUDE = 23.7 * DEG;
-const DECLINATION = 8 * DEG;
+// Light and colour for a moment of the day. A table of looks keyed on the sun's elevation gives every
+// colour; the moon lights the night when it is up, as brightly as its phase allows.
 
 interface Look {
   elev: number;
@@ -42,36 +40,8 @@ const LOOKS: Look[] = [
   { elev: 80, zenith: '#3f78d4', zenithK: 0.75, horizon: '#c0d4ec', horizonK: 1.15, fog: '#bccbdc', fogK: 1.05, glow: '#ffffff', glowK: 0.05, sun: '#fff6ea', sunE: 4.2, hemiSky: '#b4c8e8', hemiGround: '#5e5434', hemiE: 1.3, water: '#74694c', exposure: 0.84, mist: 0.0006 },
 ];
 
-/** Cycle position → solar time (0 = noon): lingering in golden hour and dusk, quick through the night. */
-const PHASE_TO_SOLAR: [number, number][] = [
-  [0.0, 0.229],
-  [0.3, 0.262],
-  [0.42, 0.305],
-  [0.56, 0.69],
-  [0.7, 0.742],
-  [0.84, 0.93],
-  [1.0, 1.229],
-];
-
-function solarTime(phase: number): number {
-  for (let i = 1; i < PHASE_TO_SOLAR.length; i++) {
-    const [p1, s1] = PHASE_TO_SOLAR[i];
-    const [p0, s0] = PHASE_TO_SOLAR[i - 1];
-    if (phase <= p1) return s0 + ((phase - p0) / (p1 - p0)) * (s1 - s0);
-  }
-  return PHASE_TO_SOLAR[PHASE_TO_SOLAR.length - 1][1];
-}
-
-/** Sun direction for solar time `s`. West (the sunset) lies ahead of the boat and a little to its right. */
-function sunDirection(s: number, out: Vector3): Vector3 {
-  const H = s * Math.PI * 2;
-  const sinE = Math.sin(LATITUDE) * Math.sin(DECLINATION) + Math.cos(LATITUDE) * Math.cos(DECLINATION) * Math.cos(H);
-  const elev = Math.asin(clamp(sinE, -1, 1));
-  // azimuth from south, positive toward west
-  const az = Math.atan2(Math.sin(H), Math.cos(H) * Math.sin(LATITUDE) - Math.tan(DECLINATION) * Math.cos(LATITUDE));
-  const theta = az - Math.PI / 2 + 20 * DEG;
-  return out.set(Math.cos(elev) * Math.sin(theta), Math.sin(elev), -Math.cos(elev) * Math.cos(theta));
-}
+/** Where the faint light of a moonless sky seems to come from: high, a little off the zenith. */
+const SKY_GLOW_DIR = new Vector3(0.25, 0.92, -0.3).normalize();
 
 const tmpA = new Color();
 const tmpB = new Color();
@@ -82,12 +52,23 @@ function mixLook(a: Look, b: Look, t: number, key: keyof Look, scaleKey: keyof L
   return out.copy(tmpA).lerp(tmpB, t);
 }
 
+/** The two looks either side of a sun elevation, and how far between them it lies. */
+function bracket(elev: number): [Look, Look, number] {
+  let i = 1;
+  while (i < LOOKS.length - 1 && LOOKS[i].elev < elev) i++;
+  const a = LOOKS[i - 1];
+  const b = LOOKS[i];
+  return [a, b, smoothstep(0, 1, clamp((elev - a.elev) / (b.elev - a.elev), 0, 1))];
+}
+
+/** A display colour for the horizon at a sun elevation; the timeline paints the day with it. */
+export function skyColorAt(elev: number, out: Color): Color {
+  const [a, b, t] = bracket(elev);
+  const k = Math.sqrt(a.horizonK + (b.horizonK - a.horizonK) * t);
+  return out.set(a.horizon).lerp(tmpB.set(b.horizon), t).multiplyScalar(Math.min(1, k));
+}
+
 export class Environment {
-  /** 0..1 around one day. 0 is the start of golden hour. */
-  phase = 0;
-  /** Real seconds for a full day at speed 1. */
-  readonly daySeconds = 900;
-  speed = 1;
   exposure = 1;
   /** 0 by day, 1 at night: lanterns, fireflies, stars. */
   night = 0;
@@ -95,9 +76,11 @@ export class Environment {
   readonly elevation = { deg: 0 };
   readonly key: DirectionalLight;
   readonly hemi: HemisphereLight;
-  private readonly sunDir = new Vector3();
-  private readonly moonDir = new Vector3();
+  /** Directions to the sun and the moon; either may be below the horizon. */
+  readonly sunDir = new Vector3();
+  readonly moonDir = new Vector3();
   private readonly sunColor = new Color();
+  private readonly moonColor = new Color();
   private readonly lastShadowDir = new Vector3();
   private readonly sky: Sky;
   private readonly water: Water;
@@ -128,18 +111,12 @@ export class Environment {
     this.key.shadow.mapSize.set(size, size);
   }
 
-  update(dt: number): void {
-    this.phase = (this.phase + (dt * this.speed) / this.daySeconds) % 1;
-    const s = solarTime(this.phase);
-    sunDirection(s, this.sunDir);
+  /** `hour` is local solar time (12 = noon); `moonAge` is days since new moon. */
+  update(hour: number, moonAge: number): void {
+    sunDirection(hour, this.sunDir);
     const elev = Math.asin(this.sunDir.y) / DEG;
     this.elevation.deg = elev;
-
-    let i = 1;
-    while (i < LOOKS.length - 1 && LOOKS[i].elev < elev) i++;
-    const a = LOOKS[i - 1];
-    const b = LOOKS[i];
-    const t = smoothstep(0, 1, clamp((elev - a.elev) / (b.elev - a.elev), 0, 1));
+    const [a, b, t] = bracket(elev);
 
     mixLook(a, b, t, 'zenith', 'zenithK', this.sky.zenith);
     mixLook(a, b, t, 'horizon', 'horizonK', this.sky.horizon);
@@ -152,20 +129,35 @@ export class Environment {
     G.uSunColor.value.copy(this.sunColor).multiplyScalar(sunE * visible);
     G.uSunDir.value.copy(this.sunDir);
     this.exposure = a.exposure + (b.exposure - a.exposure) * t;
-    G.uMist.value = a.mist + (b.mist - a.mist) * t;
+    // mist gathers on the river before sunrise and burns off as the sun climbs; evenings stay clear
+    const dawn = hour < 12 ? smoothstep(-14, -4, elev) * smoothstep(12, 2, elev) : 0;
+    G.uMist.value = (a.mist + (b.mist - a.mist) * t) * (1 + 0.9 * dawn);
     G.uFogDensity.value = 0.0006 + 0.0003 * smoothstep(20, -5, elev);
     this.night = smoothstep(-3, -12, elev);
     this.lamp = smoothstep(4, -5, elev);
     G.uNight.value = this.night;
 
-    // the moon rides opposite the sun and lights the night
-    this.moonDir.set(-this.sunDir.x * 0.75 + 0.2, Math.max(-this.sunDir.y, 0) * 0.7 + 0.32, -this.sunDir.z * 0.75 - 0.1).normalize();
+    // night light: the moon while it is up, as brightly as its phase allows and warmer when low, over a
+    // faint glow from the whole sky, so a moonless night still shows its shapes
+    moonDirection(hour, moonAge, this.moonDir);
     this.sky.moonDir.copy(this.moonDir);
-    const moonE = 0.7 * smoothstep(-5, -14, elev);
-    const useMoon = elev < -4.5;
-    G.uKeyDir.value.copy(useMoon ? this.moonDir : this.sunDir);
-    if (useMoon) G.uKeyColor.value.set('#9fb6e6').multiplyScalar(moonE);
-    else G.uKeyColor.value.copy(G.uSunColor.value);
+    const moonElev = Math.asin(this.moonDir.y) / DEG;
+    const phase = 0.15 + 0.85 * Math.pow(moonIllumination(moonAge), 1.5);
+    const moonUp = phase * smoothstep(-0.5, 6, moonElev);
+    this.sky.moonGlow.value = phase * smoothstep(-2, 4, moonElev);
+    const dark = smoothstep(-5, -14, elev);
+    const moonE = 0.7 * dark * moonUp;
+    const glowE = 0.4 * dark * (1 - 0.6 * moonUp);
+    if (elev < -4.5) {
+      this.moonColor.set('#9fb6e6').lerp(tmpB.set('#e2bc92'), smoothstep(16, 3, moonElev));
+      G.uKeyColor.value.copy(this.moonColor).multiplyScalar(moonE).add(tmpB.set('#8a9ccc').multiplyScalar(glowE));
+      // one light for both: it comes from the moon as soon as the moon clears the horizon (so its
+      // glitter on the water sits under the moon) and from the sky's glow while there is no moon
+      G.uKeyDir.value.copy(this.moonDir).multiplyScalar(moonE * 5).addScaledVector(SKY_GLOW_DIR, glowE + 1e-4).normalize();
+    } else {
+      G.uKeyDir.value.copy(this.sunDir);
+      G.uKeyColor.value.copy(G.uSunColor.value);
+    }
     this.key.color.copy(G.uKeyColor.value);
     this.key.intensity = 1;
 
@@ -181,7 +173,9 @@ export class Environment {
   aimShadow(focus: Vector3, force: boolean): boolean {
     const dir = G.uKeyDir.value;
     const moved = this.key.target.position.distanceToSquared(focus) > 1;
-    const turned = this.lastShadowDir.dot(dir) < 0.99996;
+    // while the key is dark (the moon is down) its shadow is invisible, so it need not follow
+    const c = G.uKeyColor.value;
+    const turned = c.r + c.g + c.b > 0 && this.lastShadowDir.dot(dir) < 0.99996;
     if (!force && !moved && !turned) return false;
     this.key.target.position.copy(focus);
     this.key.position.copy(focus).addScaledVector(dir, 420);

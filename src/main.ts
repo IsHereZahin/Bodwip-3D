@@ -2,11 +2,17 @@ import { Color, PCFShadowMap, PerspectiveCamera, SRGBColorSpace, Scene, Vector3,
 import { Soundscape } from './audio/soundscape';
 import { G, LAYER_NO_REFLECT, LAYER_WATER } from './core/globals';
 import { clamp } from './core/mathx';
+import { Clock, SPEEDS } from './env/clock';
+import type { SkyEvent, SkyEventKind } from './env/clock';
 import { Environment } from './env/environment';
 import { Pipeline } from './render/pipeline';
 import { setMaxAnisotropy } from './render/textures';
 import { Director } from './rig/director';
-import { Rig } from './rig/rig';
+import { Rig, VIEWS } from './rig/rig';
+import type { ViewName } from './rig/rig';
+import { EVENT_NOW, clockLabel } from './ui/bangla';
+import { Controls } from './ui/controls';
+import type { CameraChoice } from './ui/controls';
 import { Hud } from './ui/hud';
 import { RiverTraffic } from './world/boats';
 import { HeroBoat } from './world/hero';
@@ -20,9 +26,19 @@ import { buildWater } from './world/water';
 const BLACK = new Color(0, 0, 0);
 const MIST = new Color(0.8, 0.72, 0.6);
 const DEBUG = new URLSearchParams(location.search).has('debug');
+/** The first evening: golden hour, under a moon just past full that rises half an hour after sunset. */
+const START_HOUR = 17.5;
+const START_MOON_AGE = 15.6;
+/** Untouched this long, the camera turns to watch a sky event by itself; longer, the film tour starts. */
+const WATCH_IDLE_MS = 12000;
+const FILM_IDLE_MS = 75000;
 
 /** Lets the loader repaint between build steps. */
 const nextTask = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+const isSun = (kind: SkyEventKind) => kind === 'sunrise' || kind === 'sunset';
+const hourOf = (ev: SkyEvent) => (ev.time - Math.floor(ev.time)) * 24;
+const notice = (ev: SkyEvent) => `${EVENT_NOW[ev.kind]} · ${clockLabel(hourOf(ev))}`;
 
 async function main(hud: Hud): Promise<void> {
   const canvas = document.getElementById('c') as HTMLCanvasElement;
@@ -78,6 +94,7 @@ async function main(hud: Hud): Promise<void> {
   scene.add(traffic.group);
   const life = new Life();
   scene.add(life.group);
+  const clock = new Clock(START_HOUR, START_MOON_AGE);
   const env = new Environment(sky, water);
   env.addTo(scene);
   env.setShadowMapSize(Math.min(4096, renderer.capabilities.maxTextureSize) >= 4096 && devicePixelRatio <= 1.5 ? 4096 : 2048);
@@ -107,56 +124,192 @@ async function main(hud: Hud): Promise<void> {
   resize();
   window.addEventListener('resize', resize);
 
-  // ---- input ----
-  const held = new Set<string>();
+  // ---- sound: browsers allow it only after the first touch or key ----
+  let soundOn = false;
   const startSound = () => {
     if (!sound.muted) {
       sound.start();
-      hud.setSound(true);
+      soundOn = true;
     }
   };
   for (const type of ['pointerdown', 'keydown'] as const) window.addEventListener(type, startSound, { passive: true });
-  canvas.addEventListener('pointerdown', () => hud.dismissHint());
-  // the film tour: C or the film button; it also starts by itself after a long while untouched,
-  // and any look-around hands the camera back
-  let lastInput = performance.now();
-  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const setFilm = (on: boolean) => {
-    if (on) director.start();
-    else director.stop(camera);
-    hud.setFilm(director.active);
-    if (on) hud.dismissHint();
-  };
-  const takeOver = () => {
-    lastInput = performance.now();
-    if (director.active) setFilm(false);
-  };
-  canvas.addEventListener('pointerdown', takeOver);
-  canvas.addEventListener('wheel', takeOver, { passive: true });
-  hud.bindFilm(() => {
-    lastInput = performance.now();
-    setFilm(!director.active);
-    return director.active;
-  });
-  window.addEventListener('keydown', (e) => {
-    held.add(e.code);
-    if (e.code.startsWith('Arrow')) takeOver();
-    if (e.code === 'KeyC') {
-      lastInput = performance.now();
-      setFilm(!director.active);
-    }
-    if (e.code === 'KeyM') {
-      sound.setMuted(!sound.muted);
-      if (!sound.muted) sound.start();
-      hud.setSound(!sound.muted);
-    }
-  });
-  window.addEventListener('keyup', (e) => held.delete(e.code));
-  window.addEventListener('blur', () => held.clear());
-  hud.bindSound(() => {
+  const toggleSound = () => {
     sound.setMuted(!sound.muted);
     if (!sound.muted) sound.start();
-    return !sound.muted;
+    soundOn = !sound.muted;
+  };
+
+  // ---- camera: follow the boat, fly free, or watch the film tour ----
+  let lastInput = performance.now();
+  let filmAuto = false;
+  const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  /** The sky event being watched; `asked` when the viewer chose it rather than idling into it. */
+  const watch: { event: SkyEvent | null; asked: boolean } = { event: null, asked: false };
+  const noteInput = () => {
+    lastInput = performance.now();
+  };
+  const setFilm = (on: boolean, auto = false) => {
+    if (on) director.start();
+    else director.stop(camera);
+    filmAuto = on && auto;
+    if (on) hud.dismissHint();
+  };
+  /** The viewer is steering: the film hands the camera back and any watching stops. */
+  const takeOver = () => {
+    noteInput();
+    watch.asked = false;
+    if (director.active) setFilm(false);
+  };
+  canvas.addEventListener('pointerdown', () => {
+    hud.dismissHint();
+    takeOver();
+  });
+  canvas.addEventListener('wheel', takeOver, { passive: true });
+
+  const chooseCamera = (choice: CameraChoice) => {
+    noteInput();
+    if (choice === 'film') {
+      if (!director.active) setFilm(true);
+      return;
+    }
+    if (director.active) setFilm(false);
+    rig.setMode(choice);
+  };
+  const viewNames = Object.keys(VIEWS) as ViewName[];
+  let viewIndex = 0;
+  const setView = (name: ViewName) => {
+    noteInput();
+    watch.asked = false;
+    if (director.active) setFilm(false);
+    viewIndex = viewNames.indexOf(name);
+    rig.setView(name);
+  };
+
+  // ---- time ----
+  let scrubbing = false;
+  const stepSpeed = (dir: 1 | -1, wrap: boolean) => {
+    const n = SPEEDS.length;
+    const i = SPEEDS.indexOf(clock.speed) + dir;
+    clock.speed = SPEEDS[wrap ? (i + n) % n : clamp(i, 0, n - 1)];
+  };
+
+  // ---- sky events: announce each one, and turn to watch it when asked or when nobody is steering ----
+  const look = (ev: SkyEvent) => {
+    watch.event = ev;
+    watch.asked = true;
+    if (director.active) setFilm(false);
+    rig.lookNow();
+  };
+  const jump = (ev: SkyEvent) => {
+    noteInput();
+    clock.jumpTo(ev);
+    look(ev);
+    hud.toast(notice(ev), null);
+  };
+  const followSky = (now: number) => {
+    if (watch.event && !clock.watching(watch.event)) {
+      watch.event = null;
+      watch.asked = false;
+    }
+    const idle = !reducedMotion && now - lastInput > WATCH_IDLE_MS;
+    if (!watch.event) {
+      const ev = clock.watchable();
+      if (ev) {
+        watch.event = ev;
+        // a film tour that started by itself gives way to the sky; one the viewer chose plays on
+        if (director.active && filmAuto) setFilm(false);
+        if (!director.active) hud.toast(notice(ev), idle ? null : () => look(ev));
+      }
+    }
+    rig.watch = watch.event && !director.active && (watch.asked || idle) ? (isSun(watch.event.kind) ? env.sunDir : env.moonDir) : null;
+  };
+
+  const controls = new Controls({
+    togglePlay: () => {
+      clock.playing = !clock.playing;
+    },
+    faster: () => stepSpeed(1, true),
+    seek: (hour) => clock.setHour(hour),
+    scrub: (active) => {
+      scrubbing = active;
+    },
+    jump,
+    camera: chooseCamera,
+    view: setView,
+    moon: (age) => clock.setMoonAge(age),
+    sound: toggleSound,
+    touched: noteInput,
+  });
+
+  // ---- keyboard: one place for every shortcut (the help sheet lists them) ----
+  const held = new Set<string>();
+  window.addEventListener('keydown', (e) => {
+    if (controls.helpOpen || e.ctrlKey || e.metaKey || e.altKey) return;
+    // leave keys to a focused dropdown, and arrows to the focused timeline
+    const target = e.target;
+    if (target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement) return;
+    if (target instanceof HTMLInputElement && /^(Arrow|Page|Home|End)/.test(e.code)) return;
+    noteInput();
+    held.add(e.code);
+    if (rig.press(e.code, true)) takeOver();
+    if (e.repeat) return;
+    if (e.key === '?' || (e.code === 'Slash' && e.shiftKey)) {
+      controls.toggleHelp();
+      return;
+    }
+    switch (e.code) {
+      case 'Space':
+        if (target instanceof HTMLButtonElement) return;
+        e.preventDefault();
+        clock.playing = !clock.playing;
+        break;
+      case 'BracketLeft':
+        stepSpeed(-1, false);
+        break;
+      case 'BracketRight':
+        stepSpeed(1, false);
+        break;
+      case 'KeyN': {
+        const ev = clock.next();
+        if (ev) jump(ev);
+        break;
+      }
+      case 'KeyC':
+        setFilm(!director.active);
+        break;
+      case 'Digit1':
+        chooseCamera('follow');
+        break;
+      case 'Digit2':
+        chooseCamera('free');
+        break;
+      case 'Digit3':
+        chooseCamera('film');
+        break;
+      case 'KeyV':
+        setView(viewNames[(viewIndex + 1) % viewNames.length]);
+        break;
+      case 'KeyR':
+        setView('stern');
+        break;
+      case 'KeyM':
+        toggleSound();
+        break;
+      case 'KeyF':
+        controls.toggleFullscreen();
+        break;
+      case 'KeyH':
+        controls.toggleUi();
+        break;
+    }
+  });
+  window.addEventListener('keyup', (e) => {
+    held.delete(e.code);
+    rig.press(e.code, false);
+  });
+  window.addEventListener('blur', () => {
+    held.clear();
+    rig.releaseKeys();
   });
 
   // ---- first frame state, then compile every program before the loader goes ----
@@ -167,8 +320,10 @@ async function main(hud: Hud): Promise<void> {
     t += dt;
     G.uTime.value = t;
     G.uWind.value.z = 0.75 + 0.25 * Math.sin(t * 0.05) + 0.1 * Math.sin(t * 0.23);
-    env.speed = held.has('KeyT') ? 40 : 1;
-    env.update(dt);
+    clock.boost = held.has('KeyT') ? Math.max(1, 40 / clock.speed) : 1;
+    if (!scrubbing) clock.advance(dt);
+    env.update(clock.hour, clock.moonAge);
+    followSky(performance.now());
     rig.update(dt, t, hero.stroke);
     const b = rig.boat;
     director.update(dt, t, camera, b.pos, b.heading);
@@ -177,11 +332,12 @@ async function main(hud: Hud): Promise<void> {
     hero.group.rotation.set(b.pitch, b.heading, b.roll, 'YXZ');
     water.boat.set(b.pos.x, b.pos.z, b.heading, b.speed);
     traffic.update(dt, t, b.pos.z);
-    life.update(dt, t, b.pos, b.heading, env.night);
+    // birds and fireflies gather round whoever is being watched: the boat, or the free camera
+    life.update(dt, t, rig.subject, rig.subjectHeading, env.night);
     sky.mesh.position.copy(camera.position);
-    // the shadow box rides ahead of the boat, snapped so it redraws only every few metres
+    // the shadow box rides ahead of the view, snapped so it redraws only every few metres
     if (director.active) focus.copy(director.focus);
-    else focus.set(b.pos.x + Math.sin(b.heading) * 60, 0, b.pos.z + Math.cos(b.heading) * 60);
+    else rig.focus(focus);
     focus.set(Math.round(focus.x / 12) * 12, 0, Math.round(focus.z / 12) * 12);
     if (env.aimShadow(focus, false)) renderer.shadowMap.needsUpdate = true;
     sound.update(dt, env.night, G.uWind.value.z);
@@ -201,17 +357,20 @@ async function main(hud: Hud): Promise<void> {
     last = now;
     perf.ms += (raw * 1000 - perf.ms) * 0.05;
     step(debug.freeze ? 0 : Math.min(raw, 0.05));
-    if (!director.active && !reducedMotion && now - lastInput > 75000) setFilm(true);
+    if (!director.active && !reducedMotion && !watch.event && now - lastInput > FILM_IDLE_MS) setFilm(true, true);
     const intro = clamp(1 - (now - readyAt) / 2600, 0, 1);
     const cut = Math.max(intro, director.fade);
+    // the journey's mist fade belongs to the boat; a free camera elsewhere doesn't see the boat loop
+    const loop = rig.mode === 'follow' || director.active ? rig.fade : 0;
     pipeline.render(renderer, scene, camera, {
       exposure: env.exposure,
-      fade: Math.max(cut, rig.fade),
-      fadeColor: rig.fade > cut ? MIST : BLACK,
+      fade: Math.max(cut, loop),
+      fadeColor: loop > cut ? MIST : BLACK,
       night: env.night,
       letterbox: director.letterbox,
     });
     hud.setCaption(director.caption, director.captionAlpha, pipeline.bar);
+    controls.update(clock, director.active ? 'film' : rig.mode, soundOn);
 
     // adaptive resolution: hold ~45–60 fps by trading pixels, never below 60% scale
     perf.frames++;
@@ -236,25 +395,60 @@ async function main(hud: Hud): Promise<void> {
   renderer.setAnimationLoop(frame);
   readyAt = performance.now();
   hud.ready();
+  controls.show();
 
   if (DEBUG) {
-    // hooks for headless stills: put the boat and the day where you want them and freeze
+    // hooks for headless stills: put the boat, the day and the camera where you want them and freeze
+    interface ShotOptions {
+      journey?: number;
+      /** Local solar hour, 0..24 (12 = noon). */
+      hour?: number;
+      /** Moon's age in days since new moon (14.8 = full). */
+      moon?: number;
+      yaw?: number;
+      pitch?: number;
+      dist?: number;
+      /** Turn to the sun or the moon: the follow camera frames it low, as when it rises or sets; the free camera looks straight at it. */
+      face?: 'sun' | 'moon';
+      /** Free camera at [x, y, z, yaw, pitch]. */
+      free?: [number, number, number, number, number];
+      film?: [number, number];
+    }
     Object.assign(window, {
       __river: {
         ready: true,
-        shot(o: { journey?: number; phase?: number; yaw?: number; pitch?: number; dist?: number; film?: [number, number] }) {
+        shot(o: ShotOptions) {
           if (o.journey !== undefined) rig.place(o.journey);
-          if (o.phase !== undefined) env.phase = o.phase;
-          rig.settle(o);
+          if (o.moon !== undefined) clock.setMoonAge(o.moon);
+          if (o.hour !== undefined) clock.setHour(o.hour);
+          watch.event = null;
+          watch.asked = false;
+          env.update(clock.hour, clock.moonAge);
+          const body = o.face === 'sun' ? env.sunDir : env.moonDir;
+          if (o.free) {
+            const [x, y, z, yaw, pitch] = o.free;
+            if (o.face) rig.placeFree(x, y, z, Math.atan2(body.x, body.z), Math.asin(body.y));
+            else rig.placeFree(x, y, z, yaw, pitch);
+          } else {
+            rig.setMode('follow');
+            if (o.face) rig.aim(body);
+            rig.settle(o);
+          }
           if (o.film) director.cue(o.film[0], o.film[1]);
           else director.stop(camera, true);
           director.letterbox = o.film ? 1 : 0;
           perf.locked = true;
           readyAt = -1e9;
+          lastInput = performance.now();
           debug.freeze = false;
+          clock.playing = false;
           step(0.001);
           renderer.shadowMap.needsUpdate = true;
           debug.freeze = true;
+        },
+        /** Today's sky events, as { kind, hour }. */
+        events() {
+          return clock.today().map((ev) => ({ kind: ev.kind, hour: Math.round(hourOf(ev) * 100) / 100 }));
         },
         /** Hides every object with this name (debugging what draws where). */
         hide(name: string) {
@@ -269,9 +463,11 @@ async function main(hud: Hud): Promise<void> {
         },
         resume() {
           debug.freeze = false;
+          clock.playing = true;
         },
         info() {
-          return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, scale: perf.scale, ms: Math.round(perf.ms * 10) / 10, programs: renderer.info.programs?.length };
+          const cam = camera.position.toArray().map((v) => Math.round(v * 10) / 10);
+          return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, scale: perf.scale, ms: Math.round(perf.ms * 10) / 10, programs: renderer.info.programs?.length, camera: cam, mode: director.active ? 'film' : rig.mode, hour: Math.round(clock.hour * 100) / 100 };
         },
       },
     });
