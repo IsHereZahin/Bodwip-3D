@@ -1,5 +1,6 @@
 import { Vector3 } from 'three';
-import { MeshBuilder, mixRgb, type RGB } from '../render/builder';
+import { smoothstep } from '../core/mathx';
+import { MeshBuilder, mixRgb, scaleRgb, type RGB } from '../render/builder';
 
 /** A Bengal country boat: long and narrow, with bow and stern sweeping up high. Bow points to +z. */
 export interface HullShape {
@@ -50,9 +51,10 @@ float hullHalfBeamAtWater(float s) {
 
 /**
  * Hull skin as one surface running from the gunwale on one side, under the keel, to the other.
- * u runs along the boat (planks), v up the side; `band` paints a strip below the gunwale.
+ * u runs along the boat (planks), v up the side; `band` paints a strip below the gunwale, and `wet`
+ * darkens the wood just above the waterline, where the river keeps it soaked.
  */
-export function buildHull(b: MeshBuilder, shape: HullShape, colors: { tar: RGB; top: RGB; band?: RGB }): void {
+export function buildHull(b: MeshBuilder, shape: HullShape, colors: { tar: RGB; top: RGB; band?: RGB; wet?: boolean }): void {
   const S = 48;
   const A = 20;
   const start = b.vertexCount;
@@ -71,6 +73,7 @@ export function buildHull(b: MeshBuilder, shape: HullShape, colors: { tar: RGB; 
       const up = Math.abs(a);
       let c = mixRgb(colors.tar, colors.top, Math.pow(up, 3));
       if (colors.band && up > 0.8 && up < 0.92) c = colors.band;
+      if (colors.wet) c = scaleRgb(c, 1 - 0.4 * smoothstep(0.14, 0.0, p.y));
       b.vertex(p, n, z * 0.45, up * 1.6, c);
     }
   }

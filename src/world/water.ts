@@ -22,6 +22,7 @@ import { G, LAYER_WATER } from '../core/globals';
 import { periodicNoise } from '../core/noise';
 import { GLSL_COMMON } from '../render/glsl';
 import { HERO_HULL, hullWaterlineGlsl } from './hull';
+import { waveSlopeGlsl } from './waves';
 import { WORLD_Z0, WORLD_Z1, downstream, halfWidth, riverX, terrainHeight } from './geography';
 
 const FIELD_X0 = -620;
@@ -114,11 +115,13 @@ uniform mat4 uTexMatrix;
 uniform sampler2D tNormal;
 uniform sampler2D tField;
 uniform vec4 uField;
-uniform vec4 uBoat;      // x, z, heading, speed
+uniform vec4 uBoat;      // x, z, heading, speed through the water
+uniform vec4 uOar;       // the blade in the boat's frame (x across, z along), its swing rate
 uniform vec3 uAmb;
 varying vec3 vWorld;
 
 ${hullWaterlineGlsl(HERO_HULL)}
+${waveSlopeGlsl()}
 
 vec2 ripple(vec2 uv) { return texture2D(tNormal, uv).xy * 2.0 - 1.0; }
 
@@ -143,11 +146,11 @@ float wakeField(vec2 q, float spd) {
   float hb = 0.82 * sqrt(max(1.0 - s * s, 0.0)) + 0.05;
   float dd = length(vec2(max(abs(q.x) - hb, 0.0), q.y - s * L));
   h += 0.4 * exp(-dd * 0.55) * sin(dd * 5.0 - uTime * 3.4);
-  // rings spreading from where the oar blade works
-  vec2 oar = vec2(1.4, -L - 1.6);
-  float ro = length(q - oar);
-  h += 0.35 * exp(-ro * 0.45) * sin(ro * 6.0 - uTime * 5.0);
-  return h * (0.35 + 0.65 * spd);
+  h *= 0.35 + 0.65 * spd;
+  // rings spreading from where the blade works, strongest mid-sweep whatever the boat's speed
+  float ro = length(q - uOar.xy);
+  h += 0.35 * (0.3 + uOar.z) * exp(-ro * 0.5) * sin(ro * 6.0 - uTime * 5.0);
+  return h;
 }
 
 void main() {
@@ -165,6 +168,7 @@ void main() {
   float sAlong = q.y / ${(HERO_HULL.len / 2).toFixed(3)};
   // no river inside the boat: its floorboards sit just above the waterline
   if (abs(sAlong) < 1.0 && abs(q.x) < hullHalfBeamAtWater(sAlong) * 0.96) discard;
+  float boatSpd = clamp(uBoat.w / 2.0, 0.0, 1.4);
 
   vec4 fld = texture2D(tField, (wp.xz - uField.xy) * uField.zw);
   float depth = max(-fld.r, 0.0);
@@ -190,13 +194,19 @@ void main() {
   vec2 nC = ripple(wp.xz / 46.0 + vec2(uTime * 0.004, -uTime * 0.006));
   float far = 1.0 / (1.0 + dist * 0.01);
   vec2 slope = nA * 0.2 + nB * (0.06 + 0.1 * uWind.z) * far + nC * 0.1;
+  // the long waves the boat and the floating plants ride (see waves.ts)
+  slope += waveSlope(wp.xz);
 
   float foam = 0.0;
+  // water lapping along the hull at the waterline, livelier with way on
+  if (abs(sAlong) < 1.0) {
+    float edge = abs(q.x) - hullHalfBeamAtWater(sAlong);
+    foam += smoothstep(0.28, 0.0, edge) * (0.3 + 0.4 * boatSpd) * smoothstep(0.35, 0.7, vnoise(vec2(q.y * 3.0 - uTime * 1.5, q.x * 9.0)));
+  }
   if (q.y > -180.0 && q.y < 12.0 && abs(q.x) < 75.0) {
-    float spd = clamp(uBoat.w / 3.0, 0.0, 1.4);
     float e = 0.12;
-    float hc = wakeField(q, spd);
-    vec2 g = vec2(wakeField(q + vec2(e, 0.0), spd) - hc, wakeField(q + vec2(0.0, e), spd) - hc) / e;
+    float hc = wakeField(q, boatSpd);
+    vec2 g = vec2(wakeField(q + vec2(e, 0.0), boatSpd) - hc, wakeField(q + vec2(0.0, e), boatSpd) - hc) / e;
     slope += (rt * g.x + fw * g.y) * 0.05;
     // thin streaky whitewater along the wake arms, never a solid sheet
     float d = -q.y - 3.8;
@@ -250,7 +260,10 @@ void main() {
 
 export interface Water {
   mesh: Mesh;
+  /** The hero boat: x, z, heading, speed through the water. */
   boat: Vector4;
+  /** Its oar blade in the boat's frame (x across, z along), and its swing rate. */
+  oar: Vector4;
   color: Color;
   ambient: Color;
 }
@@ -258,6 +271,7 @@ export interface Water {
 export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAnisotropy: number): Water {
   const field = riverField();
   const boat = new Vector4();
+  const oar = new Vector4();
   const color = new Color();
   const ambient = new Color();
   const material = new ShaderMaterial({
@@ -269,6 +283,7 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
       tField: { value: field.texture },
       uField: { value: field.bounds },
       uBoat: { value: boat },
+      uOar: { value: oar },
       uAmb: { value: ambient },
     },
     vertexShader: VERT,
@@ -288,6 +303,6 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
   // first of the see-through things, so fireflies and motes over the river draw on top of it
   mesh.renderOrder = -1;
   mesh.name = 'water';
-  return { mesh, boat, color, ambient };
+  return { mesh, boat, oar, color, ambient };
 }
 

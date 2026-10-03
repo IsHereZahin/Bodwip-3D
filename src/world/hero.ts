@@ -1,6 +1,5 @@
 import {
   BoxGeometry,
-  CapsuleGeometry,
   Color,
   ConeGeometry,
   CylinderGeometry,
@@ -9,57 +8,202 @@ import {
   LatheGeometry,
   Matrix4,
   Mesh,
+  MeshBasicMaterial,
   MeshStandardMaterial,
+  PlaneGeometry,
   PointLight,
+  Quaternion,
   SphereGeometry,
   TorusGeometry,
   Vector2,
   Vector3,
 } from 'three';
 import type { BufferGeometry } from 'three';
-import { MeshBuilder, rgb, taperedTube } from '../render/builder';
+import { MeshBuilder, rgb, scaleRgb, taperedTube } from '../render/builder';
 import { patchMaterial } from '../render/patch';
-import { checkTexture, plankTexture, weaveTexture } from '../render/textures';
-import { HERO_HULL, buildHull, hullHalfWidthAt, hullStation, sheerLine } from './hull';
+import { checkTexture, hullPlankTexture, softSpotTexture, weaveTexture } from '../render/textures';
+import { G } from '../core/globals';
+import { Boatman, type OarPose } from './boatman';
+import { scull, strokePhase, type BoatBody, type Scull } from './boatPhysics';
+import { HERO_HULL, buildHull, hullHalfWidthAt, hullStation } from './hull';
 
+// The hero boat: a Bengal dinghy, planked and cramped with iron, tarred below and weathered above, with
+// her frames and floorboards inside, a chhoi of woven bamboo over her middle, cargo in the bow, a
+// lantern hung from the chhoi, and the boatman sculling from a platform at the stern. The boat's
+// motion comes from BoatBody; this file builds her and poses everything aboard.
+
+const LEN = HERO_HULL.len;
+const zAt = (s: number) => (s - 0.5) * LEN;
+const sAt = (z: number) => z / LEN + 0.5;
+const UP = new Vector3(0, 1, 0);
 const Z_AXIS = new Vector3(0, 0, 1);
-const Y_AXIS = new Vector3(0, 1, 0);
-const sAt = (z: number) => z / HERO_HULL.len + 0.5;
 
-/** Oar pivot on the starboard quarter, and the shaft's rest direction (handle → blade, into the water astern). */
+/** Oar pivot (the rope grommet on the post) on the starboard quarter, and the shaft's rest line (handle → blade). */
 const OAR_PIVOT = new Vector3(0.4, 0.98, -3.55);
 const OAR_REST = new Vector3(0.45, -0.5, -1).normalize();
 const OAR_INBOARD = 1.25;
-const STROKE_SECONDS = 3.4;
+const OAR_LENGTH = OAR_INBOARD + 3.1;
+/** The loom's radius at its inboard end and at the post. */
+const LOOM_END = 0.03;
+const LOOM_POST = 0.038;
+/** The cross-grip on the oar's end: half its length and its radius; his right hand holds it this far out on his side. */
+const CROSS_HALF = 0.12;
+const CROSS_RADIUS = 0.022;
+const CROSS_HOLD = 0.072;
+/** How far down the loom from the handle his left hand holds it, and the loom's radius there. */
+const LOOM_HOLD = 0.36;
+const LOOM_HOLD_RADIUS = LOOM_END + (LOOM_POST - LOOM_END) * (LOOM_HOLD / OAR_INBOARD);
+/** The breeze over the river at full strength (m/s); the wind uniform's strength scales it. */
+const BREEZE = 3;
+/** Middle of the boatman's feet on the stern platform: just to port of the oar's shaft. */
+const STANCE = new Vector3(-0.2, 0.33, -2.95);
 
+// multipliers on the plank texture (which carries the wood's own colour): weathered, darker timber, tar
+const WOOD: [number, number, number] = [0.92, 0.88, 0.82];
+const WOOD_DARK: [number, number, number] = [0.6, 0.53, 0.45];
+const TAR: [number, number, number] = [0.3, 0.25, 0.21];
+const BLUE_STRAKE: [number, number, number] = [0.34, 0.52, 0.82];
+
+/** A point on the hull's skin at station s, round the section by a (−1 port gunwale … 1 starboard), set in by `inset`. */
+function skinPoint(s: number, a: number, inset: number, out: Vector3, normal: Vector3): Vector3 {
+  const { keel, sheer, hb } = hullStation(HERO_HULL, s);
+  const phi = Math.abs(a) * (Math.PI / 2);
+  const side = a < 0 ? -1 : 1;
+  normal.set(side * Math.sin(phi), -Math.cos(phi) + 0.2, 0).normalize();
+  out.set(side * hb * Math.pow(Math.sin(phi), 0.8), keel + (sheer - keel) * (1 - Math.cos(phi)), zAt(s));
+  return out.addScaledVector(normal, -Math.min(inset, hb * 0.4));
+}
+
+/** The planked hull inside and out, and the timber that holds her together. */
 function hullGeometry(): BufferGeometry {
   const b = new MeshBuilder();
-  buildHull(b, HERO_HULL, { tar: rgb('#2c2119'), top: rgb('#6a5440'), band: rgb('#2d4f7a') });
-  const rail = rgb('#4a3a2a');
-  for (const side of [-1, 1] as const) {
-    const line = sheerLine(HERO_HULL, side);
-    taperedTube(b, line, line.map(() => 0.035), 4, rail);
-  }
-  // floorboards just above the waterline, and a raised platform at the stern for the boatman
-  const plank = rgb('#8a7458');
-  const deck = (s0: number, s1: number, y: number) => {
-    const start = b.vertexCount;
-    const n = new Vector3(0, 1, 0);
-    const steps = 12;
-    for (let i = 0; i <= steps; i++) {
-      const s = s0 + ((s1 - s0) * i) / steps;
-      const w = hullHalfWidthAt(HERO_HULL, s, y) * 0.96;
-      const z = (s - 0.5) * HERO_HULL.len;
-      b.vertex(new Vector3(-w, y, z), n, z * 0.6, 0, plank);
-      b.vertex(new Vector3(w, y, z), n, z * 0.6, w * 1.4, plank);
+  buildHull(b, HERO_HULL, { tar: TAR, top: WOOD, band: BLUE_STRAKE, wet: true });
+  const p = new Vector3();
+  const n = new Vector3();
+
+  // the inside skin (her ceiling), darker toward the bilge where light hardly reaches
+  const S = 40;
+  const A = 18;
+  const start = b.vertexCount;
+  for (let i = 0; i <= S; i++) {
+    const s = 0.035 + (0.93 * i) / S;
+    for (let j = 0; j <= A; j++) {
+      const a = (j / A) * 2 - 1;
+      skinPoint(s, a, 0.028, p, n);
+      b.vertex(p, n.clone().negate(), zAt(s) * 0.45, Math.abs(a) * 1.6, scaleRgb(WOOD, 0.42 + 0.48 * Math.abs(a)));
     }
-    for (let i = 0; i < steps; i++) b.quad(start + i * 2, start + i * 2 + 2, start + i * 2 + 3, start + i * 2 + 1);
-  };
-  deck(0.26, 0.86, 0.1);
-  deck(0.08, 0.26, 0.3);
-  for (const s of [0.3, 0.72]) {
-    const w = hullHalfWidthAt(HERO_HULL, s, 0.42) * 2;
-    b.add(new BoxGeometry(w, 0.05, 0.22), new Matrix4().makeTranslation(0, 0.42, (s - 0.5) * HERO_HULL.len), plank);
+  }
+  for (let i = 0; i < S; i++) {
+    for (let j = 0; j < A; j++) {
+      const k = start + i * (A + 1) + j;
+      b.quad(k, k + 1, k + A + 2, k + A + 1);
+    }
+  }
+  // the gunwale cap: closes the gap between the skins along the top
+  for (const side of [-1, 1]) {
+    const cap = b.vertexCount;
+    for (let i = 0; i <= S; i++) {
+      const s = 0.035 + (0.93 * i) / S;
+      const outer = skinPoint(s, side, 0, new Vector3(), n).addScaledVector(UP, 0.005);
+      const inner = skinPoint(s, side, 0.04, new Vector3(), n).addScaledVector(UP, 0.005);
+      b.vertex(outer, UP, zAt(s) * 0.45, 0, WOOD_DARK);
+      b.vertex(inner, UP, zAt(s) * 0.45, 0.06, WOOD_DARK);
+    }
+    for (let i = 0; i < S; i++) b.quad(cap + i * 2, cap + i * 2 + 2, cap + i * 2 + 3, cap + i * 2 + 1);
+  }
+
+  // frames (ribs) every half metre or so, and the keelson along the bottom
+  for (let s = 0.09; s < 0.92; s += 0.058) {
+    const pts: Vector3[] = [];
+    for (let j = 0; j <= 12; j++) pts.push(skinPoint(s, (j / 12) * 1.9 - 0.95, 0.045, new Vector3(), n));
+    taperedTube(b, pts, pts.map(() => 0.022), 4, WOOD_DARK, 0.6);
+  }
+  const keelson: Vector3[] = [];
+  for (let s = 0.07; s <= 0.93; s += 0.043) keelson.push(skinPoint(s, 0, 0.06, new Vector3(), n));
+  taperedTube(b, keelson, keelson.map(() => 0.04), 5, WOOD_DARK, 0.6);
+
+  // loose floorboards (patatan) down the middle, tapering with the hull, with gaps between them
+  const boards = 5;
+  for (let k = 0; k < boards; k++) {
+    const tint = scaleRgb(WOOD, 0.82 + ((k * 37) % 9) * 0.03);
+    const y = 0.1 + ((k * 13) % 3) * 0.004;
+    const top = b.vertexCount;
+    const steps = 14;
+    for (let i = 0; i <= steps; i++) {
+      const s = 0.27 + (0.59 * i) / steps;
+      const w = hullHalfWidthAt(HERO_HULL, s, y) * 0.94;
+      const x0 = -w + (2 * w * k) / boards + 0.012;
+      const x1 = -w + (2 * w * (k + 1)) / boards - 0.012;
+      b.vertex(new Vector3(x0, y, zAt(s)), UP, zAt(s) * 0.45, k * 0.25, tint);
+      b.vertex(new Vector3(x1, y, zAt(s)), UP, zAt(s) * 0.45, k * 0.25 + 0.06, tint);
+    }
+    for (let i = 0; i < steps; i++) b.quad(top + i * 2, top + i * 2 + 2, top + i * 2 + 3, top + i * 2 + 1);
+  }
+
+  // the boatman's platform at the stern: boards laid across
+  for (let z = zAt(0.075); z < zAt(0.27); z += 0.175) {
+    const s = sAt(z + 0.075);
+    const w = hullHalfWidthAt(HERO_HULL, s, 0.3) * 0.97;
+    const m = new Matrix4().makeTranslation(0, 0.3, z + 0.075);
+    b.add(new BoxGeometry(w * 2, 0.03, 0.155), m, scaleRgb(WOOD, 0.85 + ((Math.round(z * 10) * 7) % 5) * 0.04));
+  }
+  b.add(new BoxGeometry(hullHalfWidthAt(HERO_HULL, 0.27, 0.25) * 2, 0.08, 0.08), new Matrix4().makeTranslation(0, 0.25, zAt(0.27)), WOOD_DARK);
+
+  // thwarts across at gunwale height, each braced by a pair of knees
+  for (const s of [0.3, 0.71, 0.84]) {
+    const { sheer } = hullStation(HERO_HULL, s);
+    const y = sheer - 0.08;
+    const w = hullHalfWidthAt(HERO_HULL, s, y) * 0.98;
+    b.add(new BoxGeometry(w * 2, 0.045, 0.17), new Matrix4().makeTranslation(0, y, zAt(s)), WOOD);
+    for (const side of [-1, 1]) {
+      const m = new Matrix4().compose(
+        new Vector3(side * (w - 0.07), y - 0.08, zAt(s)),
+        new Quaternion().setFromAxisAngle(Z_AXIS, side * 0.75),
+        new Vector3(1, 1, 1),
+      );
+      b.add(new BoxGeometry(0.05, 0.18, 0.06), m, WOOD_DARK);
+    }
+  }
+
+  // stem and stern posts carried up past the sheer, the bow's capped in red
+  for (const [s, dir] of [
+    [0.997, 1],
+    [0.003, -1],
+  ] as const) {
+    const { sheer } = hullStation(HERO_HULL, s);
+    const tip = new Vector3(0, sheer - 0.1, zAt(s));
+    const pts = [tip, tip.clone().add(new Vector3(0, 0.22, dir * 0.06)), tip.clone().add(new Vector3(0, 0.36, dir * 0.0))];
+    taperedTube(b, pts, [0.06, 0.045, 0.03], 6, dir > 0 ? rgb('#8a2a1e') : WOOD_DARK, 0.4);
+  }
+
+  // the post the oar works against, on the starboard quarter
+  const post = OAR_PIVOT.clone();
+  taperedTube(b, [post.clone().add(new Vector3(0.02, -0.14, 0)), post.clone().add(new Vector3(0.02, 0.16, 0))], [0.05, 0.04], 6, WOOD_DARK, 0.4);
+  return b.build();
+}
+
+/** Eyes painted on the bow, as on many country boats. */
+function bowEyes(): BufferGeometry {
+  const b = new MeshBuilder();
+  const p = new Vector3();
+  const n = new Vector3();
+  for (const side of [-1, 1]) {
+    const c = skinPoint(0.915, side * 0.72, -0.004, p, n).clone();
+    const nn = n.clone();
+    const u = new Vector3(0, 0, 1);
+    const v = new Vector3().crossVectors(nn, u).normalize();
+    for (const [rx, ry, col, lift] of [
+      [0.085, 0.05, rgb('#efe9dc'), 0],
+      [0.032, 0.032, rgb('#111111'), 0.002],
+    ] as const) {
+      const centre = b.vertex(c.clone().addScaledVector(nn, lift), nn, 0.5, 0.5, col);
+      const ring: number[] = [];
+      for (let k = 0; k < 16; k++) {
+        const t = (k / 16) * Math.PI * 2;
+        ring.push(b.vertex(c.clone().addScaledVector(u, Math.cos(t) * rx).addScaledVector(v, Math.sin(t) * ry).addScaledVector(nn, lift), nn, 0, 0, col));
+      }
+      for (let k = 0; k < 16; k++) b.tri(centre, ring[k], ring[(k + 1) % 16]);
+    }
   }
   return b.build();
 }
@@ -76,8 +220,8 @@ function canopyGeometry(z0: number, z1: number): BufferGeometry {
     const R = hullHalfWidthAt(HERO_HULL, s, sheer - 0.02) * 0.98;
     for (let j = 0; j <= A; j++) {
       const th = (j / A) * Math.PI;
-      const n = new Vector3(Math.cos(th), Math.sin(th), 0);
-      b.vertex(new Vector3(R * Math.cos(th), sheer + R * 0.95 * Math.sin(th), z), n, (th * R) / 0.45, z / 0.45);
+      const nrm = new Vector3(Math.cos(th), Math.sin(th), 0);
+      b.vertex(new Vector3(R * Math.cos(th), sheer + R * 0.95 * Math.sin(th), z), nrm, (th * R) / 0.45, z / 0.45);
     }
   }
   for (let i = 0; i < Z; i++) {
@@ -89,177 +233,315 @@ function canopyGeometry(z0: number, z1: number): BufferGeometry {
   return b.build();
 }
 
-function solveArm(shoulder: Vector3, target: Vector3, upper: number, lower: number, pole: Vector3, elbow: Vector3, hand: Vector3): void {
-  const d = target.clone().sub(shoulder);
-  let len = d.length();
-  const reach = (upper + lower) * 0.999;
-  if (len > reach) {
-    d.multiplyScalar(reach / len);
-    len = reach;
+/** The chhoi's bamboo hoops and the battens lashed along them; a long bamboo pole laid along the thwarts. */
+function bambooGeometry(z0: number, z1: number): BufferGeometry {
+  const b = new MeshBuilder();
+  const cane = rgb('#a88d55');
+  const arch = (z: number, lift: number) => {
+    const s = sAt(z);
+    const { sheer } = hullStation(HERO_HULL, s);
+    const R = hullHalfWidthAt(HERO_HULL, s, sheer - 0.02) * 0.98 + lift;
+    return { sheer, R };
+  };
+  for (let i = 0; i <= 4; i++) {
+    const z = z0 + ((z1 - z0) * i) / 4;
+    const { sheer, R } = arch(z, 0.02);
+    const pts: Vector3[] = [];
+    for (let j = 0; j <= 12; j++) {
+      const th = (j / 12) * Math.PI;
+      pts.push(new Vector3(R * Math.cos(th), sheer + R * 0.95 * Math.sin(th), z));
+    }
+    taperedTube(b, pts, pts.map(() => 0.022), 5, cane, 0.5);
   }
-  const dir = d.clone().normalize();
-  hand.copy(shoulder).add(d);
-  const x = (upper * upper - lower * lower + len * len) / (2 * len);
-  const h = Math.sqrt(Math.max(upper * upper - x * x, 0));
-  const bend = pole.clone().sub(shoulder);
-  bend.addScaledVector(dir, -bend.dot(dir)).normalize();
-  elbow.copy(shoulder).addScaledVector(dir, x).addScaledVector(bend, h);
+  for (const th of [0.75, Math.PI / 2, Math.PI - 0.75]) {
+    const pts: Vector3[] = [];
+    for (let i = 0; i <= 6; i++) {
+      const z = z0 - 0.05 + ((z1 - z0 + 0.1) * i) / 6;
+      const { sheer, R } = arch(Math.min(Math.max(z, z0), z1), 0.035);
+      pts.push(new Vector3(R * Math.cos(th), sheer + R * 0.95 * Math.sin(th), z));
+    }
+    taperedTube(b, pts, pts.map(() => 0.014), 4, cane, 0.5);
+  }
+  // the lagi: a long bamboo punting pole, resting on the thwarts along the port side, with its nodes
+  const a = new Vector3(-0.42, hullStation(HERO_HULL, 0.3).sheer - 0.02, zAt(0.22));
+  const c = new Vector3(-0.36, hullStation(HERO_HULL, 0.84).sheer - 0.02, zAt(0.86));
+  taperedTube(b, [a, c], [0.034, 0.026], 6, rgb('#b8a066'), 1);
+  const along = new Vector3().subVectors(c, a);
+  const len = along.length();
+  along.normalize();
+  const q = new Quaternion().setFromUnitVectors(UP, along);
+  for (let d = 0.2; d < len; d += 0.38) {
+    const m = new Matrix4().compose(a.clone().addScaledVector(along, d), q, new Vector3(1, 1, 1));
+    b.add(new CylinderGeometry(0.036, 0.036, 0.018, 6), m, rgb('#7d6838'));
+  }
+  return b.build();
 }
 
-const tmpDir = new Vector3();
-
-/** Lays a Y-aligned limb mesh (unit length) between two points. */
-function limb(mesh: Mesh, a: Vector3, b: Vector3, baseLength: number): void {
-  mesh.position.copy(a).add(b).multiplyScalar(0.5);
-  tmpDir.copy(b).sub(a);
-  const len = tmpDir.length();
-  mesh.quaternion.setFromUnitVectors(Y_AXIS, tmpDir.normalize());
-  mesh.scale.set(1, len / baseLength, 1);
+/** A jute sack, its neck gathered and tied. */
+function sackGeometry(): BufferGeometry {
+  return new LatheGeometry(
+    [
+      [0.0, 0],
+      [0.2, 0.02],
+      [0.27, 0.12],
+      [0.25, 0.26],
+      [0.16, 0.36],
+      [0.05, 0.41],
+      [0.06, 0.47],
+      [0.0, 0.48],
+    ].map(([r, y]) => new Vector2(r, y)),
+    12,
+  );
 }
 
 export class HeroBoat {
   readonly group = new Group();
   readonly lantern: PointLight;
-  /** 0..1 through one oar stroke. */
-  stroke = 0;
-  /** Fired once per stroke when the blade bites (for the splash sound). */
+  /** Fired once per sculling cycle (for the splash sound). */
   onStroke: (() => void) | null = null;
+  /** Where the oar's blade works in the water (world), and how hard (its swing rate, rad/s). */
+  readonly blade = new Vector3();
+  bladeRate = 0;
+  /** The blade's position in the boat's own frame (x across, z along), for the water's rings. */
+  readonly bladeLocal = new Vector3();
 
   private readonly glass: MeshStandardMaterial;
   private readonly oar = new Group();
-  private readonly man = new Group();
-  private readonly torso = new Group();
-  private readonly arms: { upper: Mesh; fore: Mesh; hand: Mesh; side: 1 | -1 }[] = [];
-  private readonly lanternBase = new Vector3();
-  private lastStroke = 0;
+  private readonly man: Boatman;
+  private readonly lanternPivot = new Group();
+  private readonly shadow: Mesh;
+  private readonly stroke: Scull = { sweep: 0, rate: 0, thrust: 0, side: 0 };
+  private lastPhase = 0;
+  private swingX = 0;
+  private swingZ = 0;
+  private vSwingX = 0;
+  private vSwingZ = 0;
+  private lastRollRate = 0;
+  private lastPitchRate = 0;
+  private readonly dir = new Vector3();
+  private readonly handle = new Vector3();
+  private readonly cross = new Vector3();
+  private readonly pose: OarPose = {
+    handle: this.handle,
+    holds: [
+      { at: new Vector3(), thumb: new Vector3() },
+      { at: new Vector3(), thumb: new Vector3() },
+    ],
+  };
+  private readonly wind = new Vector3();
+  private readonly gravity = new Vector3();
+  private readonly q = new Quaternion();
+  private readonly twist = new Quaternion();
+  private readonly inverse = new Quaternion();
 
   constructor() {
     const g = this.group;
     g.name = 'hero-boat';
-    const hullMat = patchMaterial(
-      new MeshStandardMaterial({ map: plankTexture(51), vertexColors: true, roughness: 0.82, side: DoubleSide }),
-      { grime: 0.25 },
+    const planks = hullPlankTexture(51);
+    const wood = patchMaterial(
+      new MeshStandardMaterial({
+        map: planks.map,
+        normalMap: planks.normal,
+        vertexColors: true,
+        roughness: 0.82,
+        side: DoubleSide,
+      }),
+      { grime: 0.3 },
     );
-    g.add(new Mesh(hullGeometry(), hullMat));
+    g.add(new Mesh(hullGeometry(), wood));
+    const paint = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.6 }), { grime: 0.2 });
+    g.add(new Mesh(bowEyes(), paint));
 
-    const cz0 = (0.38 - 0.5) * HERO_HULL.len;
-    const cz1 = (0.66 - 0.5) * HERO_HULL.len;
+    // a little bilge water under the floorboards
+    const bilgeW = hullHalfWidthAt(HERO_HULL, 0.5, -0.18) * 1.9;
+    const bilge = new Mesh(
+      new PlaneGeometry(bilgeW, LEN * 0.5).rotateX(-Math.PI / 2),
+      patchMaterial(new MeshStandardMaterial({ color: '#1d1a12', roughness: 0.08, metalness: 0.1 }), {}),
+    );
+    bilge.position.set(0, -0.17, 0.4);
+    g.add(bilge);
+
+    const cz0 = zAt(0.38);
+    const cz1 = zAt(0.66);
     const weave = patchMaterial(new MeshStandardMaterial({ map: weaveTexture(52), roughness: 0.9, side: DoubleSide }), {
       translucency: 0.3,
     });
     g.add(new Mesh(canopyGeometry(cz0, cz1), weave));
-    const ribMat = patchMaterial(new MeshStandardMaterial({ color: '#5a4630', roughness: 0.85 }), {});
-    for (const z of [cz0, (cz0 + cz1) / 2, cz1]) {
-      const s = sAt(z);
-      const { sheer } = hullStation(HERO_HULL, s);
-      const R = hullHalfWidthAt(HERO_HULL, s, sheer - 0.02) * 0.98;
-      const rib = new Mesh(new TorusGeometry(R, 0.03, 5, 18, Math.PI), ribMat);
-      rib.position.set(0, sheer, z);
-      rib.scale.set(1, 0.95, 1);
-      g.add(rib);
-    }
+    const bamboo = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.55 }), { grime: 0.35 });
+    g.add(new Mesh(bambooGeometry(cz0, cz1), bamboo));
 
-    // cargo in the bow: jute sacks and a clay pot
-    const jute = patchMaterial(new MeshStandardMaterial({ color: '#9c8656', roughness: 0.95 }), { grime: 0.4 });
-    for (const [x, z, s] of [[-0.25, 2.1, 1], [0.22, 2.35, 0.9], [0, 2.75, 0.8]] as const) {
-      const sack = new Mesh(new SphereGeometry(0.32, 10, 8), jute);
-      sack.position.set(x, 0.3, z);
-      sack.scale.set(s, 0.6 * s, 1.15 * s);
-      g.add(sack);
+    this.addCargo(cz0);
+    this.glass = new MeshStandardMaterial({ color: '#ffe2b0', emissive: new Color('#ffb257'), emissiveIntensity: 0, roughness: 0.15 });
+    this.lantern = this.addLantern(cz1, this.glass);
+
+    // the boatman's shadow on his platform: the boat does not cast into the shadow map, so a soft spot
+    this.shadow = new Mesh(
+      new PlaneGeometry(0.9, 0.75).rotateX(-Math.PI / 2),
+      new MeshBasicMaterial({ map: softSpotTexture(), transparent: true, depthWrite: false, color: '#000000', opacity: 0.85 }),
+    );
+    this.shadow.position.set(STANCE.x, 0.318, STANCE.z);
+    g.add(this.shadow);
+
+    this.buildOar(wood);
+    const restHandle = OAR_PIVOT.clone().addScaledVector(OAR_REST, -OAR_INBOARD);
+    this.man = new Boatman(STANCE, restHandle, [CROSS_RADIUS, LOOM_HOLD_RADIUS]);
+    g.add(this.man.group);
+  }
+
+  /** Where the boatman's weight is (offset from rest, boat frame), for the boat's balance. */
+  get crew(): { x: number; z: number } {
+    return this.man.crew;
+  }
+
+  /** How far the boatman reached for the oar this frame, over his arms' length (debug). */
+  get reach(): number {
+    return this.man.stretch;
+  }
+
+  private addCargo(cz0: number): void {
+    const g = this.group;
+    const jute = weaveTexture(54);
+    jute.repeat.set(6, 3);
+    const juteMat = patchMaterial(new MeshStandardMaterial({ map: jute, color: '#c9ad78', roughness: 0.97 }), { grime: 0.4 });
+    const sack = sackGeometry();
+    for (const [x, z, s, ry, tilt] of [
+      [-0.27, 2.05, 1, 0.3, 0.12],
+      [0.24, 2.3, 0.9, 1.2, -0.1],
+      [0.0, 2.72, 0.82, 2.2, 0.25],
+    ] as const) {
+      const m = new Mesh(sack, juteMat);
+      m.position.set(x, 0.1, z);
+      m.rotation.set(tilt, ry, tilt * 0.5);
+      m.scale.set(s, 0.85 * s, s * 0.9);
+      g.add(m);
     }
+    const clay = patchMaterial(new MeshStandardMaterial({ color: '#9a5a3a', roughness: 0.8 }), { grime: 0.35 });
     const pot = new Mesh(
-      new LatheGeometry([new Vector2(0.01, 0), new Vector2(0.14, 0.02), new Vector2(0.22, 0.16), new Vector2(0.17, 0.32), new Vector2(0.09, 0.38), new Vector2(0.11, 0.42)], 14),
-      patchMaterial(new MeshStandardMaterial({ color: '#9a5a3a', roughness: 0.8 }), { grime: 0.3 }),
+      new LatheGeometry(
+        [
+          [0.01, 0],
+          [0.14, 0.02],
+          [0.22, 0.16],
+          [0.17, 0.32],
+          [0.09, 0.38],
+          [0.11, 0.42],
+        ].map(([r, y]) => new Vector2(r, y)),
+        16,
+      ),
+      clay,
     );
     pot.position.set(0.3, 0.1, 1.75);
     g.add(pot);
+    // his water: a kolshi by his feet, a bailer, a coil of rope in the bow
+    const kolshi = new Mesh(
+      new LatheGeometry(
+        [
+          [0.01, 0],
+          [0.1, 0.01],
+          [0.17, 0.1],
+          [0.15, 0.2],
+          [0.06, 0.27],
+          [0.05, 0.31],
+          [0.075, 0.33],
+        ].map(([r, y]) => new Vector2(r, y)),
+        16,
+      ),
+      clay,
+    );
+    kolshi.position.set(-0.36, 0.315, -2.5);
+    g.add(kolshi);
+    const bailer = new Mesh(new SphereGeometry(0.12, 12, 6, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2), clay);
+    bailer.scale.set(1, 0.55, 1.3);
+    bailer.position.set(0.18, 0.18, -1.6);
+    bailer.rotation.set(0.2, 0.5, 0);
+    g.add(bailer);
+    const rope = patchMaterial(new MeshStandardMaterial({ color: '#a38c5e', roughness: 0.97 }), { grime: 0.4 });
+    for (let i = 0; i < 4; i++) {
+      const ring = new Mesh(new TorusGeometry(0.16 - i * 0.012, 0.018, 6, 20), rope);
+      ring.rotation.x = Math.PI / 2;
+      ring.position.set(0.12, 0.12 + i * 0.03, 3.25);
+      g.add(ring);
+    }
+    // under the chhoi: a rolled mat and a bundle knotted in a gamchha
+    const matRoll = new Mesh(new CylinderGeometry(0.09, 0.09, 1.0, 14), patchMaterial(new MeshStandardMaterial({ map: weaveTexture(55), color: '#d8c7a0', roughness: 0.9 }), {}));
+    matRoll.rotation.z = Math.PI / 2;
+    matRoll.position.set(0, 0.2, cz0 + 0.5);
+    g.add(matRoll);
+    const bundle = new Mesh(new SphereGeometry(0.17, 12, 10), patchMaterial(new MeshStandardMaterial({ map: checkTexture('#8a2f2a', '#e8dcc6', '#4a1612'), roughness: 0.9 }), {}));
+    bundle.scale.set(1, 0.7, 0.9);
+    bundle.position.set(0.25, 0.22, cz0 + 1.0);
+    g.add(bundle);
+  }
 
-    // hurricane lantern hung from the front arch of the chhoi
+  /** A hurricane lantern hung on a wire from the chhoi's front hoop; it swings as the boat moves. */
+  private addLantern(cz1: number, glassMat: MeshStandardMaterial): PointLight {
     const { sheer } = hullStation(HERO_HULL, sAt(cz1));
     const R = hullHalfWidthAt(HERO_HULL, sAt(cz1), sheer - 0.02) * 0.98;
-    this.lanternBase.set(0, sheer + R * 0.95 - 0.32, cz1 + 0.14);
+    this.lanternPivot.position.set(0, sheer + R * 0.95 - 0.03, cz1 + 0.12);
     const metal = new MeshStandardMaterial({ color: '#3a3630', roughness: 0.5, metalness: 0.6 });
-    this.glass = new MeshStandardMaterial({ color: '#ffe2b0', emissive: new Color('#ffb257'), emissiveIntensity: 0, roughness: 0.15 });
-    const lantern = new Group();
-    lantern.position.copy(this.lanternBase);
+    const hang = 0.3;
+    const wire = new Mesh(new CylinderGeometry(0.004, 0.004, hang - 0.18, 4), metal);
+    wire.position.y = -(hang - 0.18) / 2;
     const base = new Mesh(new CylinderGeometry(0.07, 0.075, 0.05, 12), metal);
-    const glass = new Mesh(new CylinderGeometry(0.055, 0.065, 0.13, 12), this.glass);
-    glass.position.y = 0.09;
+    base.position.y = -hang;
+    const glass = new Mesh(new CylinderGeometry(0.055, 0.065, 0.13, 12), glassMat);
+    glass.position.y = -hang + 0.09;
     const cap = new Mesh(new ConeGeometry(0.075, 0.07, 12), metal);
-    cap.position.y = 0.19;
-    const wire = new Mesh(new CylinderGeometry(0.004, 0.004, 0.14, 4), metal);
-    wire.position.y = 0.29;
-    lantern.add(base, glass, cap, wire);
-    g.add(lantern);
-    this.lantern = new PointLight('#ffb066', 0, 26, 2);
-    this.lantern.position.copy(this.lanternBase).add(new Vector3(0, 0.1, 0.05));
-    g.add(this.lantern);
-
-    this.buildOar();
-    this.buildBoatman();
+    cap.position.y = -hang + 0.19;
+    const light = new PointLight('#ffb066', 0, 26, 2);
+    light.position.y = -hang + 0.1;
+    this.lanternPivot.add(wire, base, glass, cap, light);
+    this.group.add(this.lanternPivot);
+    return light;
   }
 
-  private buildOar(): void {
-    const wood = patchMaterial(new MeshStandardMaterial({ color: '#6b5236', roughness: 0.8 }), { grime: 0.3 });
-    const length = OAR_INBOARD + 3.1;
-    const shaft = new Mesh(new CylinderGeometry(0.03, 0.035, length, 6), wood);
-    shaft.rotation.x = Math.PI / 2;
-    shaft.position.z = length / 2 - OAR_INBOARD;
-    const blade = new Mesh(new BoxGeometry(0.03, 0.26, 0.85), wood);
-    blade.position.z = length - OAR_INBOARD - 0.35;
-    this.oar.add(shaft, blade);
+  private buildOar(wood: MeshStandardMaterial): void {
+    const b = new MeshBuilder();
+    const outboard = OAR_LENGTH - OAR_INBOARD;
+    // the loom, thickest at the post, a T-grip on its end
+    taperedTube(b, [new Vector3(0, 0, -OAR_INBOARD), new Vector3(0, 0, 0), new Vector3(0, 0, outboard - 0.75)], [LOOM_END, LOOM_POST, 0.032], 7, rgb('#9a8466'), 0.8);
+    // the cross-grip along the oar's y, so it turns as the blade is feathered
+    b.add(new CylinderGeometry(CROSS_RADIUS, CROSS_RADIUS, CROSS_HALF * 2, 8), new Matrix4().makeTranslation(0, 0, -OAR_INBOARD), rgb('#7d6a50'));
+    // the blade: a long flat leaf of wood, its edges thinned
+    const top = b.vertexCount;
+    const steps = 10;
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const z = outboard - 0.85 + t * 0.85;
+      const w = 0.13 * Math.pow(Math.sin(Math.PI * Math.min(1, 0.15 + t * 0.95)), 0.6) + 0.02;
+      for (const [x, y] of [
+        [-w, 0],
+        [0, 0.016],
+        [w, 0],
+        [0, -0.016],
+      ] as const) {
+        b.vertex(new Vector3(x, y, z), new Vector3(x === 0 ? 0 : Math.sign(x), y === 0 ? 0 : Math.sign(y), 0).normalize(), t, x > 0 ? 1 : 0, rgb('#a89070'));
+      }
+    }
+    for (let i = 0; i < steps; i++) {
+      for (let k = 0; k < 4; k++) {
+        const a = top + i * 4 + k;
+        const c = top + i * 4 + ((k + 1) % 4);
+        b.quad(a, a + 4, c + 4, c);
+      }
+    }
+    // rope lashings where the blade is bound to the loom
+    for (const z of [outboard - 0.82, outboard - 0.6]) {
+      b.add(new TorusGeometry(0.036, 0.008, 4, 10), new Matrix4().makeTranslation(0, 0, z), rgb('#8e7a52'));
+    }
+    this.oar.add(new Mesh(b.build(), wood));
     this.oar.position.copy(OAR_PIVOT);
     this.group.add(this.oar);
-  }
-
-  private buildBoatman(): void {
-    const skin = patchMaterial(new MeshStandardMaterial({ color: '#5e3c28', roughness: 0.62 }), { translucency: 0.25 });
-    const lungi = patchMaterial(new MeshStandardMaterial({ map: checkTexture('#2c4a86', '#e8e2d2', '#16244a'), roughness: 0.9, side: DoubleSide }), {});
-    const vest = patchMaterial(new MeshStandardMaterial({ color: '#d4ccba', roughness: 0.9 }), { grime: 0.2 });
-    const gamchha = patchMaterial(new MeshStandardMaterial({ map: checkTexture('#a8342a', '#efe6d6', '#5a1410'), roughness: 0.9 }), {});
-    const m = this.man;
-    m.position.set(-0.08, 0.32, -2.95);
-
-    for (const x of [-0.1, 0.1]) {
-      const shin = new Mesh(new CylinderGeometry(0.05, 0.042, 0.46, 7), skin);
-      shin.position.set(x, 0.23, 0);
-      const foot = new Mesh(new BoxGeometry(0.09, 0.05, 0.22), skin);
-      foot.position.set(x, 0.025, 0.05);
-      m.add(shin, foot);
-    }
-    const wrap = new Mesh(new CylinderGeometry(0.17, 0.22, 0.62, 14, 1, true), lungi);
-    wrap.position.y = 0.72;
-    m.add(wrap);
-
-    // the torso pivots at the hips so the whole upper body can lean into the stroke
-    this.torso.position.y = 1.0;
-    const chest = new Mesh(new CapsuleGeometry(0.15, 0.28, 4, 10), vest);
-    chest.position.y = 0.24;
-    chest.scale.set(1.15, 1, 0.8);
-    const neck = new Mesh(new CylinderGeometry(0.045, 0.05, 0.1, 7), skin);
-    neck.position.y = 0.52;
-    const head = new Mesh(new SphereGeometry(0.105, 12, 10), skin);
-    head.position.y = 0.66;
-    head.scale.set(0.92, 1.05, 1);
-    const turban = new Mesh(new TorusGeometry(0.095, 0.035, 6, 16), gamchha);
-    turban.position.y = 0.72;
-    turban.rotation.x = Math.PI / 2;
-    this.torso.add(chest, neck, head, turban);
-    m.add(this.torso);
-
-    for (const side of [-1, 1] as const) {
-      const upper = new Mesh(new CapsuleGeometry(0.042, 0.22, 3, 7), skin);
-      const fore = new Mesh(new CapsuleGeometry(0.038, 0.2, 3, 7), skin);
-      const hand = new Mesh(new SphereGeometry(0.045, 7, 5), skin);
-      m.add(upper, fore, hand);
-      this.arms.push({ upper, fore, hand, side });
-    }
-    this.group.add(m);
+    // the grommet round the loom at the post
+    const grommet = new Mesh(new TorusGeometry(0.05, 0.013, 6, 14), new MeshStandardMaterial({ color: '#8e7a52', roughness: 0.95 }));
+    grommet.position.copy(OAR_PIVOT);
+    grommet.rotation.x = Math.PI / 2;
+    this.group.add(grommet);
   }
 
   setShadows(cast: boolean): void {
     this.group.traverse((o) => {
-      if ((o as Mesh).isMesh) {
+      if ((o as Mesh).isMesh && o !== this.shadow) {
         const mesh = o as Mesh;
         mesh.castShadow = cast;
         mesh.receiveShadow = true;
@@ -267,44 +549,63 @@ export class HeroBoat {
     });
   }
 
-  update(t: number, lamp: number): void {
-    this.stroke = (t / STROKE_SECONDS) % 1;
-    const ph = this.stroke * Math.PI * 2;
-    if (this.stroke < this.lastStroke && this.onStroke) this.onStroke();
-    this.lastStroke = this.stroke;
+  /** Sets the boat where `body` has her, works the oar, poses the boatman, swings the lantern. */
+  update(dt: number, t: number, lamp: number, body: BoatBody): void {
+    const phase = strokePhase(t);
+    const s = scull(phase, this.stroke);
+    if (phase < this.lastPhase && this.onStroke) this.onStroke();
+    this.lastPhase = phase;
 
-    // the blade sweeps side to side astern; the handle swings the opposite way at the boatman's chest
-    const sweep = 0.32 * Math.sin(ph);
-    const dir = OAR_REST.clone().applyAxisAngle(Y_AXIS, sweep);
-    dir.y -= 0.05 * Math.cos(ph);
-    dir.normalize();
-    this.oar.quaternion.setFromUnitVectors(Z_AXIS, dir);
-    const handle = OAR_PIVOT.clone().addScaledVector(dir, -OAR_INBOARD);
-    const grip2 = handle.clone().addScaledVector(dir, 0.32);
+    const g = this.group;
+    g.position.copy(body.pos);
+    g.rotation.set(body.rotX, body.heading, body.rotZ, 'YXZ');
 
-    // body follows the handle: face it, lean into the push, shift weight from foot to foot
-    const m = this.man;
-    m.position.x = -0.08 + (handle.x + 0.075) * 0.35;
-    m.rotation.y = Math.atan2(handle.x - m.position.x, handle.z - m.position.z) * 0.6;
-    this.torso.rotation.z = -sweep * 0.3;
-    this.torso.rotation.x = 0.12 + 0.07 * Math.sin(ph + Math.PI / 2);
-    m.updateMatrix();
-    this.torso.updateMatrix();
+    // the oar: swung across astern, dipping a little at each end, the blade feathered the way it moves
+    const a = phase * Math.PI * 2;
+    this.dir.copy(OAR_REST).applyAxisAngle(UP, s.sweep);
+    this.dir.y -= 0.05 * Math.cos(2 * a);
+    this.dir.normalize();
+    this.q.setFromUnitVectors(Z_AXIS, this.dir);
+    this.twist.setFromAxisAngle(Z_AXIS, 0.75 * Math.tanh(s.rate * 3));
+    this.oar.quaternion.copy(this.q).multiply(this.twist);
+    this.handle.copy(OAR_PIVOT).addScaledVector(this.dir, -OAR_INBOARD);
+    // his right hand on the cross-grip on his side of the shaft, thumb toward it; his left round the loom
+    // by his hip, thumb toward the handle
+    this.cross.set(0, 1, 0).applyQuaternion(this.oar.quaternion);
+    const [right, left] = this.pose.holds;
+    right.at.copy(this.handle).addScaledVector(this.cross, -CROSS_HOLD);
+    right.thumb.copy(this.cross);
+    left.at.copy(this.handle).addScaledVector(this.dir, LOOM_HOLD);
+    left.thumb.copy(this.dir).negate();
+    // the air past him: the breeze, less the boat's own way through it; and which way is down, in her frame
+    const air = G.uWind.value;
+    this.inverse.copy(g.quaternion).invert();
+    this.wind.set(air.x * air.z * BREEZE - body.vel.x, 0, air.y * air.z * BREEZE - body.vel.z).applyQuaternion(this.inverse);
+    this.gravity.set(0, -9.81, 0).applyQuaternion(this.inverse);
+    this.man.update(dt, t, phase, s.sweep, this.pose, body, this.wind, this.gravity);
+    this.shadow.position.x = STANCE.x + this.man.crew.x * 0.8;
+    this.shadow.position.z = STANCE.z + this.man.crew.z * 0.8;
 
-    const toMan = new Matrix4().copy(m.matrix).invert();
-    const hl = handle.clone().applyMatrix4(toMan);
-    const h2 = grip2.clone().applyMatrix4(toMan);
-    const torsoM = this.torso.matrix;
-    const elbow = new Vector3();
-    const hand = new Vector3();
-    for (const arm of this.arms) {
-      const shoulder = new Vector3(arm.side * 0.19, 0.42, 0).applyMatrix4(torsoM);
-      const pole = shoulder.clone().add(new Vector3(arm.side * 0.4, -0.5, -0.15));
-      solveArm(shoulder, arm.side > 0 ? hl : h2, 0.29, 0.27, pole, elbow, hand);
-      limb(arm.upper, shoulder, elbow, 0.22 + 0.084);
-      limb(arm.fore, elbow, hand, 0.2 + 0.076);
-      arm.hand.position.copy(hand);
+    // the lantern: a pendulum on its wire, hanging true as the deck tilts and swung by the deck's jerks
+    const w = Math.sqrt(9.81 / 0.3);
+    const zeta = 0.06;
+    if (dt > 0) {
+      const accZ = (body.rollRate - this.lastRollRate) / dt;
+      const accX = (body.pitchRate - this.lastPitchRate) / dt;
+      this.vSwingZ += (w * w * (-body.rotZ - this.swingZ) - 2 * zeta * w * this.vSwingZ - 4 * accZ) * dt;
+      this.vSwingX += (w * w * (-body.rotX - this.swingX) - 2 * zeta * w * this.vSwingX - 4 * accX) * dt;
+      this.swingZ = Math.max(-0.6, Math.min(0.6, this.swingZ + this.vSwingZ * dt));
+      this.swingX = Math.max(-0.6, Math.min(0.6, this.swingX + this.vSwingX * dt));
     }
+    this.lastRollRate = body.rollRate;
+    this.lastPitchRate = body.pitchRate;
+    this.lanternPivot.rotation.set(this.swingX, 0, this.swingZ);
+
+    // where the blade works, for the water's rings and the plants it shoves
+    this.bladeLocal.copy(OAR_PIVOT).addScaledVector(this.dir, OAR_LENGTH - OAR_INBOARD - 0.45);
+    g.updateMatrixWorld();
+    this.blade.copy(this.bladeLocal).applyMatrix4(g.matrixWorld);
+    this.bladeRate = s.rate;
 
     const flicker = 0.9 + 0.06 * Math.sin(t * 13.1) + 0.04 * Math.sin(t * 29.7 + 1.3);
     this.glass.emissiveIntensity = lamp * 3.2 * flicker;
@@ -312,3 +613,4 @@ export class HeroBoat {
     this.lantern.intensity = lamp * 5.5 * flicker;
   }
 }
+

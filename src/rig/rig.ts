@@ -1,5 +1,6 @@
 import { PerspectiveCamera, Quaternion, Vector3 } from 'three';
 import { angleDelta, clamp, damp, smoothstep } from '../core/mathx';
+import { BoatBody, type Crew } from '../world/boatPhysics';
 import { JOURNEY_Z0, JOURNEY_Z1, boatLane, riverX, terrainHeight } from '../world/geography';
 import { FlyCam } from './flycam';
 
@@ -7,7 +8,8 @@ const laneX = (z: number) => riverX(z) + boatLane(z);
 /** Heading along the boat's own track, one metre ahead. */
 const headingAt = (z: number) => Math.atan2(laneX(z - 1) - laneX(z), -1);
 
-const SPEED = 3.2;
+/** How far down the lane the boatman steers for, m. */
+const LOOK_AHEAD = 16;
 const LOOP_FADE = 3;
 const IDLE_SECONDS = 7;
 const DIST_MIN = 6;
@@ -44,9 +46,10 @@ const ORBIT_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', '
 const FLY_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'PageUp', 'PageDown']);
 const MODIFIERS = new Set(['ShiftLeft', 'ShiftRight']);
 
-/** The boat's drift down the river, and the camera: an orbit that follows the boat, or a free flyer. */
+/** The boat's journey down the river, and the camera: an orbit that follows the boat, or a free flyer. */
 export class Rig {
-  readonly boat = { pos: new Vector3(), heading: Math.PI, speed: SPEED, pitch: 0, roll: 0 };
+  /** The boat as a floating body, sculled down its lane. */
+  readonly boat = new BoatBody();
   /** 0..1 mist fade while the journey loops back to its start. */
   fade = 0;
   dragging = false;
@@ -54,8 +57,8 @@ export class Rig {
   /** A direction to turn toward once nobody is steering (a rising moon, say); null to rest. */
   watch: Vector3 | null = null;
 
-  private z = JOURNEY_Z0;
   private loopT = -1;
+  private readonly steerTo = { x: 0, z: 0 };
   private rest: View = VIEWS.stern;
   private yaw = this.rest.yaw;
   private pitch = this.rest.pitch;
@@ -79,6 +82,7 @@ export class Rig {
 
   constructor(camera: PerspectiveCamera, element: HTMLElement) {
     this.camera = camera;
+    this.place(0);
     element.addEventListener('pointerdown', (e) => {
       element.setPointerCapture(e.pointerId);
       this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -175,15 +179,15 @@ export class Rig {
 
   /** Puts the boat at a point of the journey (0 = start, 1 = end). */
   place(t: number): void {
-    this.z = JOURNEY_Z0 + (JOURNEY_Z1 - JOURNEY_Z0) * clamp(t, 0, 1);
-    this.boat.heading = headingAt(this.z);
+    const z = JOURNEY_Z0 + (JOURNEY_Z1 - JOURNEY_Z0) * clamp(t, 0, 1);
+    this.boat.place(laneX(z), z, headingAt(z));
     this.loopT = -1;
     this.fade = 0;
   }
 
   /** Points the follow camera's targets at `dir`, framed as when watching a sky event; for stills. */
   aim(dir: Vector3): void {
-    this.yawT = Math.atan2(dir.x, dir.z) - this.boat.heading;
+    this.yawT = Math.atan2(dir.x, dir.z) - this.boat.course;
     this.pitchT = WATCH_VIEW.pitch;
     this.distT = WATCH_VIEW.dist;
   }
@@ -210,7 +214,7 @@ export class Rig {
   focus(out: Vector3): Vector3 {
     if (this.mode === 'free') return this.fly.focus(out);
     const b = this.boat;
-    return out.set(b.pos.x + Math.sin(b.heading) * 60, 0, b.pos.z + Math.cos(b.heading) * 60);
+    return out.set(b.pos.x + Math.sin(b.course) * 60, 0, b.pos.z + Math.cos(b.course) * 60);
   }
 
   /** What the river's life gathers around: the boat, or the free camera. */
@@ -222,7 +226,8 @@ export class Rig {
     return this.mode === 'free' ? this.fly.heading : this.boat.heading;
   }
 
-  update(dt: number, t: number, stroke: number): void {
+  /** `crew`: where the boatman's weight is; `wind`: the waves' strength. */
+  update(dt: number, t: number, crew: Crew, wind: number): void {
     const k = this.keys;
     for (const code of k) if (!MODIFIERS.has(code)) this.idle = 0;
     if (this.mode === 'follow') {
@@ -234,26 +239,23 @@ export class Rig {
       if (k.has('Minus') || k.has('NumpadSubtract')) this.zoom(Math.exp(dt));
     }
 
-    // the boat: a surge with each oar stroke
-    this.boat.speed = SPEED * (1 + 0.07 * Math.sin(stroke * Math.PI * 2 - 0.6));
+    // the boat: the boatman sculls her down the lane, steering for a point a little way ahead
+    const b = this.boat;
+    this.steerTo.z = b.pos.z - LOOK_AHEAD;
+    this.steerTo.x = laneX(this.steerTo.z);
+    b.step(dt, t, this.steerTo, crew, wind);
     if (this.loopT < 0) {
-      this.z -= this.boat.speed * dt;
-      if (this.z < JOURNEY_Z1 + 40) this.loopT = 0;
+      if (b.pos.z < JOURNEY_Z1 + 40) this.loopT = 0;
     } else {
       this.loopT += dt;
-      this.z -= this.boat.speed * dt;
-      if (this.loopT > LOOP_FADE && this.loopT - dt <= LOOP_FADE) this.z = JOURNEY_Z0;
+      if (this.loopT > LOOP_FADE && this.loopT - dt <= LOOP_FADE) b.place(laneX(JOURNEY_Z0), JOURNEY_Z0, headingAt(JOURNEY_Z0));
       if (this.loopT > LOOP_FADE * 2) this.loopT = -1;
     }
     this.fade = this.loopT < 0 ? 0 : this.loopT < LOOP_FADE ? smoothstep(0, LOOP_FADE, this.loopT) : smoothstep(LOOP_FADE * 2, LOOP_FADE, this.loopT);
-
-    const z = this.z;
-    const x = laneX(z);
-    const h = headingAt(z);
-    this.boat.heading = h;
-    this.boat.pos.set(x, 0.03 * Math.sin(t * 1.3) + 0.02 * Math.sin(t * 2.1 + 1), z);
-    this.boat.pitch = 0.012 * Math.sin(t * 1.1) + 0.006 * Math.sin(stroke * Math.PI * 2);
-    this.boat.roll = 0.018 * Math.sin(t * 0.9 + 0.4) + 0.012 * Math.sin(stroke * Math.PI * 2 + 1.2);
+    const x = b.pos.x;
+    const z = b.pos.z;
+    // cameras follow where she is going, not the stern's wag with each stroke
+    const h = b.course;
 
     // left alone, the camera turns to watch a sky event, or eases back to its resting view and drifts
     // slowly there so it never sits still

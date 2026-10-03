@@ -119,7 +119,7 @@ async function main(hud: Hud): Promise<void> {
   await nextTask();
 
   // ---- size and adaptive resolution ----
-  const perf = { scale: 1, acc: 0, n: 0, frames: 0, cool: 0, locked: false, ms: 16 };
+  const perf = { scale: 1, acc: 0, n: 0, frames: 0, cool: 0, locked: false, ms: 16, driftMs: 0 };
   const resize = () => {
     const w = Math.max(1, innerWidth);
     const h = Math.max(1, innerHeight);
@@ -337,15 +337,17 @@ async function main(hud: Hud): Promise<void> {
     if (!scrubbing) clock.advance(dt);
     env.update(clock.hour, clock.moonAge);
     followSky(performance.now());
-    rig.update(dt, t, hero.stroke);
+    // the boat floats and is sculled by physics; the boatman's weight from last frame trims her
+    rig.update(dt, t, hero.crew, G.uWind.value.z);
     const b = rig.boat;
-    director.update(dt, t, camera, b.pos, b.heading);
-    hero.update(t, env.lamp);
-    hero.group.position.copy(b.pos);
-    hero.group.rotation.set(b.pitch, b.heading, b.roll, 'YXZ');
+    director.update(dt, t, camera, b.pos, b.course);
+    hero.update(dt, t, env.lamp, b);
     water.boat.set(b.pos.x, b.pos.z, b.heading, b.speed);
+    water.oar.set(hero.bladeLocal.x, hero.bladeLocal.z, Math.abs(hero.bladeRate), 0);
     traffic.update(dt, t, b.pos.z);
-    drift.update(dt, t, camera.position.z, b);
+    const simStart = performance.now();
+    drift.update(dt, t, camera.position.z, b, hero.blade);
+    perf.driftMs += (performance.now() - simStart - perf.driftMs) * 0.1;
     // birds and fireflies gather round whoever is being watched: the boat, or the free camera
     life.update(dt, t, rig.subject, rig.subjectHeading, env.night);
     sky.mesh.position.copy(camera.position);
@@ -429,6 +431,7 @@ async function main(hud: Hud): Promise<void> {
       free?: [number, number, number, number, number];
       film?: [number, number];
     }
+    const b0 = () => rig.boat;
     Object.assign(window, {
       __river: {
         ready: true,
@@ -462,6 +465,16 @@ async function main(hud: Hud): Promise<void> {
           renderer.shadowMap.needsUpdate = true;
           debug.freeze = true;
         },
+        /** Puts `count` mats of water hyacinth `ahead` metres in front of the boat, in her path. */
+        mats(ahead = 14, count = 3) {
+          const b = rig.boat;
+          drift.placeMats(b.pos.x + Math.sin(b.heading) * ahead, b.pos.z + Math.cos(b.heading) * ahead, count);
+        },
+        /** The boat's motion now, for checking the physics. */
+        boatState() {
+          const r = (v: number, k = 1000) => Math.round(v * k) / k;
+          return { x: r(b0().pos.x, 100), z: r(b0().pos.z, 100), heave: r(b0().pos.y), pitch: r(b0().rotX), roll: r(b0().rotZ), heading: r(b0().heading), course: r(b0().course), speed: r(b0().speed), crew: { x: r(hero.crew.x), z: r(hero.crew.z) }, reach: r(hero.reach) };
+        },
         /** Today's sky events, as { kind, hour }. */
         events() {
           return clock.today().map((ev) => ({ kind: ev.kind, hour: Math.round(hourOf(ev) * 100) / 100 }));
@@ -483,7 +496,7 @@ async function main(hud: Hud): Promise<void> {
         },
         info() {
           const cam = camera.position.toArray().map((v) => Math.round(v * 10) / 10);
-          return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, scale: perf.scale, ms: Math.round(perf.ms * 10) / 10, programs: renderer.info.programs?.length, camera: cam, mode: director.active ? 'film' : rig.mode, hour: Math.round(clock.hour * 100) / 100 };
+          return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, scale: perf.scale, ms: Math.round(perf.ms * 10) / 10, programs: renderer.info.programs?.length, camera: cam, mode: director.active ? 'film' : rig.mode, hour: Math.round(clock.hour * 100) / 100, driftMs: Math.round(perf.driftMs * 100) / 100 };
         },
       },
     });

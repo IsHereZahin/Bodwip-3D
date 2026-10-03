@@ -465,6 +465,178 @@ export function checkTexture(base: string, stripe: string, thin: string): DataTe
   return toTexture(ctx, { repeat: true });
 }
 
+/**
+ * Handloom cotton (lungi, gamchha, vest): a check of `stripe` and `thin` threads on `base`, with slubs in
+ * the yarn, and a normal map of its plain weave (or, `knit`, of a knitted vest's ribs). Tiles.
+ */
+export function clothTexture(base: string, stripe: string, thin: string, seed: number, knit = false): { map: DataTexture; normal: DataTexture } {
+  const S = 256;
+  const CELL = 4;
+  const rng = new Rng(seed);
+  const ctx = paint(S, S, (c) => {
+    c.fillStyle = base;
+    c.fillRect(0, 0, S, S);
+    c.globalAlpha = 0.65;
+    for (const [col, w, step] of [
+      [stripe, 20, 64],
+      [thin, 4, 32],
+    ] as const) {
+      c.fillStyle = col;
+      for (let q = 8; q < S; q += step) {
+        c.fillRect(q, 0, w, S);
+        c.fillRect(0, q, S, w);
+      }
+    }
+    // slubs: lengths of yarn a shade lighter or darker, along the warp and the weft, wrapping round the
+    // tile (handloom only; a machine-knit vest is even)
+    c.globalAlpha = 1;
+    for (let i = 0; i < (knit ? 0 : 160); i++) {
+      c.fillStyle = rng.next() < 0.5 ? `rgba(255,248,236,${rng.range(0.04, 0.12)})` : `rgba(12,9,6,${rng.range(0.05, 0.15)})`;
+      const at = Math.floor(rng.range(0, S / 2)) * 2;
+      const from = rng.range(0, S);
+      const len = rng.range(20, 160);
+      for (const wrap of [0, -S]) {
+        if (rng.next() < 0.5) c.fillRect(at, from + wrap, 2, len);
+        else c.fillRect(from + wrap, at, len, 2);
+      }
+    }
+  });
+  const hgt = paint(S, S, (c) => {
+    c.fillStyle = 'rgb(110,110,110)';
+    c.fillRect(0, 0, S, S);
+    for (let j = 0; j < S / CELL; j++) {
+      for (let i = 0; i < S / CELL; i++) {
+        const v = Math.round(rng.range(165, 205));
+        c.fillStyle = `rgb(${v},${v},${v})`;
+        c.beginPath();
+        // plain weave: warp over weft, then weft over warp; a knit is columns of loops
+        const vertical = knit || (i + j) % 2 === 1;
+        c.ellipse(i * CELL + CELL / 2, j * CELL + CELL / 2, vertical ? 1.2 : 2, vertical ? 2.1 : 1.2, 0, 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+  });
+  return { map: toTexture(ctx, { repeat: true }), normal: normalFromHeight(hgt, 2.5) };
+}
+
+/** A tangent-space normal map from a grey height canvas (white = raised), by central differences. Tiles. */
+function normalFromHeight(height: Ctx, strength: number): DataTexture {
+  const { width: w, height: h } = height.canvas;
+  const src = height.getImageData(0, 0, w, h).data;
+  const at = (x: number, y: number) => src[((((y + h) % h) * w + ((x + w) % w)) * 4)] / 255;
+  const out = new Uint8Array(w * h * 4);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      // canvas y runs down, texture v up: the row flip below makes +v the canvas's up
+      const dx = (at(x + 1, y) - at(x - 1, y)) * strength;
+      const dy = (at(x, y - 1) - at(x, y + 1)) * strength;
+      const l = Math.hypot(dx, dy, 1);
+      const i = ((h - 1 - y) * w + x) * 4;
+      out[i] = Math.round((-dx / l * 0.5 + 0.5) * 255);
+      out[i + 1] = Math.round((-dy / l * 0.5 + 0.5) * 255);
+      out[i + 2] = Math.round((1 / l * 0.5 + 0.5) * 255);
+      out[i + 3] = 255;
+    }
+  }
+  const t = new DataTexture(out, w, h);
+  t.colorSpace = NoColorSpace;
+  t.wrapS = t.wrapT = RepeatWrapping;
+  t.magFilter = LinearFilter;
+  t.minFilter = LinearMipmapLinearFilter;
+  t.generateMipmaps = true;
+  t.anisotropy = maxAnisotropy;
+  t.needsUpdate = true;
+  return t;
+}
+
+/**
+ * A country boat's planking: weathered strakes running along u with grain and the odd knot, butt joints,
+ * seams caulked with tar, and the iron cramps (patam) that Bengal boatwrights drive across each seam.
+ * Four strakes per tile. Comes with a normal map, so seams sink and cramps stand proud.
+ */
+export function hullPlankTexture(seed: number): { map: DataTexture; normal: DataTexture } {
+  const S = 512;
+  const STRAKES = 4;
+  const rng = new Rng(seed);
+  const hgt = paint(S, S, (c) => {
+    c.fillStyle = 'rgb(128,128,128)';
+    c.fillRect(0, 0, S, S);
+  });
+  const ctx = paint(S, S, (c) => {
+    const band = S / STRAKES;
+    for (let k = 0; k < STRAKES; k++) {
+      const y0 = k * band;
+      // each strake its own board, weathered to a different grey-brown
+      c.fillStyle = css([150, 128, 100], rng.range(0.78, 1.08));
+      c.fillRect(0, y0, S, band);
+      for (let i = 0; i < 260; i++) {
+        const light = rng.next() < 0.5;
+        c.fillStyle = light ? `rgba(196,176,140,${rng.range(0.05, 0.2)})` : `rgba(62,46,32,${rng.range(0.05, 0.25)})`;
+        const y = y0 + rng.range(3, band - 3);
+        const len = rng.range(30, 200);
+        const x = rng.range(-40, S);
+        c.fillRect(x, y, len, rng.range(0.6, 1.8));
+        hgt.fillStyle = light ? 'rgba(150,150,150,0.4)' : 'rgba(105,105,105,0.4)';
+        hgt.fillRect(x, y, len, 1);
+      }
+      // a knot or two, the grain swirling round it
+      for (let i = 0; i < rng.int(0, 2); i++) {
+        const kx = rng.range(20, S - 20);
+        const ky = y0 + rng.range(band * 0.3, band * 0.7);
+        for (let r = 9; r > 1; r -= 2) {
+          c.strokeStyle = `rgba(70,48,30,${0.22 + (9 - r) * 0.05})`;
+          c.beginPath();
+          c.ellipse(kx, ky, r * 2.4, r, 0, 0, Math.PI * 2);
+          c.stroke();
+        }
+      }
+      // where two boards butt end to end
+      const butt = rng.range(0, S);
+      c.fillStyle = 'rgba(24,16,10,0.85)';
+      c.fillRect(butt, y0, 2, band);
+      hgt.fillStyle = 'rgb(60,60,60)';
+      hgt.fillRect(butt, y0, 2, band);
+      // the seam above this strake, caulked and tarred
+      c.fillStyle = 'rgba(20,14,9,0.9)';
+      c.fillRect(0, y0, S, 3);
+      c.fillStyle = 'rgba(30,22,14,0.35)';
+      c.fillRect(0, y0 + 3, S, 3);
+      hgt.fillStyle = 'rgb(40,40,40)';
+      hgt.fillRect(0, y0, S, 3);
+      // iron cramps across the seam, rust bleeding down from each
+      for (let x = rng.range(4, 30); x < S; x += rng.range(34, 52)) {
+        const g = c.createLinearGradient(0, y0, 0, y0 + 26);
+        g.addColorStop(0, 'rgba(120,58,28,0.35)');
+        g.addColorStop(1, 'rgba(120,58,28,0)');
+        c.fillStyle = g;
+        c.fillRect(x - 2, y0, 9, 26);
+        c.fillStyle = '#2a2420';
+        c.fillRect(x, y0 - 7, 5, 14);
+        hgt.fillStyle = 'rgb(215,215,215)';
+        hgt.fillRect(x, y0 - 7, 5, 14);
+      }
+      // nail heads along the strake where it meets a frame
+      for (let x = rng.range(10, 60); x < S; x += rng.range(60, 90)) {
+        c.fillStyle = 'rgba(30,26,22,0.8)';
+        c.beginPath();
+        c.arc(x, y0 + band / 2, 1.6, 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+    // scuffs and water stains over everything
+    for (let i = 0; i < 26; i++) {
+      const g = c.createRadialGradient(rng.range(0, S), rng.range(0, S), 0, rng.range(0, S), rng.range(0, S), rng.range(30, 90));
+      const dark = rng.next() < 0.6;
+      g.addColorStop(0, dark ? 'rgba(40,30,20,0.16)' : 'rgba(210,196,170,0.12)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      c.fillStyle = g;
+      c.fillRect(0, 0, S, S);
+    }
+  });
+  const map = toTexture(ctx, { repeat: true });
+  return { map, normal: normalFromHeight(hgt, 3.2) };
+}
+
 /** Tarred, weathered planks laid along u. Tiles. */
 export function plankTexture(seed: number): DataTexture {
   const S = 256;
@@ -528,4 +700,56 @@ export function netTexture(): DataTexture {
     }
   });
   return toTexture(ctx, { repeat: true, bleed: true });
+}
+
+/** A soft round shadow, dark in the middle and gone at the rim (alpha only), for contact shadows. */
+export function softSpotTexture(): DataTexture {
+  const S = 64;
+  const ctx = paint(S, S, (c) => {
+    const g = c.createRadialGradient(S / 2, S / 2, 0, S / 2, S / 2, S / 2);
+    g.addColorStop(0, 'rgba(0,0,0,0.75)');
+    g.addColorStop(0.55, 'rgba(0,0,0,0.35)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    c.fillStyle = g;
+    c.fillRect(0, 0, S, S);
+  });
+  return toTexture(ctx);
+}
+
+/**
+ * A water-hyacinth leaf, mapped as a disc onto the middle of the square: glossy green, darker at the
+ * base, fine veins curving out from the stalk. The top-left corner is plain white for petals, so the
+ * flowers can share the leaves' material.
+ */
+export function hyacinthLeafTexture(seed: number): DataTexture {
+  const S = 128;
+  const rng = new Rng(seed);
+  const ctx = paint(S, S, (c) => {
+    const g = c.createRadialGradient(S / 2, S * 0.92, 2, S / 2, S / 2, S * 0.6);
+    g.addColorStop(0, '#2f5a1c');
+    g.addColorStop(0.5, '#4f8a2c');
+    g.addColorStop(1, '#6aa53a');
+    c.fillStyle = g;
+    c.fillRect(0, 0, S, S);
+    // veins fan out from where the stalk joins, curving with the leaf's edge
+    c.lineWidth = 1;
+    for (let i = 0; i < 26; i++) {
+      const a = -Math.PI / 2 + (i / 25 - 0.5) * 2.6;
+      c.strokeStyle = `rgba(205,235,150,${rng.range(0.12, 0.26)})`;
+      c.beginPath();
+      c.moveTo(S / 2, S * 0.92);
+      c.quadraticCurveTo(S / 2 + Math.cos(a) * S * 0.25, S * 0.92 + Math.sin(a) * S * 0.45, S / 2 + Math.cos(a) * S * 0.5, S / 2 + Math.sin(a) * S * 0.48);
+      c.stroke();
+    }
+    // a gloss streak along the leaf
+    const gl = c.createLinearGradient(S * 0.25, S * 0.2, S * 0.75, S * 0.8);
+    gl.addColorStop(0, 'rgba(255,255,230,0)');
+    gl.addColorStop(0.5, 'rgba(255,255,230,0.12)');
+    gl.addColorStop(1, 'rgba(255,255,230,0)');
+    c.fillStyle = gl;
+    c.fillRect(0, 0, S, S);
+    c.fillStyle = '#ffffff';
+    c.fillRect(0, 0, 10, 10);
+  });
+  return toTexture(ctx);
 }
