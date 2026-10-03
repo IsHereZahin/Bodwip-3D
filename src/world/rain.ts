@@ -1,11 +1,15 @@
 import { DoubleSide, InstancedBufferAttribute, InstancedBufferGeometry, Mesh, PlaneGeometry, ShaderMaterial } from 'three';
 import { G, LAYER_NO_REFLECT } from '../core/globals';
 import { Rng } from '../core/rng';
+import { WIND_MS } from '../env/wind';
 import { GLSL_COMMON } from '../render/glsl';
 
-// Rain: streaks falling through a box that travels with the camera, slanted by the wind (the same wind
-// that bends the trees), thicker the harder it rains, and gone below the water's surface. The rings the
-// drops make on the water are drawn by the water shader from G.uRain.
+// Rain: streaks falling through a box that travels with the camera, thicker the harder it rains, and gone
+// below the water's surface. Each drop falls through the moving air, so it drifts downwind as it falls:
+// for every metre it drops it travels (wind ÷ fall speed) metres with the wind, in the gust where it is,
+// the same wind (env/wind.ts, windGust) that bends the trees and grass beside it. Its streak runs back up
+// along its path, toward where it came from. The rings the drops make on the water are drawn by the water
+// shader from G.uRain.
 
 const DROPS = 9000;
 /** The box of falling rain round the camera: across, and height. */
@@ -21,16 +25,18 @@ varying float vAlpha;
 void main() {
   // each drop falls through the box again and again; the box follows the camera and wraps round it
   float h = fract(aSeed.y - uTime * ${FALL.toFixed(1)} / ${HEIGHT.toFixed(1)});
-  vec2 slant = uWind.xy * uWind.z * windGust(uCamPos.xz) * 4.0 / ${FALL.toFixed(1)};
   vec2 base = uCamPos.xz + (fract(aSeed.xz - uCamPos.xz / ${BOX.toFixed(1)}) - 0.5) * ${BOX.toFixed(1)};
+  // the air's velocity where the drop is (m/s) over its fall speed: how far downwind it goes per metre
+  vec2 drift = uWind.xy * uWind.z * windGust(base) * ${WIND_MS.toFixed(1)} / ${FALL.toFixed(1)};
   float y = uCamPos.y - ${(HEIGHT * 0.35).toFixed(2)} + h * ${HEIGHT.toFixed(1)};
-  vec3 at = vec3(base.x + slant.x * (y - uCamPos.y), y, base.y + slant.y * (y - uCamPos.y));
-  // a streak along the way it falls, turned to face the camera
-  vec3 axis = normalize(vec3(slant.x, 1.0, slant.y));
+  // higher up, it is still upwind of where it will land
+  vec3 at = vec3(base.x - drift.x * (y - uCamPos.y), y, base.y - drift.y * (y - uCamPos.y));
+  // a streak back along its path, turned to face the camera
+  vec3 axis = normalize(vec3(-drift.x, 1.0, -drift.y));
   vec3 side = normalize(cross(axis, at - uCamPos));
   float near = length(at - uCamPos);
   // about a pixel wide wherever it is, so near drops are not blots
-  vec3 p = at + axis * position.y * 0.75 + side * position.x * 0.0016 * near;
+  vec3 p = at + axis * position.y * 0.42 + side * position.x * 0.0016 * near;
   vAlpha = uRain * smoothstep(2.0, 4.5, near) * (1.0 - smoothstep(12.0, 22.0, near)) * step(uWaterLevel, y);
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
 }

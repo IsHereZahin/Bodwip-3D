@@ -16,6 +16,7 @@ export const WEATHER_PICKS = [
   ['calm', 'পরিষ্কার, শান্ত'],
   ['breeze', 'মৃদু হাওয়া'],
   ['windy', 'জোর হাওয়া'],
+  ['drizzle', 'হালকা বৃষ্টি'],
   ['rain', 'বৃষ্টি'],
   ['storm', 'ঝড়'],
 ] as const;

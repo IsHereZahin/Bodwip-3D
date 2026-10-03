@@ -1,7 +1,7 @@
 import { ShaderChunk } from 'three';
 import type { IUniform, Material } from 'three';
 import { G } from '../core/globals';
-import { GLSL_COMMON } from './glsl';
+import { CROP_REACH, GLSL_COMMON } from './glsl';
 import type { GroundSet } from './surfaces';
 
 export interface PatchOptions {
@@ -149,10 +149,12 @@ float atmBrine = 0.0;
   diffuseColor.rgb *= mix(vec3(1.0), vec3(1.2, 1.06, 0.7), uSeasonA.y * 0.6) * (0.86 + 0.16 * uSeasonA.x);
   #if ATM_SEASONAL == 2
   // spring: a share of the trees (shimul, palash, krishnachura) aflame with red flowers
-  if (hash12(floor(vAtmRoot.xz * 0.37) + 3.1) < uSeasonA.z) {
+  // each tree comes into flower (and goes over) gradually as the season passes its turn
+  float bloom = smoothstep(-0.05, 0.05, uSeasonA.z - hash12(floor(vAtmRoot.xz * 0.37) + 3.1));
+  if (bloom > 0.0) {
     float spot = vnoise(vAtmWorld.xz * 2.3 + vAtmWorld.y * 1.7);
     float crown = smoothstep(1.2, 3.0, vAtmWorld.y - vAtmRoot.y);
-    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.62, 0.06, 0.02) * (0.7 + 0.5 * spot), smoothstep(0.35, 0.6, spot) * crown);
+    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.62, 0.06, 0.02) * (0.7 + 0.5 * spot), smoothstep(0.35, 0.6, spot) * crown * bloom);
   }
   #endif
   #if ATM_SEASONAL == 3
@@ -188,74 +190,148 @@ ${SPLAT_COLOR}
     diffuseColor.rgb *= mix(1.0, 0.8, uSeasonB.z * (1.0 - greenish));
   }
   // paddy: rectangular plots with raised bunds (ail). Each plot keeps its place in the order the season
-  // plants and reaps them (env/season.ts): seedlings standing in water, green rice, ripe gold, mustard in
-  // flower in the winter, or stubble after the harvest
+  // plants and reaps them (env/season.ts, cropShares in glsl.ts): seedlings standing in water, green rice,
+  // ripe gold, mustard in flower in the winter, or stubble after the harvest
   float plotWater = 0.0;
   if (vZone > 0.01) {
-    float ang = 0.3 + 0.35 * sin(floor(wp.y / 240.0) * 1.7);
-    vec2 q = mat2(cos(ang), -sin(ang), sin(ang), cos(ang)) * wp;
-    vec2 size = vec2(36.0, 22.0);
-    vec2 cell = floor(q / size);
-    vec2 f = fract(q / size);
-    float r = hash12(cell);
-    float c1 = uCrops.x;
-    float c2 = c1 + uCrops.y;
-    float c3 = c2 + uCrops.z;
-    float c4 = c3 + uCrops.w;
-    vec3 fc = r < c1 ? vec3(0.085, 0.165, 0.03)
-            : r < c2 ? mix(vec3(0.060, 0.120, 0.018), vec3(0.110, 0.190, 0.030), hash12(cell + 3.7))
-            : r < c3 ? vec3(0.300, 0.200, 0.045)
-            : r < c4 ? vec3(0.46, 0.36, 0.02)
-            : vec3(0.170, 0.125, 0.065);
-    fc *= 0.82 + 0.36 * vnoise(q * 0.3 + r * 50.0);
-    vec2 e = min(f, 1.0 - f) * size;
+    vec2 q = plotFrame(wp);
+    vec2 cell = floor(q / PLOT_SIZE);
+    vec2 f = fract(q / PLOT_SIZE);
+    vec4 sh = cropShares(hash12(cell));
+    float stubble = max(0.0, 1.0 - sh.x - sh.y - sh.z - sh.w);
+    float grown = hash12(cell + 3.7);
+    // from afar, the crop's own colour: seedlings bright over their water, rice deeper green as it grows,
+    // ripe gold, the vivid yellow of mustard in flower, the straw-brown of stubble; in clumps and in the
+    // lines it was planted in, the mustard's flowers in drifts
+    vec3 canopy = sh.x * vec3(0.10, 0.20, 0.035) + sh.y * mix(vec3(0.085, 0.19, 0.03), vec3(0.05, 0.12, 0.018), grown)
+      + sh.z * vec3(0.42, 0.28, 0.05) + sh.w * vec3(0.66, 0.47, 0.012) + stubble * vec3(0.19, 0.14, 0.07);
+    canopy *= 0.84 + 0.32 * vnoise(q * vec2(0.45, 1.6) + grown * 40.0);
+    canopy *= 0.9 + 0.2 * vnoise(q * 0.12 + grown * 13.0);
+    // close by, the crops stand in 3D (world/crops.ts) and the plot shows its own ground under them: water
+    // among the young and growing rice, damp soil under the ripe, dry earth under mustard and stubble (not
+    // in the mirror, which draws no crops)
+    float under = (1.0 - smoothstep(${CROP_REACH.fade.toFixed(1)}, ${CROP_REACH.edge.toFixed(1)}, distance(wp, uCamPos.xz))) * smoothstep(0.45, 0.65, vZone) * (1.0 - uReflPass);
+    vec3 ground = mix(vec3(0.085, 0.07, 0.042), vec3(0.15, 0.115, 0.07), sh.w + stubble);
+    vec3 fc = mix(canopy, ground, under);
+    vec2 e = min(f, 1.0 - f) * PLOT_SIZE;
     float bund = 1.0 - smoothstep(0.25, 0.8, min(e.x, e.y));
-    // water standing in the plots: under the seedlings always, in others as the season has it
-    plotWater = (1.0 - bund) * vZone * max(r < c1 ? 1.0 : 0.0, step(hash12(cell + 7.1), uSeasonB.y) * step(c3, r));
+    // water standing in the plots: under the seedlings always, among the growing rice, and in the fallow
+    // plots as the season has it
+    float flooded = smoothstep(-0.035, 0.035, uSeasonB.y - hash12(cell + 7.1)) * (sh.w + stubble);
+    plotWater = (1.0 - bund) * vZone * max(max(sh.x, sh.y * under * 0.9), flooded);
     fc = mix(fc, fc * 0.45, plotWater * 0.6);
     fc = mix(fc, vec3(0.13, 0.11, 0.065), bund);
     diffuseColor.rgb = mix(diffuseColor.rgb, fc, vZone);
     atmBrine = plotWater * 0.5;
   }
-  // salt pans (লবণ মাঠ) on the coastal flats: blocks of small pans behind low clay bunds, a brine channel
-  // round each block, some blocks lying fallow. In the dry months (uSeasonB.w) a pan at work holds brine
-  // over its clay floor, or brine on black plastic sheeting, or has dried to a white crust of salt ready
-  // to rake; in the rains, and in the pans not at work, the water stands brackish and still. The layout
-  // has a twin in world/coast.ts (the heaps sit on these bunds): keep the two in step
+  // the salt works (লবণ মাঠ) on the coastal flats, block by block behind a feeder channel of sea water and
+  // an earth bund (the bunds stand in 3D, world/coast.ts, whose twin of this layout must stay in step).
+  // Most blocks are salt farms (khola): a settling pond where the sea water comes in; evaporation beds with
+  // mud floors where the brine thickens in the sun, some strong enough to rime their edges white; then the
+  // small crystallizer beds lined with black plastic, each at its stage: a film of brine mirroring the sky,
+  // crust forming in it, a white sheet of salt ready to rake, or just raked (the heaps stand on the bunds).
+  // Others are brackish shrimp ponds (gher), or barren mudflat, cracked and bloomed white with salt. In the
+  // rains (uSeasonB.w) the farms lie flooded, the plastic taken up.
   float panW = 0.0;
   if (vZone < -0.01) {
+    float salt = -vZone;
     float ang = 0.12 + 0.2 * sin(floor(wp.y / 300.0) * 2.3);
     vec2 q = mat2(cos(ang), -sin(ang), sin(ang), cos(ang)) * wp;
-    vec2 blockSize = vec2(96.0, 60.0);
+    const vec2 blockSize = vec2(96.0, 60.0);
     vec2 block = floor(q / blockSize);
     vec2 bq = q - block * blockSize;
-    float fallow = step(0.55, sin(block.x * 3.1 + block.y * 1.3 + 0.7));
-    vec2 size = vec2(16.0, 10.0) * (0.8 + 0.4 * (0.5 + 0.5 * sin(block.x * 1.7 + block.y * 2.9)));
-    vec2 cell = floor(bq / size);
-    vec2 f = fract(bq / size);
-    vec2 e = min(f, 1.0 - f) * size;
-    // the channel round the block, and the pans that do not fit whole at its far edges
+    float kind = sin(block.x * 3.1 + block.y * 1.3 + 0.7);
     vec2 eb = min(bq, blockSize - bq);
-    float channel = 1.0 - smoothstep(1.2, 1.8, min(eb.x, eb.y));
-    float whole = step(bq.x, floor(blockSize.x / size.x) * size.x) * step(bq.y, floor(blockSize.y / size.y) * size.y);
-    panW = -vZone * (1.0 - fallow) * whole * (1.0 - channel);
-    cell += block * 31.0;
-    float bund = 1.0 - smoothstep(0.3, 0.9, min(e.x, e.y));
-    float working = step(hash12(cell + 19.3), uSeasonB.w);
-    float stage = hash12(cell + 4.1);
-    vec3 crust = vec3(0.82, 0.81, 0.78) * (0.9 + 0.14 * vnoise(q * 2.3 + stage * 30.0));
-    vec3 pc = stage < 0.35 ? vec3(0.27, 0.25, 0.21) : stage < 0.7 ? vec3(0.02, 0.02, 0.024) : crust;
-    float wetPan = mix(1.0, stage < 0.7 ? 1.0 : 0.0, working);
-    pc = mix(vec3(0.17, 0.16, 0.12), pc, working);
-    pc = mix(pc, vec3(0.22, 0.19, 0.15), bund);
-    diffuseColor.rgb = mix(diffuseColor.rgb, pc, panW);
-    float brine = (1.0 - bund) * panW * wetPan;
-    // the channels run with brine whatever the season
-    float run = channel * -vZone * (1.0 - fallow * 0.6);
-    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.14, 0.13, 0.1), run);
-    brine = max(brine, run);
+    float edge = min(eb.x, eb.y);
+    float channel = 1.0 - smoothstep(1.2, 1.6, edge);
+    float rim = (1.0 - smoothstep(2.0, 2.6, edge)) * (1.0 - channel);
+    float working = smoothstep(-0.05, 0.05, uSeasonB.w - (0.5 + 0.45 * sin(block.x * 1.7 + block.y * 2.9 + 1.3)));
+    vec3 clay = vec3(0.24, 0.21, 0.17) * (0.9 + 0.2 * vnoise(q * 1.7));
+    vec3 brackish = vec3(0.1, 0.1, 0.075);
+    vec3 pc = brackish;
+    float water = 1.0;
+    float bund = rim;
+    if (kind > 0.6) {
+      // barren mudflat: cracked grey clay, white where the salt blooms, a few dull halophytes
+      float crack = smoothstep(0.035, 0.0, abs(vnoise(q * 0.9) - 0.5)) + smoothstep(0.03, 0.0, abs(vnoise(q * 2.3 + 7.0) - 0.5)) * 0.6;
+      pc = vec3(0.23, 0.205, 0.165) * (0.85 + 0.25 * vnoise(q * 0.4));
+      pc = mix(pc, vec3(0.55, 0.54, 0.5), smoothstep(0.62, 0.8, fbm3(q * 0.18)) * 0.8);
+      pc = mix(pc, vec3(0.13, 0.14, 0.09), smoothstep(0.7, 0.85, vnoise(q * 0.6 + 3.0)) * 0.7);
+      pc *= 1.0 - crack * 0.35;
+      water = 0.0;
+      bund = 0.0;
+    } else if (kind < -0.75) {
+      // a shrimp pond: brackish water behind its bund
+      pc = vec3(0.08, 0.1, 0.07);
+    } else {
+      float u = bq.x / blockSize.x;
+      vec2 lq = bq;
+      vec2 size = blockSize;
+      if (u >= 0.5) {
+        lq.x -= blockSize.x * 0.5;
+        size = vec2(8.0, 5.0);
+      } else if (u >= 0.22) {
+        lq.x -= blockSize.x * 0.22;
+        size = vec2(8.96, 10.0);
+      }
+      vec2 cell = floor(lq / size);
+      vec2 e = min(fract(lq / size), 1.0 - fract(lq / size)) * size;
+      float inner = 1.0 - smoothstep(0.3, 0.7, min(e.x, e.y));
+      // the section's own cells only where they fit whole, the rest of the strip is bund
+      bund = max(rim, u >= 0.22 ? inner : 0.0);
+      float stage = hash12(cell + block * 31.0 + 4.1);
+      vec3 work;
+      float wet;
+      if (u < 0.22) {
+        // the settling pond
+        work = vec3(0.11, 0.115, 0.085);
+        wet = 1.0;
+      } else if (u < 0.5) {
+        // evaporation beds: brine over mud, browner where it is new, greyer and greener as it thickens, a
+        // few drying out with salt riming their floors
+        work = mix(vec3(0.16, 0.145, 0.105), vec3(0.15, 0.165, 0.135), stage);
+        wet = 1.0;
+        if (stage > 0.82) {
+          work = mix(vec3(0.3, 0.28, 0.24), vec3(0.6, 0.59, 0.55), smoothstep(0.5, 0.8, vnoise(q * 1.3 + stage * 20.0)));
+          wet = 0.2;
+        }
+      } else {
+        // crystallizers on black plastic
+        vec3 sheet = vec3(0.016, 0.017, 0.02);
+        vec3 crust = vec3(0.8, 0.79, 0.76) * (0.9 + 0.14 * vnoise(q * 2.3 + stage * 30.0));
+        if (stage < 0.3) {
+          work = sheet;
+          wet = 1.0;
+        } else if (stage < 0.55) {
+          float forming = smoothstep(0.45, 0.7, fbm3(q * 0.9 + stage * 40.0) + (stage - 0.42) * 1.4);
+          work = mix(sheet, crust * 0.85, forming);
+          wet = 1.0 - forming * 0.6;
+        } else if (stage < 0.85) {
+          work = crust;
+          wet = 0.1;
+        } else {
+          // raked: drag lines left in a thin crust across the black
+          float lines = smoothstep(0.55, 0.85, sin(lq.y * 9.0 + vnoise(q * 1.5) * 3.0));
+          work = mix(sheet, crust * 0.7, lines * 0.5);
+          wet = 0.4;
+        }
+        panW = 1.0;
+      }
+      pc = mix(brackish, work, working);
+      water = mix(1.0, wet, working);
+    }
+    // the bunds: grey clay, rimed white with salt where the brine laps them while the farm works
+    vec3 bundC = mix(clay, vec3(0.5, 0.49, 0.46), working * 0.5 * smoothstep(0.6, 0.95, bund) * vnoise(q * 4.0));
+    pc = mix(pc, bundC, bund);
+    water *= 1.0 - bund;
+    // the feeder channel runs with sea water whatever the season
+    pc = mix(pc, brackish, channel);
+    water = max(water, channel);
+    diffuseColor.rgb = mix(diffuseColor.rgb, pc, salt);
+    float brine = water * salt;
+    panW *= salt * (1.0 - bund);
     plotWater = max(plotWater, brine);
-    atmBrine = max(atmBrine, brine * 0.8);
+    atmBrine = max(atmBrine, brine * 0.85);
   }
   // the photo layers' grain, less of it on the smooth pans
   diffuseColor.rgb *= mix(splatDetail, vec3(1.0), panW * 0.7);

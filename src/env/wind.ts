@@ -31,7 +31,8 @@ export class Wind {
   override: number | null = null;
   strength = 0.75;
   gusts = 0.5;
-  angle = Math.atan2(0.55, -0.83);
+  // autumn's easterly, until the season says otherwise
+  angle = Math.atan2(0.97, 0.24);
   private phase = 0;
 
   update(dt: number, t: number, want: WindSetting): void {
@@ -39,7 +40,8 @@ export class Wind {
     const k = 1 - Math.exp(-dt / 25);
     let target = want.strength * (1 + 0.25 * Math.sin(t * 0.05) + 0.1 * Math.sin(t * 0.23));
     if (this.override !== null) target = this.override;
-    this.strength += (target - this.strength) * (this.override !== null ? 1 - Math.exp(-dt / 2) : k);
+    // a held wind (the viewer's choice) freshens or eases over some seconds, not in an instant
+    this.strength += (target - this.strength) * (this.override !== null ? 1 - Math.exp(-dt / 6) : k);
     this.gusts += (want.gusts - this.gusts) * k;
     let d = want.angle + 0.18 * Math.sin(t * 0.013) - this.angle;
     d = Math.atan2(Math.sin(d), Math.cos(d));

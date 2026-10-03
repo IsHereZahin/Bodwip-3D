@@ -30,14 +30,21 @@ setSunDay(257);
 /** Hour angle of the sun at local solar `hour` (12 = noon). */
 const sunHourAngle = (hour: number) => ((hour - 12) / 24) * Math.PI * 2;
 
-/** World direction of a body at hour angle `H` and declination `dec`. West lies ahead of the boat and a little to its right. */
+// The compass: the river runs south to the Bay, as Bengal's rivers do, so south lies down it (−z), north
+// up it (+z), west on the right of a boat going down it (+x) and east on her left (−x). The sun and the
+// moon rise on her left and set on her right, lighting her from the side rather than glaring down the
+// river ahead of her; at noon the sun stands high to the south, above the view.
+
+/** A world direction (angle in the ground plane, x = sin, z = cos) from its compass parts toward north and east. */
+export const compass = (north: number, east: number) => Math.atan2(-east, north);
+
+/** World direction of a body at hour angle `H` and declination `dec`. */
 function horizonDirection(H: number, dec: number, out: Vector3): Vector3 {
   const sinE = Math.sin(LATITUDE) * Math.sin(dec) + Math.cos(LATITUDE) * Math.cos(dec) * Math.cos(H);
   const elev = Math.asin(clamp(sinE, -1, 1));
-  // azimuth from south, positive toward west
+  // azimuth from south, positive toward west (+x)
   const az = Math.atan2(Math.sin(H), Math.cos(H) * Math.sin(LATITUDE) - Math.tan(dec) * Math.cos(LATITUDE));
-  const theta = az - Math.PI / 2 + 20 * DEG;
-  return out.set(Math.cos(elev) * Math.sin(theta), Math.sin(elev), -Math.cos(elev) * Math.cos(theta));
+  return out.set(Math.cos(elev) * Math.sin(az), Math.sin(elev), -Math.cos(elev) * Math.cos(az));
 }
 
 export function sunDirection(hour: number, out: Vector3): Vector3 {

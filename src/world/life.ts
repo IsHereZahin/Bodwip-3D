@@ -89,7 +89,7 @@ void main() {
   vec3 v = normalize(p - uCamPos);
   // only visible where they catch the low sun: forward scattering
   float fwd = pow(max(dot(v, uSunDir), 0.0), 5.0);
-  vA = (fwd * 1.2 + 0.04) * smoothstep(30.0, 6.0, d) * smoothstep(0.6, 2.0, d) * (1.0 - uNight);
+  vA = (fwd * 1.2 + 0.04) * smoothstep(30.0, 6.0, d) * smoothstep(0.6, 2.0, d) * (1.0 - uNight) * (1.0 - smoothstep(0.05, 0.4, uRain));
   gl_PointSize = uPR * clamp(26.0 / d, 1.0, 4.0);
 }`;
 
@@ -114,7 +114,7 @@ void main() {
   float d = -mv.z;
   // slow irregular blinks
   float blink = pow(max(sin(uTime * (0.6 + aSeed * 0.9) + aSeed * 40.0), 0.0), 6.0);
-  vA = blink * uNight * smoothstep(160.0, 20.0, d);
+  vA = blink * uNight * smoothstep(160.0, 20.0, d) * (1.0 - smoothstep(0.1, 0.5, uRain));
   gl_PointSize = uPR * clamp(60.0 / d, 2.0, 7.0);
 }`;
 
@@ -246,7 +246,8 @@ export class Life {
     this.pr.value = pr;
   }
 
-  update(dt: number, t: number, hero: Vector3, heading: number, night: number): void {
+  /** `rain`: how hard it is raining (birds stay down in a downpour). */
+  update(dt: number, t: number, hero: Vector3, heading: number, night: number, rain = 0): void {
     const m = new Matrix4();
     const q = new Quaternion();
     const one = new Vector3(1, 1, 1);
@@ -256,7 +257,7 @@ export class Life {
       if (f.wait > 0) {
         f.wait -= dt;
         f.mesh.visible = false;
-        if (f.wait <= 0 && night < 0.5) this.launch(f, hero, heading);
+        if (f.wait <= 0 && night < 0.5 && rain < 0.4) this.launch(f, hero, heading);
         else if (f.wait <= 0) f.wait = 20;
         continue;
       }

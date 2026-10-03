@@ -824,3 +824,178 @@ export function hyacinthLeafTexture(seed: number): DataTexture {
   });
   return toTexture(ctx);
 }
+
+/**
+ * A row of transplanted rice seen side-on: ten hills of leaves along the card (2.4 m of row), rooted at the
+ * bottom, in greys the crop's shader tints for its stage (seedling, green, ripe, stubble). Dense at the root,
+ * so the row keeps its body in the mipmaps; a few panicles arch over the top.
+ */
+export function riceRowTexture(seed: number): DataTexture {
+  const W = 512;
+  const H = 224;
+  const rng = new Rng(seed);
+  const ctx = paint(W, H, (c) => {
+    for (let k = 0; k < 10; k++) {
+      const x0 = ((k + 0.5) / 10) * W + rng.range(-4, 4);
+      for (let i = 0; i < 14; i++) {
+        const bx = x0 + rng.range(-5, 5);
+        const tx = bx + rng.range(-34, 34);
+        const ty = H * (1 - rng.range(0.55, 0.93));
+        const w = rng.range(1.8, 3.2);
+        const g = c.createLinearGradient(0, H, 0, ty);
+        g.addColorStop(0, '#383838');
+        g.addColorStop(0.5, css([1, 1, 1], rng.range(120, 160)));
+        g.addColorStop(1, css([1, 1, 1], rng.range(200, 235)));
+        c.fillStyle = g;
+        c.beginPath();
+        c.moveTo(bx - w, H);
+        c.quadraticCurveTo(bx + (tx - bx) * 0.25 - w * 0.5, (H + ty) / 2, tx, ty);
+        c.quadraticCurveTo(bx + (tx - bx) * 0.25 + w * 0.5, (H + ty) / 2, bx + w, H);
+        c.fill();
+      }
+      // panicles, nodding over to one side from the tallest stems
+      for (let i = 0; i < 2; i++) {
+        const sx = x0 + rng.range(-6, 6);
+        const top = H * 0.06 + rng.range(0, 10);
+        const dir = rng.sign();
+        c.strokeStyle = css([1, 1, 1], rng.range(215, 245));
+        c.lineWidth = rng.range(2.2, 3);
+        c.beginPath();
+        c.moveTo(sx, H * 0.3);
+        c.quadraticCurveTo(sx + dir * 4, top, sx + dir * rng.range(18, 28), top + rng.range(18, 30));
+        c.stroke();
+      }
+    }
+  });
+  return toTexture(ctx, { bleed: true });
+}
+
+/** Rice seen from above: crowns of leaves splayed from each hill in rows, with the water or soil between them. */
+export function riceCanopyTexture(seed: number): DataTexture {
+  const S = 256;
+  const rng = new Rng(seed);
+  const ctx = paint(S, S, (c) => {
+    c.lineCap = 'round';
+    // 10 hills along each of 8 rows, as the card's 2.4 m square holds them
+    for (let row = 0; row < 8; row++) {
+      for (let k = 0; k < 10; k++) {
+        const cx = ((k + 0.5) / 10) * S + rng.range(-3, 3);
+        const cy = ((row + 0.5) / 8) * S + rng.range(-3, 3);
+        for (let i = 0; i < 11; i++) {
+          const a = rng.range(0, Math.PI * 2);
+          const len = rng.range(9, 19);
+          c.strokeStyle = css([1, 1, 1], rng.range(130, 230));
+          c.lineWidth = rng.range(1.4, 2.4);
+          c.beginPath();
+          c.moveTo(cx, cy);
+          c.quadraticCurveTo(cx + Math.cos(a) * len * 0.5, cy + Math.sin(a) * len * 0.5 - 2, cx + Math.cos(a) * len, cy + Math.sin(a) * len);
+          c.stroke();
+        }
+      }
+    }
+  });
+  return toTexture(ctx, { bleed: true });
+}
+
+/**
+ * A mustard plant in flower, side-on (the card is about 0.9 m by 1.1 m): blue-green lobed leaves low down,
+ * branching stems, and racemes of small yellow flowers crowded at the tips, green pods below them.
+ */
+export function mustardTexture(seed: number): DataTexture {
+  const S = 256;
+  const rng = new Rng(seed);
+  const ctx = paint(S, S, (c) => {
+    c.lineCap = 'round';
+    // broad lobed leaves at the foot
+    for (let i = 0; i < 9; i++) {
+      const x = S / 2 + rng.range(-70, 70);
+      const y = S - rng.range(10, 70);
+      c.fillStyle = rng.pick(['#4b6b44', '#557a4c', '#5f8456', '#456140']);
+      c.beginPath();
+      c.ellipse(x, y, rng.range(12, 22), rng.range(28, 44), rng.range(-0.9, 0.9), 0, Math.PI * 2);
+      c.fill();
+    }
+    // stems branching toward the top, each ending in a raceme
+    const tips: [number, number][] = [];
+    for (let i = 0; i < 7; i++) {
+      const bx = S / 2 + rng.range(-22, 22);
+      const mx = bx + rng.range(-30, 30);
+      const my = S * rng.range(0.45, 0.6);
+      c.strokeStyle = rng.pick(['#5d7d3c', '#678a42', '#557236']);
+      c.lineWidth = rng.range(2, 3.4);
+      c.beginPath();
+      c.moveTo(bx, S);
+      c.quadraticCurveTo(bx, my + 30, mx, my);
+      c.stroke();
+      for (let j = 0; j < 3; j++) {
+        const tx = mx + rng.range(-46, 46);
+        const ty = rng.range(14, S * 0.4);
+        c.lineWidth = rng.range(1.2, 2.2);
+        c.beginPath();
+        c.moveTo(mx, my);
+        c.quadraticCurveTo(mx, (my + ty) / 2, tx, ty);
+        c.stroke();
+        tips.push([tx, ty]);
+        // pods along the stalk below the flowers
+        c.strokeStyle = '#7f9b48';
+        c.lineWidth = 1;
+        for (let p = 0; p < 6; p++) {
+          const t = rng.range(0.15, 0.6);
+          const px = tx + (mx - tx) * t;
+          const py = ty + (my - ty) * t;
+          c.beginPath();
+          c.moveTo(px, py);
+          c.lineTo(px + rng.range(-9, 9), py - rng.range(5, 11));
+          c.stroke();
+        }
+        c.strokeStyle = rng.pick(['#5d7d3c', '#678a42', '#557236']);
+      }
+    }
+    // the racemes: crowds of four-petalled yellow flowers, buds greener at the very top
+    for (const [tx, ty] of tips) {
+      for (let k = 0; k < 34; k++) {
+        const a = rng.range(0, Math.PI * 2);
+        const r = Math.sqrt(rng.next()) * rng.range(8, 14);
+        c.fillStyle = k < 4 ? '#c8cf52' : rng.pick(['#f4d12a', '#efc31f', '#f7dc45', '#e6b51a']);
+        c.beginPath();
+        c.arc(tx + Math.cos(a) * r, ty + Math.sin(a) * r * 1.3 + 4, rng.range(2, 3.4), 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+  });
+  return toTexture(ctx, { bleed: true });
+}
+
+/** A field of mustard in flower from above: crowded yellow racemes, the blue-green of the leaves showing between. */
+export function mustardCanopyTexture(seed: number): DataTexture {
+  const S = 256;
+  const rng = new Rng(seed);
+  const ctx = paint(S, S, (c) => {
+    c.lineCap = 'round';
+    for (let i = 0; i < 70; i++) {
+      c.strokeStyle = rng.pick(['#4b6b44', '#557a4c', '#5f8456']);
+      c.lineWidth = rng.range(3, 6);
+      const x = rng.range(0, S);
+      const y = rng.range(0, S);
+      const a = rng.range(0, Math.PI * 2);
+      c.beginPath();
+      c.moveTo(x, y);
+      c.lineTo(x + Math.cos(a) * rng.range(10, 22), y + Math.sin(a) * rng.range(10, 22));
+      c.stroke();
+    }
+    for (let i = 0; i < 90; i++) {
+      const x = rng.range(8, S - 8);
+      const y = rng.range(8, S - 8);
+      const r = rng.range(7, 13);
+      for (let k = 0; k < 22; k++) {
+        const a = rng.range(0, Math.PI * 2);
+        const d = Math.sqrt(rng.next()) * r;
+        c.fillStyle = rng.pick(['#f4d12a', '#efc31f', '#f7dc45', '#e6b51a', '#d9cf4a']);
+        c.beginPath();
+        c.arc(x + Math.cos(a) * d, y + Math.sin(a) * d, rng.range(1.8, 3), 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+  });
+  return toTexture(ctx, { bleed: true });
+}

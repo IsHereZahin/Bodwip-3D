@@ -27,7 +27,7 @@ import { LiftNet, type LiftNetMaterials, type LiftNetSpec } from './liftNet';
 import { makeBodyDrive, type BodyDrive } from './paddle';
 import type { DriftObstacles } from './drift';
 import type { NetRipples } from './water';
-import { waveHeight } from './waves';
+import { hullWaves, type HullWaves } from './waves';
 
 // The fishermen and their ভেসাল জাল. On the bank, a man on a low bamboo machan hauls a rope hand over hand
 // to bring down the butt of a long lever that rises on a tall A-frame at the water's edge, and the net
@@ -306,6 +306,13 @@ class Routine {
     this.target = start;
   }
 
+  /** Soaking now, about to haul: the net is in the water and he will lift it in `delay` seconds. */
+  haulSoon(down: number, delay: number): void {
+    this.phase = 'soak';
+    this.timer = delay;
+    this.target = down;
+  }
+
   /** `down`/`up`: the lever's angles for the net soaking and the net up; `dir`: his force's direction on the butt (unit, mount frame). */
   update(dt: number, net: LiftNet, down: number, up: number, dir: Vector3, fishable: boolean, plenty: number): void {
     this.timer -= dt;
@@ -445,6 +452,13 @@ class ShoreNet {
     this.hands = [0.62, 0.3].map((e) => ({ grip: true, d: 0, t: 0, from: new Vector3(), at: new Vector3(0, 0.92 + e * 0.8, 0.3) }));
   }
 
+  /** The net set soaking afresh, to be hauled in `delay` seconds. */
+  haulSoon(delay: number): void {
+    const down = angleFor(SHORE, this.plan.pivot.y, -SHORE_SOAK);
+    this.net.reset(down);
+    this.routine.haulSoon(down, delay);
+  }
+
   update(dt: number, t: number, camera: Vector3): void {
     const d = camera.distanceTo(this.plan.centre);
     this.net.group.visible = this.mount.visible = d < SHOW_NET;
@@ -571,6 +585,7 @@ class Mooring {
   private vHeave = 0;
   private vPitch = 0;
   private vRoll = 0;
+  private readonly waves: HullWaves = { heave: 0, along: 0, across: 0 };
 
   constructor(anchor: { x: number; z: number }) {
     this.anchor = anchor;
@@ -601,19 +616,11 @@ class Mooring {
     this.vSwing += (-w * w * this.swing - 2 * SWING.zeta * w * this.vSwing + 0.0018 * across) * h;
     this.swing += this.vSwing * h;
     this.place(t);
-    // she floats on the waves under her: the mean height, and the slopes between bow and stern, side and side
-    const f = Math.sin(this.heading);
-    const c = Math.cos(this.heading);
-    const L = FISH_HULL.len * 0.4;
-    const B = FISH_HULL.beam * 0.8;
-    const sw = G.uWind.value.z;
-    const hb = waveHeight(this.pos.x + f * L, this.pos.z + c * L, t, sw);
-    const hs = waveHeight(this.pos.x - f * L, this.pos.z - c * L, t, sw);
-    const hr = waveHeight(this.pos.x + c * B, this.pos.z - f * B, t, sw);
-    const hl = waveHeight(this.pos.x - c * B, this.pos.z + f * B, t, sw);
-    const level = G.uWaterLevel.value + (hb + hs + hr + hl) / 4;
-    const pitch = (hs - hb) / (2 * L) + pitchMoment / PITCH_STIFF;
-    const roll = (hr - hl) / (2 * B) + rollMoment / ROLL_STIFF;
+    // she floats on the waves as her waterline feels them (see hullWaves)
+    const under = hullWaves(this.pos.x, this.pos.z, this.heading, FISH_HULL.len * 0.8, FISH_HULL.beam * 1.7, t, 1, this.waves);
+    const level = G.uWaterLevel.value + under.heave;
+    const pitch = -under.along + pitchMoment / PITCH_STIFF;
+    const roll = under.across + rollMoment / ROLL_STIFF;
     const springTo = (x: number, v: number, to: number, p: { f: number; zeta: number }) => {
       const wn = p.f * Math.PI * 2;
       return v + (wn * wn * (to - x) - 2 * p.zeta * wn * v) * h;
@@ -764,6 +771,18 @@ class NetBoat {
     return GRAVITY * weights - loadY * (z + tip * c) + MAN_MASS * GRAVITY * (this.stance.z + crewZ);
   }
 
+  /** The net set soaking afresh, to be hauled in `delay` seconds. */
+  haulSoon(delay: number): void {
+    const down = angleFor(BOAT_NET, this.mount.getWorldPosition(tmpA).y, -BOAT_SOAK);
+    this.net.reset(down);
+    this.routine.haulSoon(down, delay);
+  }
+
+  /** Where he stands (world). */
+  manAt(out: Vector3): Vector3 {
+    return this.boat.localToWorld(out.copy(this.stance));
+  }
+
   update(dt: number, t: number, camera: Vector3): void {
     const d = camera.distanceTo(this.body.pos);
     this.boat.visible = this.net.group.visible = d < SHOW_NET;
@@ -881,6 +900,25 @@ export class Fishing {
     for (const s of this.shores) if (s.net.simulated) this.nearNets.push(s.net);
     for (const b of this.boats) if (b.net.simulated) this.nearNets.push(b.net);
     return { hulls: this.hulls, posts: this.posts, nets: this.nearNets };
+  }
+
+  /** Asks a fisherman (a bank net's, or a fishing boat's) to let his net soak a moment and then haul it. */
+  haul(kind: 'bank' | 'boat', index: number): void {
+    if (kind === 'bank') this.shores[index]?.haulSoon(1.5);
+    else this.boats[index]?.haulSoon(1.5);
+  }
+
+  /** Where a net is (its middle, at the water), where its fisherman works it, and the way out from him to it (unit, level). */
+  view(kind: 'bank' | 'boat', index: number): { centre: Vector3; man: Vector3; out: Vector3 } {
+    if (kind === 'bank') {
+      const s = this.shores[index] ?? this.shores[0];
+      return { centre: s.plan.centre.clone().setY(G.uWaterLevel.value), man: s.plan.stance.clone(), out: s.plan.out.clone() };
+    }
+    const b = this.boats[index] ?? this.boats[0];
+    const man = b.manAt(new Vector3());
+    const centre = b.net.centre.clone().setY(G.uWaterLevel.value);
+    const out = centre.clone().sub(man).setY(0).normalize();
+    return { centre, man, out };
   }
 
   /** Each net's state (debug). */

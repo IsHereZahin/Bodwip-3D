@@ -94,14 +94,14 @@ export class Soundscape {
     return g;
   }
 
-  /** The paddle's blade going into the water. */
-  splash(): void {
+  /** The paddle's blade going into the water, in a stroke of `power` (a strong one louder and deeper). */
+  splash(power = 1): void {
     const ctx = this.ctx;
     if (!ctx || !this.master || this.muted) return;
     const t = ctx.currentTime;
     const s = ctx.createBufferSource();
     s.buffer = this.noise;
-    s.playbackRate.value = 1.2 + Math.random() * 0.3;
+    s.playbackRate.value = 1.2 + Math.random() * 0.3 - 0.25 * (power - 1);
     const bp = ctx.createBiquadFilter();
     bp.type = 'bandpass';
     bp.frequency.setValueAtTime(1600, t);
@@ -109,7 +109,7 @@ export class Soundscape {
     bp.Q.value = 0.9;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.09, t + 0.04);
+    g.gain.exponentialRampToValueAtTime(0.09 * (0.55 + 0.45 * power), t + 0.04);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
     s.connect(bp).connect(g).connect(this.master);
     s.start(t, Math.random() * 3);

@@ -29,7 +29,7 @@ import { patchMaterial, type PatchOptions } from '../render/patch';
 import { lilyCarpetTexture } from '../render/textures';
 import type { BoatBody } from './boatPhysics';
 import { BIL, BIL_ROUTE_SPAN, bilDepth, bilReach, riverX, routeGap, routeOffset } from './geography';
-import { HERO_HULL, hullHalfWidthAt } from './hull';
+import { HERO_HULL, heroBeamAtWater } from './hull';
 import { SHELTERED, waveHeightGlsl, waveSlopeGlsl } from './waves';
 
 // The shapla bil: a broad, shallow wetland behind the left bank, its water still and glassy. Water lilies
@@ -450,7 +450,7 @@ function lilyMotion(wash: Vector4, perVertex: boolean, flower = false): NonNulla
   ${
     perVertex
       ? '#ifdef USE_COLOR_ALPHA\n  vColor.a *= smoothstep(0.05, 0.2, uWaterLevel + aBed);\n  #endif'
-      : `transformed *= step(0.06, uWaterLevel + aBed)${flower ? ' * step(hash12(floor(lilyAt.xz * 3.0)), uSeasonB.x)' : ''};`
+      : `transformed *= smoothstep(0.03, 0.1, uWaterLevel + aBed)${flower ? ' * smoothstep(-0.05, 0.05, uSeasonB.x - hash12(floor(lilyAt.xz * 3.0)))' : ''};`
   }
 }`,
   };
@@ -783,7 +783,7 @@ export class Bil {
       const along = bx * fx + bz * fz;
       if (Math.abs(along) < HALF_LEN) {
         let across = bx * sx + bz * sz;
-        const beam = hullHalfWidthAt(HERO_HULL, along / HERO_HULL.len + 0.5, 0) + r * 0.8;
+        const beam = heroBeamAtWater(along / HERO_HULL.len + 0.5) + r * 0.8;
         const out = Math.abs(across) - beam;
         if (out < 0) {
           const to = across < 0 ? -beam : beam;

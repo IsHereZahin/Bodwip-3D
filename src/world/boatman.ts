@@ -50,6 +50,11 @@ const SHOULDER = new Vector3(0.18, 0.4, 0);
 const NECK_BASE = new Vector3(0, 0.46, 0.01);
 /** Balance: how fast he rights himself as the deck tilts, and how far (he leaves a little to the deck). */
 const BALANCE = { f: 1.3, zeta: 0.55, share: 0.85 };
+/**
+ * Bracing: on a lively deck he sinks lower at the knees and bends a little more, to keep his weight over his
+ * feet: how much per rad/s of the deck's rocking, the most he sinks (m), and how quickly he settles into it (s).
+ */
+const BRACE = { perRate: 0.3, max: 0.09, tau: 1.2 };
 /** His skin: a sun-browned, shyamla Bengali complexion (sRGB). */
 const SKIN_TONE = '#8d5a3b';
 /** How far he bends in when a hold runs out of his arms' reach (m): his hips take part of it, his chest the rest. */
@@ -309,6 +314,8 @@ export class Boatman {
   private balZ = 0;
   private vBalX = 0;
   private vBalZ = 0;
+  private brace = 0;
+  private readonly lastTilt = { rotX: 0, rotZ: 0 };
   // the body's frames this instant, for the cloth
   private readonly pelvis = new Vector3();
   private readonly pelvisQ = new Quaternion();
@@ -674,16 +681,26 @@ export class Boatman {
     // balance: he leans against the deck's tilt to stay upright, a beat late
     [this.balX, this.vBalX] = spring(this.balX, this.vBalX, -tilt.rotX * BALANCE.share, BALANCE.f, BALANCE.zeta, dt);
     [this.balZ, this.vBalZ] = spring(this.balZ, this.vBalZ, -tilt.rotZ * BALANCE.share, BALANCE.f, BALANCE.zeta, dt);
+    // the rougher the deck rocks, the lower he braces
+    if (dt > 0) {
+      const rocking = Math.hypot(tilt.rotX - this.lastTilt.rotX, tilt.rotZ - this.lastTilt.rotZ) / dt;
+      const want = Math.min(BRACE.max, rocking * BRACE.perRate);
+      this.brace += (want - this.brace) * (1 - Math.exp(-dt / BRACE.tau));
+    }
+    this.lastTilt.rotX = tilt.rotX;
+    this.lastTilt.rotZ = tilt.rotZ;
+    const crouch = drive.crouch + this.brace;
+    const bend = drive.bend + this.brace * 1.2;
 
     // hips: they sink as his knees give into the pull, move with him toward the bow and out over the
     // side, tip forward as he bends from them, and turn with a share of his twist
     this.e.set(this.balX, 0, this.balZ, 'YXZ');
-    this.v.set(0.12 * drive.lean, PELVIS_HEIGHT - drive.crouch, drive.shift).applyEuler(this.e);
+    this.v.set(0.12 * drive.lean, PELVIS_HEIGHT - crouch, drive.shift).applyEuler(this.e);
     this.pelvis.copy(this.stance).add(this.v);
-    this.pelvisQ.setFromEuler(this.e.set(this.balX + 0.04 + 0.35 * drive.bend, 0.4 * drive.twist, this.balZ - 0.3 * drive.lean, 'YXZ'));
+    this.pelvisQ.setFromEuler(this.e.set(this.balX + 0.04 + 0.35 * bend, 0.4 * drive.twist, this.balZ - 0.3 * drive.lean, 'YXZ'));
 
     // chest: the rest of the bend, the twist and the lean
-    this.q.setFromEuler(this.e.set(0.13 + 0.65 * drive.bend, 0.6 * drive.twist, -0.7 * drive.lean, 'YXZ'));
+    this.q.setFromEuler(this.e.set(0.13 + 0.65 * bend, 0.6 * drive.twist, -0.7 * drive.lean, 'YXZ'));
     this.chestQ.copy(this.pelvisQ).multiply(this.q);
     this.chest.position.copy(this.pelvis).add(this.v.set(0, SPINE, 0).applyQuaternion(this.pelvisQ));
 

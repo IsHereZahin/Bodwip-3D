@@ -5,7 +5,9 @@ import { smoothstep } from '../core/mathx';
 // a pull and a recovery. The blade goes in well ahead of him and is drawn back past his hip as he unwinds
 // and sinks into it. It comes out with a little outward twist (which also keeps her straight) and is swung
 // forward low over the water, turned edge-on to the air. The blade, his body, the boat's drive and the
-// water's rings all read this one stroke, so they keep in step.
+// water's rings all read this one stroke, so they keep in step. Not every stroke is the same: each has a
+// power (1 his steady stroke), which the boat chooses as it goes (see boatPhysics.ts); a strong stroke
+// digs deeper, has him bend and sink further into it, and drives her harder.
 
 /** Seconds per stroke. */
 export const STROKE_SECONDS = 1.9;
@@ -22,6 +24,8 @@ const BLADE_X = 1.08;
 const DEPTH = 0.3;
 /** The mean drive (N) that holds her at cruising speed against the water's drag; it comes in pulses. */
 export const MEAN_THRUST = 130;
+/** Her speed through the water (m/s) at his steady stroke. */
+export const CRUISE = 1.49;
 
 export const strokePhase = (t: number) => (((t / STROKE_SECONDS) % 1) + 1) % 1;
 
@@ -48,8 +52,10 @@ export function makePaddlePose(): PaddlePose {
 const tmpA = new Vector3();
 const tmpB = new Vector3();
 
-/** The paddle at `phase` (0..1 through the stroke, the blade going in at 0). */
-export function paddlePose(phase: number, out: PaddlePose): PaddlePose {
+/** The paddle at `phase` (0..1 through the stroke, the blade going in at 0), in a stroke of `power`. */
+export function paddlePose(phase: number, out: PaddlePose, power = 1): PaddlePose {
+  // a strong stroke digs deeper (it goes in and comes out where any other does, so strokes join up)
+  const depth = DEPTH * (0.75 + 0.25 * power);
   let theta: number;
   let psi: number;
   let feather: number;
@@ -58,7 +64,7 @@ export function paddlePose(phase: number, out: PaddlePose): PaddlePose {
     const u = phase / PULL;
     const e = ease(u);
     const arc = Math.sin(Math.PI * u);
-    out.blade.set(BLADE_X + 0.03 * arc + 0.08 * smoothstep(0.75, 1, u), -DEPTH * Math.pow(arc, 0.7), CATCH_Z + (EXIT_Z - CATCH_Z) * e);
+    out.blade.set(BLADE_X + 0.03 * arc + 0.08 * smoothstep(0.75, 1, u), -depth * Math.pow(arc, 0.7), CATCH_Z + (EXIT_Z - CATCH_Z) * e);
     theta = 0.35 - 0.65 * e;
     psi = 0.38 - 0.05 * arc + 0.07 * smoothstep(0.6, 1, u);
     feather = 0.6 * smoothstep(0.7, 1, u);
@@ -102,19 +108,21 @@ export function makeBodyDrive(): BodyDrive {
 }
 
 /**
- * His body at `phase`. At the catch he is wound up away from the paddle and reaching forward; through the
- * pull he unwinds, sinks at the knees and leans out over the blade; on the recovery he straightens and winds
- * up again.
+ * His body at `phase` of a stroke of `power`. At the catch he is wound up away from the paddle and reaching
+ * forward; through the pull he unwinds, sinks at the knees and leans out over the blade (the more, the
+ * harder he pulls); on the recovery he straightens and winds up again for the next one.
  */
-export function bodyDrive(phase: number, out: BodyDrive): BodyDrive {
+export function bodyDrive(phase: number, out: BodyDrive, power = 1): BodyDrive {
+  const p = Math.max(0.6, Math.min(1.7, power));
   if (phase < PULL) {
     const u = phase / PULL;
     const e = ease(u);
     const arc = Math.sin(Math.PI * u);
+    // power shows mid-stroke only (arc), so one stroke runs into the next whatever their powers
     out.twist = -0.35 + 0.65 * e;
-    out.bend = 0.32 - 0.2 * e;
-    out.lean = 0.12 + 0.1 * arc;
-    out.crouch = 0.03 + 0.08 * arc;
+    out.bend = 0.32 - 0.2 * e + 0.08 * (p - 1) * arc;
+    out.lean = 0.12 + 0.1 * arc * p;
+    out.crouch = 0.03 + 0.08 * arc * p;
     out.shift = 0.05 - 0.09 * e;
   } else {
     const v = (phase - PULL) / (1 - PULL);
@@ -177,15 +185,15 @@ function buildDriveTable(): number {
 /** The paddle's mean turning moment (N·m, + turns the bow toward +x); negative, as it is worked on the +x side. */
 export const PADDLE_MOMENT = buildDriveTable();
 
-/** The paddle's drive at `phase`. */
-export function paddleForce(phase: number, out: PaddleForce): PaddleForce {
+/** The paddle's drive at `phase` of a stroke of `power` (the blade drawn harder through the water). */
+export function paddleForce(phase: number, out: PaddleForce, power = 1): PaddleForce {
   const f = phase * TABLE;
   const i = Math.floor(f) % TABLE;
   const j = (i + 1) % TABLE;
   const t = f - Math.floor(f);
   const mix = (k: number) => DRIVE[i * 4 + k] + (DRIVE[j * 4 + k] - DRIVE[i * 4 + k]) * t;
-  out.thrust = mix(0);
-  out.side = mix(1);
+  out.thrust = mix(0) * power;
+  out.side = mix(1) * power;
   out.x = mix(2);
   out.z = mix(3);
   return out;

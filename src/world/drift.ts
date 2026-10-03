@@ -7,9 +7,10 @@ import { hyacinthLeafTexture } from '../render/textures';
 import { windAt } from '../env/wind';
 import { currentAt, type BoatBody } from './boatPhysics';
 import { CHARS, charHeight, halfWidth, riverX, terrainHeight } from './geography';
-import { HERO_HULL, hullHalfWidthAt, type HullShape } from './hull';
+import { HERO_HULL, heroBeamAtWater, hullHalfWidthAt, type HullShape } from './hull';
 import type { LiftNet } from './liftNet';
-import { waveHeight, waveSlope } from './waves';
+import { wakeHeight } from './wake';
+import { SHELTERED, waveHeight, waveSlope } from './waves';
 
 // What the river carries: water hyacinth (kochuripana), each plant its own floating body, held to its
 // neighbours in loose mats by tangled roots; and fallen leaves. Each is dragged toward the local current
@@ -302,7 +303,6 @@ export class Drift {
   private meetNets(h: number, t: number, nets: readonly LiftNet[]): void {
     const { px, pz, ox, oz, caught, lift } = this;
     const level = G.uWaterLevel.value;
-    const wind = G.uWind.value.z;
     for (let i = 0; i < N; i++) {
       let held = false;
       for (const net of nets) {
@@ -310,7 +310,7 @@ export class Drift {
         if (Math.abs(px[i] - net.centre.x) > reach || Math.abs(pz[i] - net.centre.z) > reach) continue;
         const under = net.heightAt(px[i], pz[i]);
         if (under === null) continue;
-        const surface = level + waveHeight(px[i], pz[i], t, wind);
+        const surface = level + waveHeight(px[i], pz[i], t);
         if (caught[i]) {
           // still on the netting until it sinks back under the water
           if (under < surface - 0.02) continue;
@@ -391,7 +391,7 @@ export class Drift {
         const along = bx * fx + bz * fz;
         if (Math.abs(along) < HALF_LEN) {
           const across = bx * sx + bz * sz;
-          const beam = hullHalfWidthAt(HERO_HULL, along / HERO_HULL.len + 0.5, 0) + this.radius[i] * 0.7;
+          const beam = heroBeamAtWater(along / HERO_HULL.len + 0.5) + this.radius[i] * 0.7;
           if (Math.abs(across) < beam) {
             const a = across < 0 ? -beam : beam;
             px[i] = boat.pos.x + fx * along + sx * a;
@@ -553,18 +553,28 @@ export class Drift {
     }
   }
 
-  /** Sets each floater on the shared waves (and in the boat's wash near her), tilted with the surface. */
+  /** How much of the river's waves the water at (x, z) carries: still water a share of them (as the water shader has it). */
+  private shelter(x: number, z: number): number {
+    currentAt(x, z, this.cur);
+    const s = Math.hypot(this.cur.x, this.cur.z);
+    const r = Math.min(1, s / 0.2);
+    return SHELTERED + (1 - SHELTERED) * r * r * (3 - 2 * r);
+  }
+
+  /** Sets each floater on the shared waves (and on the water the boat pushes aside), tilted with the surface. */
   private draw(t: number, boat: BoatBody): void {
-    const wind = G.uWind.value.z;
-    const wash = Math.min(1, Math.max(0, boat.speed / 2));
+    const ch = Math.cos(boat.heading);
+    const sh = Math.sin(boat.heading);
     for (let i = 0; i < N; i++) {
       const x = this.px[i];
       const z = this.pz[i];
+      const shelter = this.shelter(x, z);
       // on the water, or up on a net that has lifted it
-      let y = G.uWaterLevel.value + waveHeight(x, z, t, wind) + this.lift[i];
-      const d = Math.hypot(x - boat.pos.x, z - boat.pos.z);
-      if (d < 25) y += 0.03 * wash * Math.exp(-d / 5) * Math.sin(d * 2.4 - t * 4.2);
-      waveSlope(x, z, t, wind, this.slope);
+      let y = G.uWaterLevel.value + waveHeight(x, z, t, shelter) + this.lift[i];
+      const bx = x - boat.pos.x;
+      const bz = z - boat.pos.z;
+      if (Math.abs(bx) + Math.abs(bz) < 150) y += wakeHeight(bx * ch - bz * sh, bx * sh + bz * ch, boat.speed);
+      waveSlope(x, z, t, this.slope, shelter);
       const sl = Math.hypot(this.slope.x, this.slope.z);
       this.q.setFromAxisAngle(UP, this.yaw[i]);
       if (sl > 1e-5) {

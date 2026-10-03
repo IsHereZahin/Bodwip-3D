@@ -38,8 +38,23 @@ export const VIEWS = {
 } satisfies Record<string, View>;
 export type ViewName = keyof typeof VIEWS;
 
-/** Low and close, so the boat sits in front of a rising or setting sun or moon. */
-const WATCH_VIEW = { pitch: 0.05, dist: 16 };
+/**
+ * Where the camera rests until the viewer picks a view: low over the water off the boat's quarter,
+ * looking down the river past her into the evening sun, its path on the water beside her.
+ */
+const OPENING_VIEW: View = { yaw: 0.5, pitch: 0.08, dist: 15 };
+
+/**
+ * Low and close, with a rising or setting sun or moon in the frame beside the boat: turned this far
+ * (rad) from it toward her way ahead, so it sits off to the side, not glaring straight down the view.
+ */
+const WATCH_VIEW = { pitch: 0.05, dist: 16, aside: 0.42 };
+
+/** The camera's yaw (from her course `h`) that frames an event in direction `dir` beside the boat. */
+function watchYaw(dir: Vector3, h: number): number {
+  const toward = angleDelta(h, Math.atan2(dir.x, dir.z));
+  return toward - Math.sign(toward) * Math.min(Math.abs(toward), WATCH_VIEW.aside);
+}
 
 export type CameraMode = 'follow' | 'free';
 
@@ -60,7 +75,7 @@ export class Rig {
 
   private loopT = -1;
   private readonly steerTo = { x: 0, z: 0 };
-  private rest: View = VIEWS.stern;
+  private rest: View = OPENING_VIEW;
   private yaw = this.rest.yaw;
   private pitch = this.rest.pitch;
   private dist = this.rest.dist;
@@ -188,7 +203,7 @@ export class Rig {
 
   /** Points the follow camera's targets at `dir`, framed as when watching a sky event; for stills. */
   aim(dir: Vector3): void {
-    this.yawT = Math.atan2(dir.x, dir.z) - this.boat.course;
+    this.yawT = watchYaw(dir, this.boat.course);
     this.pitchT = WATCH_VIEW.pitch;
     this.distT = WATCH_VIEW.dist;
   }
@@ -227,8 +242,8 @@ export class Rig {
     return this.mode === 'free' ? this.fly.heading : this.boat.heading;
   }
 
-  /** `crew`: where the boatman's weight is; `wind`: the waves' strength. */
-  update(dt: number, t: number, crew: Crew, wind: number): void {
+  /** `crew`: where the boatman's weight is. */
+  update(dt: number, t: number, crew: Crew): void {
     const k = this.keys;
     for (const code of k) if (!MODIFIERS.has(code)) this.idle = 0;
     if (this.mode === 'follow') {
@@ -244,7 +259,7 @@ export class Rig {
     const b = this.boat;
     this.steerTo.z = b.pos.z - LOOK_AHEAD;
     this.steerTo.x = laneX(this.steerTo.z);
-    b.step(dt, t, this.steerTo, crew, wind);
+    b.step(dt, t, this.steerTo, crew);
     if (this.loopT < 0) {
       if (b.pos.z < JOURNEY_Z1 + 40) this.loopT = 0;
     } else {
@@ -267,7 +282,7 @@ export class Rig {
     else {
       const turn = 1 - Math.exp(-dt * this.turnRate);
       if (idle && this.watch) {
-        this.yawT += angleDelta(this.yawT, Math.atan2(this.watch.x, this.watch.z) - h) * turn;
+        this.yawT += angleDelta(this.yawT, watchYaw(this.watch, h)) * turn;
         this.pitchT = damp(this.pitchT, WATCH_VIEW.pitch, this.turnRate, dt);
         this.distT = damp(this.distT, WATCH_VIEW.dist, this.turnRate, dt);
       } else if (idle) {

@@ -18,7 +18,7 @@ import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { bankInfo } from './geography';
-import { groundAt, type Cover } from './terrain';
+import { groundLattice } from './terrain';
 import { GHATS, type HutPlan } from './village';
 
 // Grass you can walk through: dense blade clumps, wild flowers and pebbles, built only round the viewer,
@@ -299,7 +299,7 @@ export class Meadow {
     const z0 = cz * CHUNK;
     const rng = new Rng((Math.imul(cx, 73856093) ^ Math.imul(cz, 19349663) ^ (lod * 83492791)) >>> 0);
     const out = LAYERS.map(() => ({ list: [] as number[], col: [] as number[] }));
-    const lattice = this.lattice(x0, z0);
+    const lattice = groundLattice(x0, z0, CHUNK, LATTICE);
     const huts = this.huts.filter((h) => Math.abs(h.x - x0 - CHUNK / 2) < CHUNK && Math.abs(h.z - z0 - CHUNK / 2) < CHUNK);
     const ghats = GHATS.filter((g) => Math.abs(g.z - z0 - CHUNK / 2) < CHUNK);
     const m = new Matrix4();
@@ -354,30 +354,4 @@ export class Meadow {
     };
   }
 
-  /** Height and cover inside a chunk, interpolated from a coarse lattice (the full lookups are costly). */
-  private lattice(x0: number, z0: number): (x: number, z: number) => Cover & { h: number } {
-    const n = Math.round(CHUNK / LATTICE) + 1;
-    const pts: (Cover & { h: number })[] = [];
-    for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) pts.push(groundAt(x0 + i * LATTICE, z0 + j * LATTICE));
-    const lerpCover = (a: Cover & { h: number }, b: Cover & { h: number }, t: number) => ({
-      color: a.color,
-      h: a.h + (b.h - a.h) * t,
-      zone: a.zone + (b.zone - a.zone) * t,
-      grass: a.grass + (b.grass - a.grass) * t,
-      dirt: a.dirt + (b.dirt - a.dirt) * t,
-      sand: a.sand + (b.sand - a.sand) * t,
-      pebbles: a.pebbles + (b.pebbles - a.pebbles) * t,
-    });
-    return (x, z) => {
-      const fx = Math.min((x - x0) / LATTICE, n - 1.001);
-      const fz = Math.min((z - z0) / LATTICE, n - 1.001);
-      const i = Math.floor(fx);
-      const j = Math.floor(fz);
-      const tx = fx - i;
-      const tz = fz - j;
-      const a = lerpCover(pts[j * n + i], pts[j * n + i + 1], tx);
-      const b = lerpCover(pts[(j + 1) * n + i], pts[(j + 1) * n + i + 1], tx);
-      return lerpCover(a, b, tz);
-    };
-  }
 }

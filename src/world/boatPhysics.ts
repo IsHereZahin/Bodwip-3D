@@ -3,9 +3,9 @@ import { G } from '../core/globals';
 import { angleDelta, smoothstep } from '../core/mathx';
 import { windAt } from '../env/wind';
 import { downstream, halfWidth, riverX, streamSpeed } from './geography';
-import { HERO_HULL, hullHalfWidthAt } from './hull';
-import { PADDLE_MOMENT, paddleForce, strokePhase, type PaddleForce } from './paddle';
-import { SHELTERED, waveHeight } from './waves';
+import { HERO_HULL, heroBeamAtWater } from './hull';
+import { CRUISE, PADDLE_MOMENT, STROKE_SECONDS, paddleForce, strokePhase, type PaddleForce } from './paddle';
+import { SHELTERED, hullWaves, type HullWaves } from './waves';
 
 // The hero boat as a floating body. In the plane: mass and added mass, drag through the water (light
 // fore and aft, heavy sideways, like a keel), the river's current, the paddle's pulses of drive from one
@@ -43,7 +43,8 @@ const MAN_MASS = 65;
 /** Natural frequency (Hz) and damping ratio of each motion out of the plane. */
 const HEAVE = { f: 1.3, zeta: 0.35 };
 const PITCH = { f: 1.0, zeta: 0.3 };
-const ROLL = { f: 0.6, zeta: 0.12 };
+// roll is damped more than a bare hull would be: the boatman balancing and his blade in the water steady her
+const ROLL = { f: 0.6, zeta: 0.2 };
 /** Moment (N·m) to heel the boat one radian, and to trim it one radian. */
 const ROLL_STIFF = 3200;
 const PITCH_STIFF = 200000;
@@ -55,21 +56,37 @@ const PUSH_HEIGHT = 0.8;
  */
 const WINDAGE = { side: 7.5, end: 2.2, height: 0.9, k: 0.5 * 1.2 };
 
-/** Points along the waterline where the hull feels the water. */
-const SAMPLES: { x: number; z: number }[] = [];
-for (const s of [0.18, 0.34, 0.5, 0.66, 0.82]) {
-  for (const side of [-1, 1]) {
-    SAMPLES.push({ x: side * hullHalfWidthAt(HERO_HULL, s, 0) * 0.7, z: (s - 0.5) * HERO_HULL.len });
-  }
-}
-const SUM_XX = SAMPLES.reduce((a, p) => a + p.x * p.x, 0);
-const SUM_ZZ = SAMPLES.reduce((a, p) => a + p.z * p.z, 0);
+/** Her waterline, where the water bears her up: its length and its breadth amidships (m). */
+const WATERLINE = { len: HERO_HULL.len * 0.8, beam: heroBeamAtWater(0.5) * 2 };
 
 export interface Crew {
   /** The boatman's centre of mass, offset from where it rests (boat frame, m). */
   x: number;
   z: number;
 }
+
+/** A fixed hash of a stroke's number, 0..1, so a replayed stretch of the journey paddles the same. */
+const strokeHash = (n: number, k: number) => {
+  const x = Math.sin(n * 12.9898 + k * 78.233) * 43758.5453;
+  return x - Math.floor(x);
+};
+
+/**
+ * How hard he pulls stroke `n` when she has been going `speed` through the water (over the last stroke):
+ * harder when she has lost way (into a head wind, over waves; in a gale with all he has), easier when she
+ * is running fast, a little different every stroke, and now and then a strong one or two to drive her on,
+ * as a boatman does.
+ */
+function strokePower(n: number, speed: number): number {
+  let p = 1 + 1.8 * (CRUISE - speed);
+  p *= 0.9 + 0.2 * strokeHash(n, 1);
+  if (strokeHash(n, 2) < 0.18 || strokeHash(n - 1, 2) < 0.08) p *= 1.4;
+  return Math.max(0.65, Math.min(MAX_POWER, p));
+}
+/** The hardest he can pull, against his steady stroke. */
+const MAX_POWER = 2.2;
+/** The most the wind and waves heel her (rad): past a point he throws his weight to windward and her flare bites. */
+const MAX_HEEL = 0.24;
 
 const tmp = { x: 0, z: 0 };
 const air = { x: 0, z: 0 };
@@ -93,9 +110,15 @@ export class BoatBody {
   speed = 0;
   rotX = 0;
   rotZ = 0;
+  /** The stroke he is on (its number since the clock began), and how hard he is pulling it (1: his steady stroke). */
+  strokeIndex = -1;
+  power = 1;
+  /** Her speed through the water averaged over about a stroke, which is what he judges his pull by. */
+  meanSpeed = CRUISE;
   private vHeave = 0;
   /** The wind's push across her now (N, + to starboard), for her heel. */
   private windSide = 0;
+  private readonly waves: HullWaves = { heave: 0, along: 0, across: 0 };
   private vRotX = 0;
   private vRotZ = 0;
 
@@ -104,27 +127,35 @@ export class BoatBody {
     this.pos.set(x, G.uWaterLevel.value, z);
     this.heading = this.course = heading;
     currentAt(x, z, tmp);
-    const cruise = 1.49;
+    const cruise = CRUISE;
     this.vel.set(Math.sin(heading) * cruise + tmp.x, 0, Math.cos(heading) * cruise + tmp.z);
     this.yawRate = 0;
     this.speed = cruise;
+    this.meanSpeed = cruise;
+    this.strokeIndex = -1;
     this.rotX = this.rotZ = 0;
     this.vHeave = this.vRotX = this.vRotZ = 0;
   }
 
   /**
    * Advances by `dt`. `t`: clock for the waves and the stroke; `target`: the point the boatman steers
-   * for; `crew`: where his weight is; `wind`: the waves' strength.
+   * for; `crew`: where his weight is. The waves are the shared sea's (waves.ts).
    */
-  step(dt: number, t: number, target: { x: number; z: number }, crew: Crew, wind: number): void {
+  step(dt: number, t: number, target: { x: number; z: number }, crew: Crew): void {
     const n = Math.max(1, Math.ceil(dt / (1 / 120)));
     const h = dt / n;
-    for (let i = 0; i < n; i++) this.substep(h, t - dt + (i + 1) * h, target, crew, wind);
+    for (let i = 0; i < n; i++) this.substep(h, t - dt + (i + 1) * h, target, crew);
     this.course += angleDelta(this.course, this.heading) * (1 - Math.exp(-dt / 1.2));
   }
 
-  private substep(dt: number, t: number, target: { x: number; z: number }, crew: Crew, wind: number): void {
-    paddleForce(strokePhase(t), stroke);
+  private substep(dt: number, t: number, target: { x: number; z: number }, crew: Crew): void {
+    // at each catch he settles how hard to pull this stroke
+    const n = Math.floor(t / STROKE_SECONDS);
+    if (n !== this.strokeIndex) {
+      this.strokeIndex = n;
+      this.power = strokePower(n, this.meanSpeed);
+    }
+    paddleForce(strokePhase(t), stroke, this.power);
     const fx = Math.sin(this.heading);
     const fz = Math.cos(this.heading);
     const sx = Math.cos(this.heading);
@@ -137,6 +168,7 @@ export class BoatBody {
     const ur = rx * fx + rz * fz;
     const wr = rx * sx + rz * sz;
     this.speed = ur;
+    this.meanSpeed += (ur - this.meanSpeed) * (1 - Math.exp(-dt / STROKE_SECONDS));
     const desired = Math.atan2(target.x - this.pos.x, target.z - this.pos.z);
     const err = angleDelta(this.heading, desired);
     const helm = Math.max(-STEER.max, Math.min(STEER.max, STEER.kp * err - STEER.kd * this.yawRate));
@@ -159,31 +191,23 @@ export class BoatBody {
     this.pos.z += this.vel.z * dt;
     // pulled on one side, the blade swings her bow away from it with each stroke; the twist he gives it
     // at the end of the stroke takes that out on average (so she wags a little), and the helm does the rest
-    const turn = stroke.z * stroke.side - stroke.x * stroke.thrust - PADDLE_MOMENT + helm;
+    const turn = stroke.z * stroke.side - stroke.x * stroke.thrust - PADDLE_MOMENT * this.power + helm;
     this.yawRate += ((turn - YAW_DAMP * this.yawRate) / YAW_INERTIA) * dt;
     this.heading += this.yawRate * dt;
 
-    // out of the plane: the wave surface as the hull averages it, a plane through the sample points (the
-    // water's shelter as the shader has it: still water carries a share of the river's waves)
-    const sea = wind * (SHELTERED + (1 - SHELTERED) * smoothstep(0, 0.2, Math.hypot(tmp.x, tmp.z)));
-    let mean = 0;
-    let sxh = 0;
-    let szh = 0;
-    for (const p of SAMPLES) {
-      const wx = this.pos.x + sx * p.x + fx * p.z;
-      const wz = this.pos.z + sz * p.x + fz * p.z;
-      const hgt = waveHeight(wx, wz, t, sea);
-      mean += hgt;
-      sxh += hgt * p.x;
-      szh += hgt * p.z;
-    }
-    mean /= SAMPLES.length;
+    // out of the plane: the waves as her waterline feels them, averaged over it, so short chop largely
+    // cancels under her and the long swell lifts and tilts her whole (the water's shelter as the shader
+    // has it: still water carries a share of the river's waves)
+    const shelter = SHELTERED + (1 - SHELTERED) * smoothstep(0, 0.2, Math.hypot(tmp.x, tmp.z));
+    const w = hullWaves(this.pos.x, this.pos.z, this.heading, WATERLINE.len, WATERLINE.beam, t, shelter, this.waves);
+    const mean = w.heave;
     // local height = heave + x·rotZ − z·rotX, so the surface's slopes give the angles it would set
-    let rollTarget = sxh / SUM_XX;
-    let pitchTarget = -szh / SUM_ZZ;
+    let rollTarget = w.across;
+    let pitchTarget = -w.along;
     // the boatman's weight heels and trims her as he leans out into each stroke; the blade's sideways
     // push rocks her a little; at speed the stern squats and the bow lifts
     rollTarget += (-MAN_MASS * GRAVITY * crew.x - stroke.side * PUSH_HEIGHT - this.windSide * WINDAGE.height) / ROLL_STIFF;
+    rollTarget = MAX_HEEL * Math.tanh(rollTarget / MAX_HEEL);
     pitchTarget += (MAN_MASS * GRAVITY * crew.z) / PITCH_STIFF - 0.003 * ur * ur;
     // she floats on the season's water, riding the waves on it
     [this.pos.y, this.vHeave] = spring(this.pos.y, this.vHeave, G.uWaterLevel.value + mean, HEAVE.f, HEAVE.zeta, dt);

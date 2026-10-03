@@ -1,5 +1,7 @@
 import {
   AddEquation,
+  BufferAttribute,
+  BufferGeometry,
   Color,
   CustomBlending,
   DataTexture,
@@ -11,7 +13,6 @@ import {
   Mesh,
   OneFactor,
   OneMinusSrcAlphaFactor,
-  PlaneGeometry,
   RGBAFormat,
   RepeatWrapping,
   ShaderMaterial,
@@ -21,8 +22,9 @@ import type { Texture } from 'three';
 import { G, LAYER_WATER } from '../core/globals';
 import { periodicNoise } from '../core/noise';
 import { GLSL_COMMON } from '../render/glsl';
-import { HERO_HULL, hullWaterlineGlsl } from './hull';
-import { SHELTERED, waveSlopeGlsl } from './waves';
+import { HERO_HULL, HERO_SINK, hullWaterlineGlsl } from './hull';
+import { wakeGlsl } from './wake';
+import { SHELTERED, waveHeightLodGlsl, waveSlopeGlsl } from './waves';
 import { WORLD_Z0, WORLD_Z1, downstream, halfWidth, riverX, streamSpeed, terrainHeight } from './geography';
 
 const FIELD_X0 = -620;
@@ -101,12 +103,90 @@ function riverField(): { texture: DataTexture; bounds: Vector4 } {
   return { texture, bounds: new Vector4(FIELD_X0, WORLD_Z1, 1 / FIELD_SX, 1 / SZ) };
 }
 
+/** Angular segments of the water's grid; its vertices lie this share of their distance from the camera apart. */
+const GRID_SEGMENTS = 256;
+const GRID_SPACING = (Math.PI * 2) / GRID_SEGMENTS;
+/** Out to here (m) the grid is fine enough to carry waves; beyond, its rings widen fast to the world's edge. */
+const GRID_WAVES = 300;
+const GRID_FAR = 6000;
+/** The water's extent, as the world's (x0, z0, x1, z1). */
+const WATER_BOUNDS = new Vector4(-700, WORLD_Z1, 700, WORLD_Z0);
+
+/**
+ * The water's mesh: rings round the camera, each a little wider than the last, so its vertices lie about as
+ * far apart as a pixel's worth of distance needs (centimetres under the camera, metres far off). The vertex
+ * shader moves it with the camera; nothing is snapped, so each wave is drawn only where the vertices lie
+ * close enough to draw it, and the surface does not shimmer as the camera moves.
+ */
+function waterGrid(): BufferGeometry {
+  const radii: number[] = [];
+  let r = 0.6;
+  while (r < GRID_WAVES) {
+    radii.push(r);
+    r *= 1 + GRID_SPACING;
+  }
+  while (r < GRID_FAR) {
+    radii.push(r);
+    r *= 1.25;
+  }
+  radii.push(r);
+  const n = GRID_SEGMENTS;
+  const pos = new Float32Array((1 + radii.length * n) * 3);
+  radii.forEach((radius, i) => {
+    for (let j = 0; j < n; j++) {
+      const a = (j / n) * Math.PI * 2;
+      const k = (1 + i * n + j) * 3;
+      pos[k] = Math.cos(a) * radius;
+      pos[k + 2] = Math.sin(a) * radius;
+    }
+  });
+  const index: number[] = [];
+  // a fan under the camera, then a band of quads between each ring and the next (wound to face up)
+  for (let j = 0; j < n; j++) index.push(0, 1 + ((j + 1) % n), 1 + j);
+  for (let i = 0; i + 1 < radii.length; i++) {
+    for (let j = 0; j < n; j++) {
+      const a = 1 + i * n + j;
+      const b = 1 + i * n + ((j + 1) % n);
+      index.push(a, b, b + n, a, b + n, a + n);
+    }
+  }
+  const g = new BufferGeometry();
+  g.setAttribute('position', new BufferAttribute(pos, 3));
+  g.setIndex(index);
+  return g;
+}
+
 const VERT = /* glsl */ `
+${GLSL_COMMON}
+uniform sampler2D tField;
+uniform vec4 uField;
+uniform vec4 uBoat;
+uniform vec4 uOar;
+uniform vec4 uBounds;
 varying vec3 vWorld;
+varying float vWave;
+${waveHeightLodGlsl()}
+${wakeGlsl()}
 void main() {
-  vec4 w = modelMatrix * vec4(position, 1.0);
-  vWorld = w.xyz;
-  gl_Position = projectionMatrix * viewMatrix * w;
+  // the grid round the camera, laid on the world and kept to the water's extent
+  vec2 local = position.xz;
+  float spacing = max(length(local), 0.6) * ${GRID_SPACING.toFixed(5)};
+  vec2 xz = clamp(uCamPos.xz + local, uBounds.xy, uBounds.zw);
+  vec4 fld = texture2D(tField, (xz - uField.xy) * uField.zw);
+  float depth = max(uWaterLevel - fld.r, 0.0);
+  // still water carries a share of the river's waves, and they die out on the shallows by the shore
+  float running = smoothstep(0.0, 0.2, length(fld.gb) * uFlowScale);
+  float shoal = smoothstep(0.0, 0.6, depth);
+  float h = waveHeightLod(xz, spacing) * mix(${SHELTERED.toFixed(2)}, 1.0, running) * shoal;
+  vWave = h;
+  // the water the boat pushes aside
+  vec2 bd = xz - uBoat.xy;
+  if (abs(bd.x) + abs(bd.y) < 150.0) {
+    vec2 q = vec2(dot(bd, vec2(cos(uBoat.z), -sin(uBoat.z))), dot(bd, vec2(sin(uBoat.z), cos(uBoat.z))));
+    h += boatWake(q, uBoat.w, uOar, spacing) * shoal;
+  }
+  vWorld = vec3(xz.x, uWaterLevel + h, xz.y);
+  gl_Position = projectionMatrix * viewMatrix * vec4(vWorld, 1.0);
 }
 `;
 
@@ -126,9 +206,11 @@ uniform vec4 uNetA1;     // the next nearest
 uniform vec4 uNetB1;
 uniform vec3 uAmb;
 varying vec3 vWorld;
+varying float vWave;
 
-${hullWaterlineGlsl(HERO_HULL)}
+${hullWaterlineGlsl(HERO_HULL, HERO_SINK)}
 ${waveSlopeGlsl()}
+${wakeGlsl()}
 
 vec2 ripple(vec2 uv) { return texture2D(tNormal, uv).xy * 2.0 - 1.0; }
 
@@ -170,28 +252,14 @@ void netRings(vec4 na, vec4 nb, vec2 p, inout vec2 slope, inout float foam) {
   if (nb.y > 0.01 && e.x < 0.0 && e.y < 0.0) slope += rainRings(p * 1.4 + 11.0) * nb.y * 0.5;
 }
 
-// ---- the boat: Kelvin wake, rings round the hull, the paddle ----
-float wakeField(vec2 q, float spd) {
+// ---- the boat: fine rings for the shading (her bow wave, wake and the blade's push are boatWake's) ----
+float boatRipples(vec2 q, float spd) {
   float L = ${(HERO_HULL.len / 2).toFixed(3)};
-  float h = 0.0;
-  float d = -q.y - L * 0.85;
-  if (d > 0.0) {
-    float ax = abs(q.x);
-    // two diverging arms at the Kelvin angle (tan 19.5° ≈ 0.354)
-    float arm = 0.6 + d * 0.354;
-    float wdt = 0.45 + d * 0.05;
-    float g = exp(-pow((ax - arm) / wdt, 2.0));
-    h += g * sin(d * 2.4 - uTime * 4.2 + ax * 1.5) * exp(-d * 0.024);
-    // transverse waves inside the V, and a churned trail behind the stern
-    float inside = smoothstep(arm + 0.4, arm - 2.0, ax);
-    h += inside * 0.45 * sin(d * 1.15 - uTime * 3.1) * exp(-d * 0.04);
-  }
-  // the hull rocks on the swell even at rest and pushes water aside with way on
+  // the hull rocking on the waves sends little rings off her sides, livelier with way on
   float s = clamp(q.y / L, -0.92, 0.92);
   float hb = 0.82 * sqrt(max(1.0 - s * s, 0.0)) + 0.05;
   float dd = length(vec2(max(abs(q.x) - hb, 0.0), q.y - s * L));
-  h += 0.4 * exp(-dd * 0.55) * sin(dd * 5.0 - uTime * 3.4);
-  h *= 0.35 + 0.65 * spd;
+  float h = 0.4 * exp(-dd * 0.55) * sin(dd * 5.0 - uTime * 3.4) * (0.35 + 0.65 * spd);
   // rings spreading from where the blade pulls, only while it is in the water
   float ro = length(q - uOar.xy);
   h += 0.12 * min(uOar.z, 4.0) * uOar.w * exp(-ro * 0.6) * sin(ro * 7.0 - uTime * 6.0);
@@ -235,19 +303,21 @@ void main() {
   vec2 tA = ripple(uvA - adv * p0) * w0 + ripple(uvA - adv * p1 + 0.37) * (1.0 - w0);
   vec2 nA = across * tA.x + along * tA.y;
   // wind ripples, not advected
-  vec2 nB = ripple(wp.xz / 3.2 + uWind.xy * uTime * 0.08 + vec2(0.13, 0.71));
+  vec2 nB = ripple(wp.xz / 3.2 - uWind.xy * uTime * 0.08 + vec2(0.13, 0.71));
   // a slow broad swell
   vec2 nC = ripple(wp.xz / 46.0 + vec2(uTime * 0.004, -uTime * 0.006));
   float far = 1.0 / (1.0 + dist * 0.01);
   // still water (the bil, the khals, the slack by the banks) lies glassier than the running river
   float running = smoothstep(0.0, 0.2, spd);
   vec2 slope = nA * (0.07 + 0.13 * running) + nB * (0.06 + 0.1 * uWind.z) * (0.6 + 0.4 * running) * far + nC * (0.04 + 0.06 * running);
-  // the long waves the boat and the floating plants ride (see waves.ts), damped where the water is sheltered;
-  // under a gust front the ripples darken and roughen the water (cat's paws)
-  slope += waveSlope(wp.xz) * mix(${SHELTERED.toFixed(2)}, 1.0, running);
+  // the wind's waves the boat and the floating plants ride (see waves.ts), as the surface stands on them,
+  // damped where the water is sheltered and dying out on the shallows; under a gust front the ripples
+  // darken and roughen the water (cat's paws)
+  float shoal = smoothstep(0.0, 0.6, depth);
+  slope += waveSlope(wp.xz) * mix(${SHELTERED.toFixed(2)}, 1.0, running) * shoal;
   slope += nB * 0.1 * uWind.z * max(windGust(wp.xz) - 1.0, 0.0) * far;
-  // rain: every drop rings the surface
-  if (uRain > 0.01) slope += rainRings(wp.xz) * uRain * 0.7 * far;
+  // rain: every drop rings the surface (the chop it raises comes with the waves above)
+  if (uRain > 0.01) slope += rainRings(wp.xz) * uRain * far;
   // a strong wind breaks the tops of the waves into whitecaps, streaked downwind, under the gusts
   // (none at all below a fresh breeze, even in its gusts: then the noise is not worth reading)
   float whitecaps = 0.0;
@@ -259,22 +329,34 @@ void main() {
   }
 
   float foam = whitecaps * 0.6 * running;
+  // in a strong wind the highest crests break, white for a moment in ragged patches, streaked away downwind
+  float crest = smoothstep(0.4, 0.8, vWave / max(uSea.x, 0.02));
+  if (crest > 0.0) {
+    vec2 cq = vec2(dot(wp.xz, vec2(-uWind.y, uWind.x)) * 4.0, dot(wp.xz, uWind.xy) * 1.3 - uTime * 1.5);
+    float rag = vnoise(cq) * 0.6 + vnoise(cq * 2.9 + 1.7) * 0.4;
+    foam += crest * smoothstep(1.3, 2.4, uWind.z) * smoothstep(0.6, 0.78, rag) * 0.75;
+  }
   // water lapping along the hull at the waterline, livelier with way on
   if (abs(sAlong) < 1.0) {
     float edge = abs(q.x) - hullHalfBeamAtWater(sAlong);
     foam += smoothstep(0.28, 0.0, edge) * (0.3 + 0.4 * boatSpd) * smoothstep(0.35, 0.7, vnoise(vec2(q.y * 3.0 - uTime * 1.5, q.x * 9.0)));
   }
   if (q.y > -180.0 && q.y < 12.0 && abs(q.x) < 75.0) {
-    float e = 0.12;
-    float hc = wakeField(q, boatSpd);
-    vec2 g = vec2(wakeField(q + vec2(e, 0.0), boatSpd) - hc, wakeField(q + vec2(0.0, e), boatSpd) - hc) / e;
-    slope += (rt * g.x + fw * g.y) * 0.05;
-    // thin streaky whitewater along the wake arms, never a solid sheet
-    float d = -q.y - 3.8;
+    // the slopes of the water she pushes aside (as the surface stands on it, see wake.ts), and the fine rings
+    float e = 0.08;
+    float hc = boatWake(q, uBoat.w, uOar, 0.0);
+    vec2 g = vec2(boatWake(q + vec2(e, 0.0), uBoat.w, uOar, 0.0) - hc, boatWake(q + vec2(0.0, e), uBoat.w, uOar, 0.0) - hc) / e;
+    float rc = boatRipples(q, boatSpd);
+    g += vec2(boatRipples(q + vec2(0.12, 0.0), boatSpd) - rc, boatRipples(q + vec2(0.0, 0.12), boatSpd) - rc) / 0.12 * 0.05;
+    slope += (rt * g.x + fw * g.y) * shoal;
+    // a paddled boat raises no white water, only a little curl at her stem where the water heaps highest
+    // (most in a strong stroke's surge) and some froth along her wake's arms close astern, soon gone
+    foam += smoothstep(0.03, 0.08, hc) * smoothstep(0.45, 0.8, vnoise(q * 6.0 + vec2(0.0, uTime * 2.5))) * 0.6;
+    float d = ${(HERO_HULL.len * 0.32).toFixed(3)} - q.y;
     if (d > 0.0) {
-      float arm = 0.6 + d * 0.354;
-      float g2 = exp(-pow((abs(q.x) - arm) / (0.35 + d * 0.03), 2.0));
-      foam += g2 * exp(-d * 0.05) * smoothstep(0.45, 0.8, vnoise(vec2(q.x * 2.0, q.y * 0.6 + uTime * 0.8)));
+      float arm = 0.66 + d * 0.3536;
+      float wa = (abs(q.x) - arm) / (0.25 + d * 0.03);
+      foam += exp(-wa * wa) * exp(-d * 0.12) * smoothstep(1.2, 2.0, uBoat.w) * smoothstep(0.55, 0.85, vnoise(vec2(q.x * 3.0, q.y * 1.4 + uTime * 0.8))) * 0.4;
     }
   }
 
@@ -382,6 +464,7 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
       uNetA1: { value: nets.a[1] },
       uNetB1: { value: nets.b[1] },
       uAmb: { value: ambient },
+      uBounds: { value: WATER_BOUNDS },
     },
     vertexShader: VERT,
     fragmentShader: FRAG,
@@ -391,11 +474,9 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
     blendSrc: OneFactor,
     blendDst: OneMinusSrcAlphaFactor,
   });
-  const SZ = WORLD_Z0 - WORLD_Z1;
-  const geometry = new PlaneGeometry(1400, SZ, 8, 32);
-  geometry.rotateX(-Math.PI / 2);
-  const mesh = new Mesh(geometry, material);
-  mesh.position.set(0, 0, (WORLD_Z0 + WORLD_Z1) / 2);
+  const mesh = new Mesh(waterGrid(), material);
+  // the vertex shader lays the grid round the camera, so its bounds mean nothing to culling
+  mesh.frustumCulled = false;
   mesh.layers.set(LAYER_WATER);
   // first of the see-through things, so fireflies and motes over the river draw on top of it
   mesh.renderOrder = -1;

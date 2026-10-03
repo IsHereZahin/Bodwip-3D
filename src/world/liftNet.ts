@@ -375,6 +375,15 @@ export class LiftNet {
     return a + (b - a) * v;
   }
 
+  /** Sets the lever at `theta`, still, with the net laid out afresh under its corners (a scene opening on it). */
+  reset(theta: number): void {
+    this.theta = theta;
+    this.omega = 0;
+    this.load.set(0, 0, 0);
+    this.release();
+    this.started = false;
+  }
+
   /** Puts `k` fish in the net (as it comes up). */
   addCatch(k: number): void {
     this.extra.fill(0);
@@ -527,7 +536,7 @@ export class LiftNet {
     const kWater = 0.5 * RHO_WATER * CD * area;
     const kAir = 0.5 * RHO_AIR * CD * area;
     // the water's surface, its current and the wind here (one sample: the net is small beside the waves)
-    const surf = G.uWaterLevel.value + waveHeight(this.centre.x, this.centre.z, time, G.uWind.value.z);
+    const surf = G.uWaterLevel.value + waveHeight(this.centre.x, this.centre.z, time);
     currentAt(this.centre.x, this.centre.z, flow);
     windAt(this.centre.x, this.centre.z, air);
     const sh = h / SUBSTEPS;

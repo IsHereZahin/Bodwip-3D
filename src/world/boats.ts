@@ -8,6 +8,7 @@ import { G } from '../core/globals';
 import { gustAt } from '../env/wind';
 import { downstream, halfWidth, riverLane, riverX } from './geography';
 import { buildHull, type HullShape } from './hull';
+import { hullWaves, type HullWaves } from './waves';
 
 const CARGO_HULL: HullShape = { len: 11, beam: 1.05, keelMid: -0.4, keelRise: 1.0, sheerMid: 0.55, sheerRise: 1.3 };
 const DINGHY_HULL: HullShape = { len: 6, beam: 0.62, keelMid: -0.2, keelRise: 0.6, sheerMid: 0.32, sheerRise: 0.7 };
@@ -42,20 +43,27 @@ function hullGeometry(shape: HullShape): BufferGeometry {
   return b.build();
 }
 
+/** How a boat settles onto the waves under her: natural frequency (Hz) and damping of heave, pitch and roll. */
+const RIDE = { heave: [1.1, 0.4], pitch: [0.9, 0.35], roll: [0.6, 0.2] } as const;
+
 interface Vessel {
   root: Group;
   /** Carries a sail (a cargo boat), so the wind heels it hard. */
   sail: boolean;
+  /** Her hull, for where she meets the waves. */
+  hull: HullShape;
+  /** Heave, pitch and roll, and their rates. */
+  ride: Float32Array;
   z: number;
   lane: number;
   speed: number;
-  phase: number;
 }
 
 /** Other boats on the river: cargo boats under sail and small fishing dinghies. They loop ahead of the hero. */
 export class RiverTraffic {
   readonly group = new Group();
   private readonly vessels: Vessel[] = [];
+  private readonly waves: HullWaves = { heave: 0, along: 0, across: 0 };
   private readonly rng = new Rng(77);
 
   constructor() {
@@ -113,7 +121,15 @@ export class RiverTraffic {
         if ((o as Mesh).isMesh) (o as Mesh).receiveShadow = true;
       });
       this.group.add(root);
-      this.vessels.push({ root, sail: kind === 'cargo', z, lane, speed, phase: this.rng.range(0, 10) });
+      this.vessels.push({
+        root,
+        sail: kind === 'cargo',
+        hull: kind === 'cargo' ? CARGO_HULL : DINGHY_HULL,
+        ride: new Float32Array(6),
+        z,
+        lane,
+        speed,
+      });
     };
 
     make('cargo', -1.3, 32, -500);
@@ -135,12 +151,25 @@ export class RiverTraffic {
       // their lanes beside the river's own, squeezed in where the river narrows
       const room = halfWidth(v.z) - 14;
       const x = riverX(v.z) + room * Math.tanh((riverLane(v.z) + v.lane) / room);
-      // afloat on the season's water; the wind heels them over its gusts (a sail far more than a dinghy)
+      // afloat on the season's water, riding the shared waves as her waterline feels them (see hullWaves),
+      // a beat behind them as a floating body is; the wind heels her over its gusts (a sail far more than a
+      // dinghy)
+      const waves = hullWaves(x, v.z, heading, v.hull.len * 0.8, v.hull.beam * 1.7, t, 1, this.waves);
       const w = G.uWind.value;
       const across = w.x * Math.cos(heading) - w.y * Math.sin(heading);
       const heel = across * w.z * gustAt(x, v.z) * (v.sail ? 0.05 : 0.012);
-      v.root.position.set(x, G.uWaterLevel.value + 0.04 * Math.sin(t * 1.1 + v.phase), v.z);
-      v.root.rotation.set(0.015 * Math.sin(t * 0.9 + v.phase), heading, 0.025 * Math.sin(t * 0.7 + v.phase * 2) - heel, 'YXZ');
+      const r = v.ride;
+      const h = Math.min(dt, 1 / 20);
+      const follow = (i: number, want: number, [f, zeta]: readonly [number, number]) => {
+        const wn = f * Math.PI * 2;
+        r[i + 1] += (wn * wn * (want - r[i]) - 2 * zeta * wn * r[i + 1]) * h;
+        r[i] += r[i + 1] * h;
+      };
+      follow(0, waves.heave, RIDE.heave);
+      follow(2, -waves.along, RIDE.pitch);
+      follow(4, waves.across - heel, RIDE.roll);
+      v.root.position.set(x, G.uWaterLevel.value + r[0], v.z);
+      v.root.rotation.set(r[2], heading, r[4], 'YXZ');
     }
   }
 }

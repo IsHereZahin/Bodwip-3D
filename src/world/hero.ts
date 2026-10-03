@@ -26,7 +26,7 @@ import { checkTexture, hullPlankTexture, softSpotTexture, weaveTexture } from '.
 import { windAt } from '../env/wind';
 import { Boatman, type OarPose } from './boatman';
 import type { BoatBody } from './boatPhysics';
-import { HERO_HULL, buildHull, hullHalfWidthAt, hullStation } from './hull';
+import { HERO_HULL, HERO_SINK, buildHull, hullHalfWidthAt, hullStation } from './hull';
 import {
   BLADE_LENGTH,
   MEAN_THRUST,
@@ -87,7 +87,7 @@ function skinPoint(s: number, a: number, inset: number, out: Vector3, normal: Ve
 /** The planked hull inside and out, and the timber that holds her together. */
 function hullGeometry(): BufferGeometry {
   const b = new MeshBuilder();
-  buildHull(b, HERO_HULL, { tar: TAR, top: WOOD, band: BLUE_STRAKE, wet: true });
+  buildHull(b, HERO_HULL, { tar: TAR, top: WOOD, band: BLUE_STRAKE, wet: true }, HERO_SINK);
   const p = new Vector3();
   const n = new Vector3();
 
@@ -303,8 +303,8 @@ function sackGeometry(): BufferGeometry {
 export class HeroBoat {
   readonly group = new Group();
   readonly lantern: PointLight;
-  /** Fired as the blade goes in at each stroke (for the splash sound). */
-  onStroke: (() => void) | null = null;
+  /** Fired as the blade goes in at each stroke, with how hard he is pulling it (for the splash sound). */
+  onStroke: ((power: number) => void) | null = null;
   /** The paddle's blade (world); `bladeWet` how much of it is in the water (0..1), `bladeDrive` how hard it pulls (1 = the mean). */
   readonly blade = new Vector3();
   bladeWet = 0;
@@ -557,15 +557,17 @@ export class HeroBoat {
   /** Sets the boat where `body` has her, works the paddle, poses the boatman, swings the lantern. */
   update(dt: number, t: number, lamp: number, body: BoatBody): void {
     const phase = strokePhase(t);
-    if (phase < this.lastPhase && this.onStroke) this.onStroke();
+    if (phase < this.lastPhase && this.onStroke) this.onStroke(body.power);
     this.lastPhase = phase;
 
     const g = this.group;
+    // her waterline on the water: she sits HERO_SINK deeper than her shape's zero
     g.position.copy(body.pos);
+    g.position.y -= HERO_SINK;
     g.rotation.set(body.rotX, body.heading, body.rotZ, 'YXZ');
 
     // the paddle: its grip at the mesh's origin, its shaft down the mesh's −y, the blade's width along x
-    const P = paddlePose(phase, this.stroke);
+    const P = paddlePose(phase, this.stroke, body.power);
     basisX.copy(P.across);
     basisY.copy(P.shaft).negate();
     basisZ.crossVectors(basisX, basisY);
@@ -583,7 +585,7 @@ export class HeroBoat {
     this.inverse.copy(g.quaternion).invert();
     this.wind.set(this.air.x - body.vel.x, 0, this.air.z - body.vel.z).applyQuaternion(this.inverse);
     this.gravity.set(0, -9.81, 0).applyQuaternion(this.inverse);
-    this.man.update(dt, t, bodyDrive(phase, this.drive), this.hands, body, this.wind, this.gravity);
+    this.man.update(dt, t, bodyDrive(phase, this.drive, body.power), this.hands, body, this.wind, this.gravity);
     this.shadow.position.x = STANCE.x + this.man.crew.x * 0.8;
     this.shadow.position.z = STANCE.z + this.man.crew.z * 0.8;
 
@@ -607,7 +609,7 @@ export class HeroBoat {
     g.updateMatrixWorld();
     this.blade.copy(P.blade).applyMatrix4(g.matrixWorld);
     this.bladeWet = P.wet;
-    this.bladeDrive = paddleForce(phase, this.force).thrust / MEAN_THRUST;
+    this.bladeDrive = paddleForce(phase, this.force, body.power).thrust / MEAN_THRUST;
     const wet = P.wet > 0.3;
     if (this.wasWet && !wet) this.swirl.set(this.blade.x, this.blade.z, 0, 1);
     else this.swirl.z += dt;

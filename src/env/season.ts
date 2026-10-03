@@ -1,6 +1,7 @@
 import { Color } from 'three';
 import { G } from '../core/globals';
 import { smoothstep } from '../core/mathx';
+import { compass } from './astro';
 
 // The six seasons (ষড়ঋতু) of the Bangla year. A day of the year (0 = 1 January) gives every seasonal
 // quantity by easing between six keys, one in the middle of each season: how high the river stands and
@@ -75,12 +76,12 @@ interface Key extends Omit<SeasonState, 'day' | 'index' | 'silt'> {
   silt: string;
 }
 
-// the way the wind blows toward: the monsoon from the south-west, the winter wind from the north, the
-// summer's southerlies, autumn's light easterlies (west lies down the river, toward −z)
-const TOWARD_NE = Math.atan2(0.424, 0.905);
-const TOWARD_SW = Math.atan2(-0.424, -0.905);
-const TOWARD_N = Math.atan2(0.94, 0.34);
-const TOWARD_W = Math.atan2(0.55, -0.83);
+// the way the wind blows toward: the monsoon from the south-west, the winter wind from the north-east, the
+// summer's southerlies, autumn's light easterlies (south lies down the river, see env/astro.ts)
+const TOWARD_NE = compass(1, 1);
+const TOWARD_SW = compass(-1, -1);
+const TOWARD_N = compass(1, 0);
+const TOWARD_W = compass(0.24, -0.97);
 
 const KEYS: readonly Key[] = [
   // শীত (mid January): low clear water, mustard and boro seedbeds, dry pale land, morning fog, still air

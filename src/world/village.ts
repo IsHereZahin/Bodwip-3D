@@ -1,4 +1,5 @@
 import {
+  BufferAttribute,
   BoxGeometry,
   CylinderGeometry,
   DoubleSide,
@@ -31,6 +32,7 @@ import {
   terrainHeight,
 } from './geography';
 import { buildHull, type HullShape } from './hull';
+import { SHELTERED, waveHeightGlsl, waveSlopeGlsl } from './waves';
 
 export interface HutPlan {
   x: number;
@@ -227,7 +229,22 @@ function ghat(b: MeshBuilder, z: number, side: 1 | -1): void {
 
 const SMALL_BOAT: HullShape = { len: 6, beam: 0.62, keelMid: -0.2, keelRise: 0.6, sheerMid: 0.32, sheerRise: 0.7 };
 
-function mooredBoat(b: MeshBuilder, z: number, side: 1 | -1, rng: Rng): void {
+/** Where each boat tied up in the `afloat` builder lies: its vertices, and its middle (for the waves under it). */
+interface Mooring {
+  from: number;
+  to: number;
+  x: number;
+  z: number;
+}
+
+/** Adds a moored boat's hull to `b` and notes where it lies. */
+function moor(b: MeshBuilder, moorings: Mooring[], hull: MeshBuilder, m: Matrix4): void {
+  const from = b.vertexCount;
+  b.add(hull.build(), m, rgb('#3a2c20'));
+  moorings.push({ from, to: b.vertexCount, x: m.elements[12], z: m.elements[14] });
+}
+
+function mooredBoat(b: MeshBuilder, moorings: Mooring[], z: number, side: 1 | -1, rng: Rng): void {
   const hull = new MeshBuilder();
   buildHull(hull, SMALL_BOAT, { tar: rgb('#2a2018'), top: rgb('#5a4a38') });
   const [dx, dz] = downstream(z);
@@ -238,7 +255,7 @@ function mooredBoat(b: MeshBuilder, z: number, side: 1 | -1, rng: Rng): void {
     new Quaternion().setFromEuler(new Euler(rng.range(-0.04, 0.04), along + rng.range(-0.4, 0.4), side * rng.range(0.03, 0.09))),
     new Vector3(1, 1, 1),
   );
-  b.add(hull.build(), m, rgb('#3a2c20'));
+  moor(b, moorings, hull, m);
 }
 
 /** A row of bamboo stakes in the shallows with a net strung between them. */
@@ -269,8 +286,9 @@ export function buildVillages(huts: readonly HutPlan[]): Group {
   const thatchRoofs = new MeshBuilder();
   const tinRoofs = new MeshBuilder();
   const wood = new MeshBuilder();
-  /** Boats tied up at the banks and in the khals: they ride the season's water. */
+  /** Boats tied up at the banks and in the khals: they ride the season's water and its waves. */
   const afloat = new MeshBuilder();
+  const moorings: Mooring[] = [];
   const hay = new MeshBuilder();
   const nets = new MeshBuilder();
 
@@ -285,8 +303,8 @@ export function buildVillages(huts: readonly HutPlan[]): Group {
       if (bankInfo(x, z).inland > 10 && !nearBackwater(x, z, 6) && !huts.some((h) => Math.hypot(h.x - x, h.z - z) < 7)) haystack(hay, x, z, rng, wood);
     }
     ghat(walls, GHATS[i].z, v.side);
-    mooredBoat(afloat, v.z + v.radius * 0.3 + 6, v.side, rng);
-    if (i % 2 === 0) mooredBoat(afloat, v.z - v.radius * 0.4, v.side, rng);
+    mooredBoat(afloat, moorings, v.z + v.radius * 0.3 + 6, v.side, rng);
+    if (i % 2 === 0) mooredBoat(afloat, moorings, v.z - v.radius * 0.4, v.side, rng);
   });
 
   // a dinghy tied up in each khal, against one bank
@@ -301,7 +319,7 @@ export function buildVillages(huts: readonly HutPlan[]): Group {
       new Quaternion().setFromEuler(new Euler(rng.range(-0.03, 0.03), c.heading + rng.range(-0.15, 0.15), side * rng.range(0.02, 0.06))),
       new Vector3(1, 1, 1),
     );
-    afloat.add(hull.build(), m, rgb('#3a2c20'));
+    moor(afloat, moorings, hull, m);
   });
 
   for (const ch of CHARS) {
@@ -339,14 +357,30 @@ export function buildVillages(huts: readonly HutPlan[]): Group {
   add(thatchRoofs, thatchMat);
   add(tinRoofs, tinMat);
   add(wood, woodMat);
-  // moored boats rise and fall with the water; when it drops they settle on the mud by the bank
-  add(
-    afloat,
+  // moored boats rise and fall with the season's water and ride its waves, each rocking as one piece on
+  // the (sheltered) waves under its middle; when the water drops they settle on the mud by the bank
+  const boats = afloat.build();
+  const middles = new Float32Array(boats.getAttribute('position').count * 2);
+  for (const m of moorings) for (let i = m.from; i < m.to; i++) middles.set([m.x, m.z], i * 2);
+  boats.setAttribute('aMoor', new BufferAttribute(middles, 2));
+  const moored = new Mesh(
+    boats,
     patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), {
       grime: 0.35,
-      vertex: { key: 'moored', pars: '', code: 'transformed.y += max(uWaterLevel, -0.25);' },
+      vertex: {
+        key: 'moored',
+        pars: `attribute vec2 aMoor;\n${waveHeightGlsl()}\n${waveSlopeGlsl()}\n`,
+        code: `{
+  float afloatK = step(-0.25, uWaterLevel);
+  vec2 tilt = waveSlope(aMoor) * ${SHELTERED.toFixed(2)};
+  transformed.y += max(uWaterLevel, -0.25) + afloatK * (waveHeight(aMoor) * ${SHELTERED.toFixed(2)} + dot(tilt, transformed.xz - aMoor));
+}`,
+      },
     }),
   );
+  moored.castShadow = true;
+  moored.receiveShadow = true;
+  group.add(moored);
   add(hay, hayMat);
   add(nets, netMat, false);
   return group;

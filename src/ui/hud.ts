@@ -51,6 +51,15 @@ export class Hud {
     this.hint?.classList.remove('show');
   }
 
+  /** Clears the screen for the film: the title card, the hint and any notice go. */
+  quiet(): void {
+    this.dismissHint();
+    this.title?.classList.remove('show');
+    window.clearTimeout(this.toastTimer);
+    this.toastEl?.classList.remove('show');
+    this.onLook = null;
+  }
+
   /** A short notice at the top of the screen. `look`, when given, adds a button that acts on it. */
   toast(text: string, look: (() => void) | null): void {
     if (!this.toastEl || !this.toastText || !this.toastLook) return;

@@ -25,9 +25,17 @@ export const G = {
   /** Light scattered back by the silty water body; anything far enough under the surface takes this colour. */
   uWaterBody: { value: new Color() },
   /** xy: the way the wind blows toward, z: its strength (1 ≈ 4 m/s), w: how gusty (see env/wind.ts). */
-  uWind: { value: new Vector4(0.55, -0.83, 1, 0.5) },
+  uWind: { value: new Vector4(0.97, 0.24, 1, 0.5) },
   /** x: phase of the gust fronts rolling downwind. */
   uGust: { value: new Vector2(0, 0) },
+  /** Each wave's amplitude now (world/waves.ts): the swell and the chop the wind and the rain have raised. */
+  uWaveA: { value: new Vector4() },
+  uWaveB: { value: new Vector4() },
+  uWaveC: { value: new Vector4() },
+  /** How much of each quarter's wave set is running (x toward +z, y +x, z −z, w −x): the waves run with the wind. */
+  uWaveDir: { value: new Vector4(0, 0, 1, 0) },
+  /** The sea state: x its significant wave height (m), y the length of its main waves (m). */
+  uSea: { value: new Vector2(0, 3) },
   /** Height of the water's surface (m): high in the monsoon, low in the dry season (see env/season.ts). */
   uWaterLevel: { value: 0 },
   /** How fast the river runs, against its autumn pace. */

@@ -128,6 +128,37 @@ export function groundAt(x: number, z: number): Cover & { h: number } {
   return { ...cover(x, z, x - riverX(z), h), h };
 }
 
+/**
+ * Height and cover inside a square (`size` m from (x0, z0)), interpolated from a lattice `step` m apart: the
+ * full lookups are costly, and things built near the camera chunk by chunk (the meadow, the crops) need
+ * thousands of them.
+ */
+export function groundLattice(x0: number, z0: number, size: number, step: number): (x: number, z: number) => Cover & { h: number } {
+  const n = Math.round(size / step) + 1;
+  const pts: (Cover & { h: number })[] = [];
+  for (let j = 0; j < n; j++) for (let i = 0; i < n; i++) pts.push(groundAt(x0 + i * step, z0 + j * step));
+  const lerpCover = (a: Cover & { h: number }, b: Cover & { h: number }, t: number) => ({
+    color: a.color,
+    h: a.h + (b.h - a.h) * t,
+    zone: a.zone + (b.zone - a.zone) * t,
+    grass: a.grass + (b.grass - a.grass) * t,
+    dirt: a.dirt + (b.dirt - a.dirt) * t,
+    sand: a.sand + (b.sand - a.sand) * t,
+    pebbles: a.pebbles + (b.pebbles - a.pebbles) * t,
+  });
+  return (x, z) => {
+    const fx = Math.min(Math.max((x - x0) / step, 0), n - 1.001);
+    const fz = Math.min(Math.max((z - z0) / step, 0), n - 1.001);
+    const i = Math.floor(fx);
+    const j = Math.floor(fz);
+    const tx = fx - i;
+    const tz = fz - j;
+    const a = lerpCover(pts[j * n + i], pts[j * n + i + 1], tx);
+    const b = lerpCover(pts[(j + 1) * n + i], pts[(j + 1) * n + i + 1], tx);
+    return lerpCover(a, b, tz);
+  };
+}
+
 /** `ground`: the photo layers; without them the terrain keeps its painted colours. */
 export function buildTerrain(ground: GroundSet | null): Group {
   const cols = columnOffsets();

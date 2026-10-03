@@ -1,4 +1,10 @@
 /**
+ * How far round the camera the crops stand in 3D (world/crops.ts): full height out to `fade`, gone by `edge`
+ * (m). Beyond, the terrain paints the plots with the crop's colour; within, it paints the ground under them.
+ */
+export const CROP_REACH = { fade: 64, edge: 80 } as const;
+
+/**
  * Shared uniforms, noise and aerial perspective. Included exactly once in every scene shader
  * (custom ones and the patched built-in materials), so haze is identical on land, water and sky.
  */
@@ -19,6 +25,11 @@ uniform float uNight;
 uniform vec3 uWaterBody;
 uniform vec4 uWind;
 uniform vec2 uGust;
+uniform vec4 uWaveA;
+uniform vec4 uWaveB;
+uniform vec4 uWaveC;
+uniform vec4 uWaveDir;
+uniform vec2 uSea;
 uniform float uWaterLevel;
 uniform float uFlowScale;
 uniform vec4 uSeasonA;
@@ -75,6 +86,31 @@ float windGust(vec2 p) {
   float front = along * 0.045 - uGust.x;
   float g = 0.62 * sin(front) + 0.38 * sin(front * 2.3 + across * 0.031 + 1.7);
   return max(0.0, 1.0 + uWind.w * g);
+}
+
+// The paddy plots: rectangles PLOT_SIZE metres in a frame turned in bands 240 m long down the river (the
+// terrain paints them, render/patch.ts; the crops stand in them, world/crops.ts, whose CPU twin of this
+// layout must stay in step)
+const vec2 PLOT_SIZE = vec2(36.0, 22.0);
+vec2 plotFrame(vec2 wp) {
+  float ang = 0.3 + 0.35 * sin(floor(wp.y / 240.0) * 1.7);
+  return mat2(cos(ang), -sin(ang), sin(ang), cos(ang)) * wp;
+}
+
+// What grows in a plot whose place in the season's order is r (each plot turns from one crop to the next
+// gradually as the season's shares, uCrops, pass its place): x seedlings in water, y green rice, z ripe
+// rice, w mustard in flower; whatever is left is stubble after the harvest
+vec4 cropShares(float r) {
+  const float turn = 0.035;
+  float c1 = uCrops.x;
+  float c2 = c1 + uCrops.y;
+  float c3 = c2 + uCrops.z;
+  float c4 = c3 + uCrops.w;
+  float s1 = smoothstep(c1 - turn, c1 + turn, r);
+  float s2 = smoothstep(c2 - turn, c2 + turn, r);
+  float s3 = smoothstep(c3 - turn, c3 + turn, r);
+  float s4 = smoothstep(c4 - turn, c4 + turn, r);
+  return vec4(1.0 - s1, s1 - s2, s2 - s3, s3 - s4);
 }
 
 // colour of the haze along a view ray: the horizon tint, warmed on the sun's side

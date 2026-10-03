@@ -106,8 +106,9 @@ void main() {
 }`;
 
 const COMPOSITE = /* glsl */ `${GLSL_SANITIZE}
-uniform sampler2D tScene; uniform sampler2D tBloom; uniform sampler2D tRays;
+uniform sampler2D tScene; uniform sampler2D tBloom; uniform sampler2D tRays; uniform sampler2D tHeld;
 uniform float uExposure; uniform float uBloom; uniform float uRays; uniform float uFade; uniform float uFrame; uniform float uNight; uniform float uLetter;
+uniform float uDissolve;
 uniform vec3 uFadeColor; uniform vec3 uRayColor;
 varying vec2 vUv;
 vec3 aces(vec3 x) {
@@ -148,6 +149,8 @@ void main() {
   // film grain and dither against banding in the smooth sky
   float g = hash(gl_FragCoord.xy + fract(uFrame * 0.618) * 311.0) - 0.5;
   m += g * 0.026 * (1.0 - l * 0.6) + (hash(gl_FragCoord.yx * 1.3 + uFrame) - 0.5) / 255.0;
+  // a dissolve: the held last frame of the shot before, giving way to this one
+  if (uDissolve > 0.0) m = mix(m, texture2D(tHeld, uv).rgb, uDissolve);
   m = mix(m, uFadeColor, uFade);
   // letterbox bars while the film tour plays
   if (abs(vUv.y - 0.5) > 0.5 - uLetter) m = vec3(0.0);
@@ -161,6 +164,10 @@ export interface FrameParams {
   night: number;
   /** 0..1: letterbox bars closing in. */
   letterbox: number;
+  /** Keep this frame (as it is shown) for a dissolve into whatever comes next. */
+  hold?: boolean;
+  /** 0..1: how much of the held frame still shows over this one. */
+  dissolve?: number;
 }
 
 /**
@@ -174,6 +181,8 @@ export class Pipeline {
   private readonly down: WebGLRenderTarget[] = [];
   private readonly up: WebGLRenderTarget[] = [];
   private readonly rays: WebGLRenderTarget;
+  /** The last frame of a shot, held for a dissolve. */
+  private readonly held: WebGLRenderTarget;
   private readonly quad: Mesh;
   private readonly quadScene = new Scene();
   private readonly quadCam = new OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -185,6 +194,8 @@ export class Pipeline {
     tScene: { value: null },
     tBloom: { value: null },
     tRays: { value: null },
+    tHeld: { value: null },
+    uDissolve: { value: 0 },
     uExposure: { value: 1 },
     uBloom: { value: 0.06 },
     uRays: { value: 0 },
@@ -212,6 +223,7 @@ export class Pipeline {
       this.up.push(rt(1, 1));
     }
     this.rays = rt(1, 1);
+    this.held = rt(1, 1);
     this.reflection = new PlanarReflection(1, 1);
     const g = new BufferGeometry();
     g.setAttribute('position', new BufferAttribute(new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]), 3));
@@ -238,6 +250,7 @@ export class Pipeline {
     let h = Math.max(1, height >> 1);
     this.bright.setSize(w, h);
     this.rays.setSize(Math.max(1, width >> 2), Math.max(1, height >> 2));
+    this.held.setSize(width, height);
     for (let i = 0; i < BLOOM_LEVELS; i++) {
       w = Math.max(1, w >> 1);
       h = Math.max(1, h >> 1);
@@ -314,6 +327,15 @@ export class Pipeline {
     const aspect = this.width / this.height;
     this.bar = aspect > 1 ? Math.max(0, (1 - aspect / 2.35) / 2) : 0.06;
     u.uLetter.value = params.letterbox * this.bar;
+    if (params.hold) {
+      // keep this frame as it is shown, for the dissolve to come (the held texture unbound meanwhile: a
+      // pass may not read the target it writes)
+      u.tHeld.value = null;
+      u.uDissolve.value = 0;
+      this.run(this.mComposite, renderer, this.held);
+    }
+    u.tHeld.value = this.held.texture;
+    u.uDissolve.value = params.dissolve ?? 0;
     this.run(this.mComposite, renderer, null);
   }
 }
