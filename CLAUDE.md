@@ -1,0 +1,54 @@
+# নদী — a real-time 3D Bengal river at golden hour
+
+Standalone site: Vite 8 + TypeScript 7 + three r186. Everything (terrain, trees, huts, boats, textures, sound) is generated in code; there are no image, model or audio files, and that is the project's identity.
+
+## Start here
+
+- `HANDOFF.md` is the saved record of the session that built this: the requests, decisions, what exists, verification done, bugs fixed, known issues and the backlog. Read it before changing anything.
+- The user asked for replies in Bangla (বাংলা) during this work. Keep replying in Bangla unless they switch.
+- `README.md` is the user-facing run guide (in Bangla).
+
+## Where this folder sits
+
+- It lives at `old_version/bangla-river/` inside the `3d-bangladesh-history` repo, whose `.gitignore` excludes `old_version/`. **This folder is not under version control.** No git repo has been created for it yet; ask before creating one.
+- Claude Code also loads the parent repo's `CLAUDE.md` (ancestor directories are read). Its phase workflow, `PROGRESS.md`, `public/assets/` rules and `git commit -m "phase N: …"` convention belong to the main app only. They do not apply here. The user's global engineering standards still apply: ask before running builds, tests or screenshots, stay in scope, and never add AI attribution.
+- Packages come from the parent repo's `node_modules` (Node resolution walks up). No local install is needed: `npm run …` finds the parent's `node_modules/.bin`. To make the folder self-contained, run `npm install` here.
+
+## Commands
+
+- `npm run dev` serves on http://localhost:5173. `npm run build` writes `dist/` (hashed files in `dist/bundle/`). `npm run typecheck` runs `tsc --noEmit`. `npm run preview` serves `dist/`.
+- Visual check (only when asked): with the dev server running, `node scripts/headless/shoot.mjs <outDir> --shots '<json>'`. It saves PNGs and prints draw calls, triangles, frame ms and every page console message. It needs Chrome (set `CHROME_PATH` if Chrome is not at the default Windows path). The shot format and the debug API are documented in `HANDOFF.md`.
+- The build warns that the bundle is over 500 kB. That is expected: three.js is most of it (≈643 kB, ≈172 kB gzipped).
+
+## Architecture (`src/`)
+
+- `core/globals.ts`: `G`, the uniforms every scene shader shares (time, pass camera position, sun, key light, glow, fog, mist, night, wind). Materials hold references to these objects, so mutate `.value` and never replace an object. Layers: `LAYER_WATER = 1`, `LAYER_NO_REFLECT = 2`. Both are drawn by the main camera only; the mirror camera sees layer 0.
+- `render/glsl.ts`: `GLSL_COMMON` (uniform declarations, hash/noise/fbm, `hazeColor`, `applyAtmosphere`). Include it exactly once per shader.
+- `render/patch.ts`: `patchMaterial(material, options)` injects the shared atmosphere into built-in materials, plus optional wind sway, grime, translucency, terrain paddy plots and foliage normals, through `onBeforeCompile`. It sets `material.defines` and `customProgramCacheKey`; any new option must change that key.
+- `render/pipeline.ts`: `Pipeline` runs, in order: mirror pass (half-res `PlanarReflection`, `uReflPass = 1`, `uCamPos` = mirror camera) → scene (HalfFloat, MSAA ×4) → bright pass → 5-level bloom → radial light shafts → composite (ACES, grade, vignette, grain, chromatic fringe, fades, letterbox) straight to the canvas.
+- `render/reflection.ts`: Reflector-style mirror camera for the plane `y = WATER_Y`, with an oblique near plane.
+- `render/builder.ts`: `MeshBuilder` (merges procedural parts into one geometry), `rgb()` (sRGB hex → linear triple), `taperedTube`, `card`. `render/instancing.ts`: `instanced()` splits placements into 600 m slabs along z so off-screen slabs are culled. `render/textures.ts`: every texture is painted on a canvas and turned into a `DataTexture`. Rows are flipped so v = 1 is the canvas top, and `bleed` fills transparent texels with the average colour.
+- `world/geography.ts` is the single source of truth for land and water: `riverX`, `halfWidth`, `edgeHalfWidth`, `CHARS`, `VILLAGES`/`VILLAGE_CENTERS`, `PONDS`, `landLevel`, `charHeight`, `terrainHeight`, `bankInfo`, `boatLane`, and the world and journey extents. The river flows toward −z, and the boat travels from `JOURNEY_Z0` to `JOURNEY_Z1`.
+- `world/`: `terrain.ts` (grid laid out across the river from its centre line, 8 chunks, paddy mask in `aZone`), `water.ts` (flow-mapped ripples, Kelvin wake, foam, river-field texture, water discarded inside the hero hull), `sky.ts`, `vegetation.ts`, `village.ts` (`planHuts`, huts, haystacks, ghats, moored boats, `LIFT_NETS`, stake rows), `hull.ts` (hull shapes plus the GLSL twin of the waterline), `hero.ts` (boat, chhoi, lantern, boatman with arm IK, oar), `boats.ts` (river traffic), `life.ts` (birds, motes, fireflies).
+- `env/environment.ts`: the day cycle. `daySeconds` is 900. `PHASE_TO_SOLAR` maps the cycle onto solar time and lingers on golden hour. The `LOOKS` table, keyed on sun elevation, sets every colour, the exposure and the mist. The key light switches from sun to moon below −4.5°. `aimShadow` decides when the shadow map is redrawn.
+- `rig/rig.ts`: the boat's journey with a mist-fade loop, plus the orbit camera (drag, wheel, pinch, arrow keys) with an idle drift back to the rest view. `rig/director.ts`: the film tour, seven shots with dip-to-black cuts, letterbox and captions.
+- `audio/soundscape.ts` (Web Audio synthesis), `ui/hud.ts`, `main.ts` (bootstrap, loader steps, adaptive resolution, input, the `?debug` hooks).
+
+## Invariants and gotchas (each one cost a bug)
+
+- Never toggle `visible` on a light. Changing the light count recompiles every material (a 60 ms+ hitch at sunset). Set the intensity to 0 instead.
+- Shadow maps use `renderer.shadowMap.autoUpdate = false`. Redraw only when `Environment.aimShadow()` returns true; it checks whether the focus moved or the key light turned.
+- Post passes sanitize NaN/Inf with comparisons, not `isnan()`. ANGLE/D3D may optimise `isnan()` away. A single bad pixel otherwise smears into black squares through the bloom chain. Birds once produced such a pixel, and the root cause is still unknown (see `HANDOFF.md`).
+- Alpha-tested cards lose thin strokes in their mipmaps. Keep a dense core in the texture, as the kash plume does.
+- Foliage cards use `foliage: true`, which keeps the vertex normal on back faces, so a crown shades as one soft volume.
+- The water discards fragments inside the hero hull using `hullHalfBeamAtWater`, which is generated from `HERO_HULL`. Edit the hull only in `hull.ts`, and the GLSL follows.
+- Fog is split between passes. The mirror pass fogs only water → object (the `uReflPass` branch of `applyAtmosphere`), and the water shader fogs camera → water.
+- `tsconfig` has `erasableSyntaxOnly`: no constructor parameter properties, enums or namespaces. It also has `noUnusedLocals`/`noUnusedParameters`.
+- Watch for aliasing of shared temporary vectors. The boatman's arm IK broke because an output vector was also read as an input.
+- Debug-only code stays behind `?debug`.
+
+## Conventions
+
+- TypeScript strict. Keep modules small and focused, put the reason in comments, and match the surrounding style.
+- Keep it procedural: no downloaded assets. The only external request is the Noto Serif Bengali Google Font, with system fallbacks.
+- UI copy and captions are in Bangla. No realistic faces or likenesses of real people: the boatmen are faceless and stylised.

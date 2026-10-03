@@ -1,0 +1,62 @@
+import { Euler, Group, InstancedMesh, Matrix4, Quaternion, Vector3 } from 'three';
+import type { BufferGeometry, Material } from 'three';
+
+export interface Placement {
+  x: number;
+  y: number;
+  z: number;
+  /** Yaw. */
+  ry: number;
+  /** Uniform scale; `sy` multiplies the height on top of it. */
+  s: number;
+  sy?: number;
+  /** Lean (radians) about x and z. */
+  tx?: number;
+  tz?: number;
+}
+
+export interface InstanceOptions {
+  /** Instances are split into slabs this long along z, so slabs off-screen are culled. */
+  chunk?: number;
+  cast?: boolean;
+  receive?: boolean;
+  layer?: number;
+}
+
+export function instanced(
+  geometry: BufferGeometry,
+  material: Material,
+  items: readonly Placement[],
+  options: InstanceOptions = {},
+): Group {
+  const group = new Group();
+  const chunk = options.chunk ?? 600;
+  const buckets = new Map<number, Placement[]>();
+  for (const p of items) {
+    const k = Math.floor(p.z / chunk);
+    let list = buckets.get(k);
+    if (!list) buckets.set(k, (list = []));
+    list.push(p);
+  }
+  const m = new Matrix4();
+  const q = new Quaternion();
+  const e = new Euler();
+  const pos = new Vector3();
+  const scl = new Vector3();
+  for (const list of buckets.values()) {
+    const mesh = new InstancedMesh(geometry, material, list.length);
+    list.forEach((p, i) => {
+      e.set(p.tx ?? 0, p.ry, p.tz ?? 0, 'YXZ');
+      q.setFromEuler(e);
+      m.compose(pos.set(p.x, p.y, p.z), q, scl.set(p.s, p.s * (p.sy ?? 1), p.s));
+      mesh.setMatrixAt(i, m);
+    });
+    mesh.instanceMatrix.needsUpdate = true;
+    mesh.computeBoundingSphere();
+    mesh.castShadow = options.cast ?? false;
+    mesh.receiveShadow = options.receive ?? true;
+    if (options.layer !== undefined) mesh.layers.set(options.layer);
+    group.add(mesh);
+  }
+  return group;
+}
