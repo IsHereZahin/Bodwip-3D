@@ -999,3 +999,185 @@ export function mustardCanopyTexture(seed: number): DataTexture {
   });
   return toTexture(ctx, { bleed: true });
 }
+
+/**
+ * Old Bengal brickwork: thin, hand-made bricks in running courses, each its own shade from dull red to
+ * burnt purple and pale salmon, some edges crumbled, set in grey-white lime mortar. Tiles; one tile is
+ * eight courses of about 7.5 cm with their joints (≈0.6 m) and three bricks' length across. Comes with a
+ * normal map, so the joints sink and worn faces dip.
+ */
+export function brickTexture(seed: number): { map: DataTexture; normal: DataTexture } {
+  const S = 256;
+  const COURSES = 8;
+  const PER = 3;
+  const rng = new Rng(seed);
+  const shades = ['#8a4a34', '#94563e', '#7f4434', '#9e6048', '#7a4234', '#a56c54', '#8f5240', '#734036'];
+  const bricks: { x: number; y: number; w: number; h: number; c: string; wear: number }[] = [];
+  const ch = S / COURSES;
+  const cw = S / PER;
+  for (let r = 0; r < COURSES; r++) {
+    const shift = r % 2 ? cw / 2 : 0;
+    for (let k = -1; k < PER; k++) {
+      const x = k * cw + shift;
+      bricks.push({ x: x + 2.5, y: r * ch + 2.5, w: cw - 5 + rng.range(-2, 1), h: ch - 5 + rng.range(-1, 0.5), c: rng.pick(shades), wear: rng.next() });
+    }
+  }
+  const draw = (c: Ctx, height: boolean) => {
+    c.fillStyle = height ? '#303030' : '#b8b2a4';
+    c.fillRect(0, 0, S, S);
+    for (const b of bricks) {
+      // drawn twice where it wraps, so the tile repeats seamlessly
+      for (const ox of [0, S]) {
+        if (b.x + ox > S || b.x + b.w + ox < 0) continue;
+        if (height) {
+          c.fillStyle = `rgb(${190 - b.wear * 50},${190 - b.wear * 50},${190 - b.wear * 50})`;
+        } else c.fillStyle = b.c;
+        c.beginPath();
+        c.roundRect(b.x + ox - (ox ? S : 0), b.y, b.w, b.h, 2 + b.wear * 3);
+        c.fill();
+      }
+    }
+    // grit, pits and crumbled corners
+    const r2 = new Rng(seed + 5);
+    for (let i = 0; i < 1800; i++) {
+      const x = r2.range(0, S);
+      const y = r2.range(0, S);
+      const v = r2.range(-1, 1);
+      c.fillStyle = height ? `rgba(${v > 0 ? 255 : 0},${v > 0 ? 255 : 0},${v > 0 ? 255 : 0},${Math.abs(v) * 0.18})` : `rgba(${v > 0 ? 230 : 40},${v > 0 ? 200 : 25},${v > 0 ? 170 : 20},${Math.abs(v) * 0.16})`;
+      c.fillRect(x, y, r2.range(1, 3), r2.range(1, 3));
+    }
+  };
+  const ctx = paint(S, S, (c) => draw(c, false));
+  const height = paint(S, S, (c) => draw(c, true));
+  const map = toTexture(ctx, { repeat: true });
+  return { map, normal: normalFromHeight(height, 3) };
+}
+
+/**
+ * Lime plaster on an old wall, washed a pale ochre long ago: mottled where the wash has worn, streaked
+ * dark by years of rain running down, cracked, and fallen away in patches to the brick beneath. Tiles
+ * (≈2.5 m). With a normal map: the cracks and the edges of the fallen patches stand in relief.
+ */
+export function plasterTexture(seed: number): { map: DataTexture; normal: DataTexture } {
+  const S = 512;
+  const rng = new Rng(seed);
+  // two fallen patches a tile, ragged-edged, so the repeat does not show as a pattern
+  const patches = Array.from({ length: 2 }, () => {
+    const cx = rng.range(60, S - 60);
+    const cy = rng.range(60, S - 60);
+    const r = rng.range(26, 54);
+    return Array.from({ length: 14 }, (_, k) => {
+      const a = (k / 14) * Math.PI * 2;
+      const rr = r * rng.range(0.55, 1.15);
+      return [cx + Math.cos(a) * rr * 1.3, cy + Math.sin(a) * rr * 0.8] as const;
+    });
+  });
+  const cracks = Array.from({ length: 5 }, () => {
+    const pts: [number, number][] = [[rng.range(0, S), rng.range(0, S)]];
+    for (let k = 0; k < 7; k++) {
+      const [x, y] = pts[pts.length - 1];
+      pts.push([x + rng.range(-22, 22), y + rng.range(8, 30)]);
+    }
+    return pts;
+  });
+  const streaks = Array.from({ length: 70 }, () => ({ x: rng.range(0, S), y: rng.range(-S * 0.2, S * 0.6), w: rng.range(2, 14), l: rng.range(40, 260), a: rng.range(0.04, 0.16) }));
+  const draw = (c: Ctx, height: boolean) => {
+    c.fillStyle = height ? '#9a9a9a' : '#d9c9a6';
+    c.fillRect(0, 0, S, S);
+    if (!height) {
+      // the wash worn unevenly
+      const r2 = new Rng(seed + 3);
+      for (let i = 0; i < 260; i++) {
+        c.fillStyle = r2.pick(['rgba(196,176,140,0.25)', 'rgba(232,220,196,0.25)', 'rgba(180,160,128,0.2)', 'rgba(205,190,160,0.3)']);
+        c.beginPath();
+        c.ellipse(r2.range(0, S), r2.range(0, S), r2.range(10, 50), r2.range(8, 40), r2.range(0, 3), 0, Math.PI * 2);
+        c.fill();
+      }
+      // rain stains running down from the coping
+      for (const s of streaks) {
+        const g = c.createLinearGradient(0, s.y, 0, s.y + s.l);
+        g.addColorStop(0, `rgba(60,58,48,${s.a})`);
+        g.addColorStop(1, 'rgba(60,58,48,0)');
+        c.fillStyle = g;
+        c.fillRect(s.x, s.y, s.w, s.l);
+      }
+    }
+    // fallen patches: the brick beneath, its courses showing through what is left of the wash
+    for (const p of patches) {
+      const path = () => {
+        c.beginPath();
+        p.forEach(([x, y], k) => (k ? c.lineTo(x, y) : c.moveTo(x, y)));
+        c.closePath();
+      };
+      c.save();
+      path();
+      c.clip();
+      c.fillStyle = height ? '#727272' : '#a07a62';
+      c.fillRect(0, 0, S, S);
+      c.strokeStyle = height ? '#5a5a5a' : 'rgba(200,190,170,0.7)';
+      c.lineWidth = 1.5;
+      for (let y = 0; y < S; y += 8) {
+        c.beginPath();
+        c.moveTo(0, y);
+        c.lineTo(S, y);
+        c.stroke();
+      }
+      c.restore();
+      // the broken edge of the plaster round it
+      c.strokeStyle = height ? '#b4b4b4' : 'rgba(150,136,108,0.45)';
+      c.lineWidth = 1.5;
+      path();
+      c.stroke();
+    }
+    // hairline cracks
+    c.strokeStyle = height ? '#6a6a6a' : 'rgba(90,80,62,0.35)';
+    c.lineWidth = 0.8;
+    for (const pts of cracks) {
+      c.beginPath();
+      c.moveTo(pts[0][0], pts[0][1]);
+      for (const [x, y] of pts.slice(1)) c.lineTo(x, y);
+      c.stroke();
+    }
+  };
+  const ctx = paint(S, S, (c) => draw(c, false));
+  const height = paint(S, S, (c) => draw(c, true));
+  return { map: toTexture(ctx, { repeat: true }), normal: normalFromHeight(height, 2) };
+}
+
+/** A printed cotton for a kameez: small sprigs of flowers scattered over a soft ground, a fine thread showing. */
+export function printTexture(ground: string, sprig: string, leaf: string, seed: number): DataTexture {
+  const S = 128;
+  const rng = new Rng(seed);
+  const ctx = paint(S, S, (c) => {
+    c.fillStyle = ground;
+    c.fillRect(0, 0, S, S);
+    c.globalAlpha = 0.08;
+    c.fillStyle = '#000000';
+    for (let y = 0; y < S; y += 2) c.fillRect(0, y, S, 1);
+    c.globalAlpha = 1;
+    for (let i = 0; i < 14; i++) {
+      const x = rng.range(0, S);
+      const y = rng.range(0, S);
+      for (const [ox, oy] of [
+        [0, 0],
+        [S, 0],
+        [0, S],
+        [-S, 0],
+        [0, -S],
+      ]) {
+        c.fillStyle = leaf;
+        c.beginPath();
+        c.ellipse(x + ox + 4, y + oy + 3, 3, 1.4, 0.6, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = sprig;
+        for (let k = 0; k < 5; k++) {
+          const a = (k / 5) * Math.PI * 2;
+          c.beginPath();
+          c.arc(x + ox + Math.cos(a) * 2.4, y + oy + Math.sin(a) * 2.4, 1.6, 0, Math.PI * 2);
+          c.fill();
+        }
+      }
+    }
+  });
+  return toTexture(ctx, { repeat: true });
+}

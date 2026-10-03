@@ -401,6 +401,83 @@ export function routeGap(x: number, z: number): number {
   return routeDistance(z, x - riverX(z));
 }
 
+/**
+ * The old bridge (world/bridge.ts) where the boat's way leaves the river for the bil: a humped brick arch
+ * carrying the bank's footpath over the channel cut through the bank. Its frame: x along the bridge, across
+ * the channel (the path's way); z along the channel, toward the bil (the way the boat goes under it);
+ * `angle` turns that frame into the world's (as a rotation about y). Heights are the world's.
+ */
+export const BRIDGE = (() => {
+  const z = -665;
+  const x = riverX(z) + routeOffset(z);
+  const ahead = { x: riverX(z - 2) + routeOffset(z - 2) - x, z: -2 };
+  const angle = Math.atan2(ahead.x, ahead.z);
+  return {
+    x,
+    z,
+    angle,
+    /** Clear span of the arch and the height it springs from (m); its rise; the arch ring's depth. */
+    span: 16,
+    springing: 0.3,
+    rise: 3.4,
+    ring: 0.55,
+    /** Between the parapets, and each parapet's thickness and height above the deck. */
+    width: 3,
+    parapet: 0.28,
+    parapetHeight: 0.66,
+    /** Half its length, ramps and all, and the height of the deck at its crown. */
+    half: 20,
+    crown: 4.5,
+    /** The bank's height where the ramps come down. */
+    bank: 1.8,
+  };
+})();
+
+/** (x, z) in the bridge's frame: `x` along it, `z` along the channel. */
+export function bridgeFrame(x: number, z: number): { x: number; z: number } {
+  const dx = x - BRIDGE.x;
+  const dz = z - BRIDGE.z;
+  const c = Math.cos(BRIDGE.angle);
+  const s = Math.sin(BRIDGE.angle);
+  return { x: dx * c - dz * s, z: dx * s + dz * c };
+}
+
+/** A point of the bridge's frame in the world. */
+export function bridgeToWorld(bx: number, bz: number): { x: number; z: number } {
+  const c = Math.cos(BRIDGE.angle);
+  const s = Math.sin(BRIDGE.angle);
+  return { x: BRIDGE.x + bx * c + bz * s, z: BRIDGE.z - bx * s + bz * c };
+}
+
+/** Height of the arch's underside at `bx` along the bridge (−∞ beyond the span). */
+export function bridgeSoffit(bx: number): number {
+  const half = BRIDGE.span / 2;
+  if (Math.abs(bx) > half) return -Infinity;
+  const r = (half * half + BRIDGE.rise * BRIDGE.rise) / (2 * BRIDGE.rise);
+  return BRIDGE.springing + BRIDGE.rise - r + Math.sqrt(r * r - bx * bx);
+}
+
+/** Height of the bridge's walking surface at `bx` along it: the hump of the arch, easing down the ramps to the bank. */
+export function bridgeDeck(bx: number): number {
+  return BRIDGE.bank + (BRIDGE.crown - BRIDGE.bank) * (1 - smoothstep(0, BRIDGE.half, Math.abs(bx)));
+}
+
+/** True on the bridge's footprint, ramps and all (with `margin` m round it): nothing grows up through it. */
+export function onBridge(x: number, z: number, margin = 0.4): boolean {
+  const f = bridgeFrame(x, z);
+  return Math.abs(f.x) < BRIDGE.half + margin && Math.abs(f.z) < BRIDGE.width / 2 + BRIDGE.parapet + margin;
+}
+
+/** How much of (x, z) is the footpath that crosses the bridge, running on along its line into the fields either side (0..1). */
+export function bridgePath(x: number, z: number): number {
+  const f = bridgeFrame(x, z);
+  const ax = Math.abs(f.x);
+  if (ax < BRIDGE.half - 1 || ax > BRIDGE.half + 60) return 0;
+  // the path wanders a little where feet have worn it
+  const off = f.z - 1.2 * Math.sin(f.x * 0.07) - 0.5 * Math.sin(f.x * 0.19 + 1.3);
+  return smoothstep(1.3, 0.6, Math.abs(off)) * smoothstep(BRIDGE.half + 60, BRIDGE.half + 35, ax);
+}
+
 /** Ground in and beside the khals, the bil and its channels, or +∞ where none is near. */
 function backwaterHeight(x: number, z: number, u: number): number {
   let h = Infinity;

@@ -393,6 +393,15 @@ class Occupancy {
   }
 }
 
+/** A tree set by hand: which kind, where, its yaw and scale. */
+export interface FeaturedTree {
+  kind: 'mango' | 'rain' | 'coconut' | 'supari' | 'date' | 'banana' | 'bamboo';
+  x: number;
+  z: number;
+  ry: number;
+  s: number;
+}
+
 function onDryLand(x: number, z: number, minInland: number): boolean {
   const info = bankInfo(x, z);
   if (info.inland < minInland) return false;
@@ -411,7 +420,13 @@ function at(x: number, z: number, rng: Rng, s: number, sink = 0.15): Placement {
 
 /** `bark`: the photo bark for broadleaf trunks; without it they keep a painted brown. */
 /** `clear`: other places to keep trees off (x, z and a radius), such as the fishermen's platforms. */
-export function buildVegetation(huts: readonly HutPlan[], bark: Surfaces['bark'], clear: readonly { x: number; z: number; r: number }[] = []): Group {
+/** `featured`: trees set by hand where a scene wants them (round the old bridge), placed whatever the rest do. */
+export function buildVegetation(
+  huts: readonly HutPlan[],
+  bark: Surfaces['bark'],
+  clear: readonly { x: number; z: number; r: number }[] = [],
+  featured: readonly FeaturedTree[] = [],
+): Group {
   const rng = new Rng(7);
   const group = new Group();
   group.name = 'vegetation';
@@ -517,6 +532,7 @@ export function buildVegetation(huts: readonly HutPlan[], bark: Surfaces['bark']
     joba: bucket(joba, mats.hibiscus, flowerMat),
   };
   const put = (b: Bucket, p: Placement) => b.items[rng.int(0, b.items.length - 1)].push(p);
+  for (const f of featured) put(B[f.kind], { x: f.x, y: terrainHeight(f.x, f.z) - 0.15, z: f.z, ry: f.ry, s: f.s });
 
   // villages: groves of mango and jackfruit, coconut and supari palms by the houses, bananas, bamboo at the back
   VILLAGES.forEach((v, i) => {

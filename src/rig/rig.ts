@@ -1,8 +1,8 @@
 import { PerspectiveCamera, Quaternion, Vector3 } from 'three';
 import { G } from '../core/globals';
-import { angleDelta, clamp, damp, smoothstep } from '../core/mathx';
+import { angleDelta, clamp, damp, lerp, smoothstep } from '../core/mathx';
 import { BoatBody, type Crew } from '../world/boatPhysics';
-import { JOURNEY_Z0, JOURNEY_Z1, boatLane, riverX, terrainHeight } from '../world/geography';
+import { BRIDGE, JOURNEY_Z0, JOURNEY_Z1, boatLane, bridgeDeck, bridgeFrame, bridgeSoffit, riverX, terrainHeight } from '../world/geography';
 import { FlyCam } from './flycam';
 
 const laneX = (z: number) => riverX(z) + boatLane(z);
@@ -43,6 +43,20 @@ export type ViewName = keyof typeof VIEWS;
  * looking down the river past her into the evening sun, its path on the water beside her.
  */
 const OPENING_VIEW: View = { yaw: 0.5, pitch: 0.08, dist: 15 };
+
+/**
+ * Following the boat under the old bridge, the camera eases down under its arch (or, over the banks, up
+ * over its deck) rather than passing through the brickwork.
+ */
+function keepClearOfBridge(cam: Vector3): void {
+  const f = bridgeFrame(cam.x, cam.z);
+  const face = BRIDGE.width / 2 + BRIDGE.parapet;
+  const s = smoothstep(face + 3, face + 0.4, Math.abs(f.z)) * smoothstep(BRIDGE.half + 3, BRIDGE.half + 1, Math.abs(f.x));
+  if (s <= 0) return;
+  const soffit = bridgeSoffit(f.x);
+  if (soffit - 0.6 > G.uWaterLevel.value + 0.8) cam.y = lerp(cam.y, Math.min(cam.y, soffit - 0.6), s);
+  else cam.y = lerp(cam.y, Math.max(cam.y, bridgeDeck(f.x) + BRIDGE.parapetHeight + 1.2), s);
+}
 
 /**
  * Low and close, with a rising or setting sun or moon in the frame beside the boat: turned this far
@@ -325,6 +339,7 @@ export class Rig {
     cam.set(this.target.x + Math.sin(back) * cp, this.target.y + Math.sin(this.pitch) * this.dist, this.target.z + Math.cos(back) * cp);
     const ground = Math.max(terrainHeight(cam.x, cam.z), G.uWaterLevel.value);
     cam.y = Math.max(cam.y, ground + 1.2);
+    keepClearOfBridge(cam);
     this.camera.lookAt(this.target);
     this.camera.updateMatrixWorld();
   }

@@ -22,7 +22,7 @@ import type { Scene, Stage } from './director';
 // The film tour: a year and a day on the river, as a short documentary would show it. A winter dawn in
 // mist and the boatman at sunrise, mustard in the fields and a village ghat; spring's blossom and the
 // narrows; summer's fishermen at their nets, a khal at golden hour and a nor'wester; the monsoon's rain and
-// its flooded fields; the shapla bil, a wetland and the kash of autumn; the golden harvest; the salt fields
+// its flooded fields; under the old bridge into the shapla bil, a wetland and the kash of autumn; the golden harvest; the salt fields
 // and the estuary in winter; and the evening on the river: sunset, moonrise and night.
 // Each scene sets its own season, hour and weather (director.ts), so every part of the world is shown at
 // its best, wherever the viewer's boat happens to be.
@@ -264,6 +264,18 @@ export function tourScenes(): Scene[] {
       seconds: 11,
       world: { day: 205, hour: 12.5, weather: 'drizzle', wind: 0.5 },
       pose: (u, _s, pos, look) => glide(FLOODED, -1, 4, u, pos, look),
+    },
+    {
+      caption: 'সেতুর নিচে',
+      seconds: 16,
+      world: { day: 268, hour: { at: 'sunset', offset: -0.7 }, weather: 'clear', wind: 0.55 },
+      journey: journeyAt(-652),
+      // low behind the boat as she glides up the channel to the old bridge and under it, the girl with her
+      // umbrella above watching her come, the evening sun over the camera's shoulder lighting them both
+      pose: (u, s, pos, look) => {
+        rel(s, lerp(-14, -9, u), lerp(1.6, 0.6, u), lerp(2.2, 1.5, u), pos);
+        rel(s, 12, 0, lerp(3.6, 2.4, u), look);
+      },
     },
     {
       caption: 'শাপলা বিল',

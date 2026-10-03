@@ -56,7 +56,7 @@ const BALANCE = { f: 1.3, zeta: 0.55, share: 0.85 };
  */
 const BRACE = { perRate: 0.3, max: 0.09, tau: 1.2 };
 /** His skin: a sun-browned, shyamla Bengali complexion (sRGB). */
-const SKIN_TONE = '#8d5a3b';
+export const SKIN_TONE = '#8d5a3b';
 /** How far he bends in when a hold runs out of his arms' reach (m): his hips take part of it, his chest the rest. */
 const LEAN_MAX = 0.16;
 
@@ -194,7 +194,7 @@ function vestFold(t: number, th: number): { r: number; y: number } {
 }
 
 /** Two-bone IK: places `mid` (knee or elbow) so the chain from `root` reaches `target`, bending toward `pole`. */
-function solveTwoBone(root: Vector3, target: Vector3, a: number, b: number, pole: Vector3, mid: Vector3, end: Vector3): void {
+export function solveTwoBone(root: Vector3, target: Vector3, a: number, b: number, pole: Vector3, mid: Vector3, end: Vector3): void {
   const d = new Vector3().subVectors(target, root);
   let len = d.length();
   const reach = (a + b) * 0.999;
@@ -218,13 +218,13 @@ const basisZ = new Vector3();
 const basis = new Matrix4();
 
 /** Sets a +y-built part at `from`, pointing at `to`. */
-function aim(mesh: Mesh, from: Vector3, to: Vector3): void {
+export function aim(mesh: Mesh, from: Vector3, to: Vector3): void {
   mesh.position.copy(from);
   mesh.quaternion.setFromUnitVectors(UP, tmpDir.subVectors(to, from).normalize());
 }
 
 /** As `aim`, and turned about its length so its x axis lies along `across` (a flattened limb). */
-function aimRolled(mesh: Mesh, from: Vector3, to: Vector3, across: Vector3): void {
+export function aimRolled(mesh: Mesh, from: Vector3, to: Vector3, across: Vector3): void {
   mesh.position.copy(from);
   basisY.subVectors(to, from).normalize();
   basisX.copy(across).addScaledVector(basisY, -across.dot(basisY)).normalize();

@@ -1,4 +1,4 @@
-import { DoubleSide, InstancedBufferAttribute, InstancedBufferGeometry, Mesh, PlaneGeometry, ShaderMaterial } from 'three';
+import { DoubleSide, InstancedBufferAttribute, InstancedBufferGeometry, Mesh, PlaneGeometry, ShaderMaterial, Vector4 } from 'three';
 import { G, LAYER_NO_REFLECT } from '../core/globals';
 import { Rng } from '../core/rng';
 import { WIND_MS } from '../env/wind';
@@ -21,6 +21,7 @@ const FALL = 7.5;
 const VERT = /* glsl */ `
 ${GLSL_COMMON}
 attribute vec3 aSeed;
+uniform vec4 uShelter;
 varying float vAlpha;
 void main() {
   // each drop falls through the box again and again; the box follows the camera and wraps round it
@@ -38,6 +39,9 @@ void main() {
   // about a pixel wide wherever it is, so near drops are not blots
   vec3 p = at + axis * position.y * 0.42 + side * position.x * 0.0016 * near;
   vAlpha = uRain * smoothstep(2.0, 4.5, near) * (1.0 - smoothstep(12.0, 22.0, near)) * step(uWaterLevel, y);
+  // none under an umbrella (the girl's on the bridge): the drops that would fall there have hit it
+  vec2 under = at.xz - uShelter.xz + drift * (y - uShelter.y);
+  if (y < uShelter.y && dot(under, under) < uShelter.w * uShelter.w) vAlpha = 0.0;
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
 }
 `;
@@ -53,7 +57,8 @@ void main() {
 }
 `;
 
-export function buildRain(): Mesh {
+/** `shelter`: the middle and radius of an umbrella's canopy (world), kept dry. */
+export function buildRain(shelter: Vector4): Mesh {
   const quad = new PlaneGeometry(1, 1).translate(0, 0.5, 0);
   const geometry = new InstancedBufferGeometry();
   geometry.index = quad.index;
@@ -66,7 +71,7 @@ export function buildRain(): Mesh {
   const mesh = new Mesh(
     geometry,
     // two-sided: a streak is turned to face the camera about its own length, and which face that shows depends on the slant
-    new ShaderMaterial({ uniforms: { ...G }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, depthWrite: false, side: DoubleSide }),
+    new ShaderMaterial({ uniforms: { ...G, uShelter: { value: shelter } }, vertexShader: VERT, fragmentShader: FRAG, transparent: true, depthWrite: false, side: DoubleSide }),
   );
   mesh.frustumCulled = false;
   mesh.layers.set(LAYER_NO_REFLECT);

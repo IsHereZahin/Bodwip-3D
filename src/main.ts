@@ -34,6 +34,8 @@ import { Crops } from './world/crops';
 import { Meadow } from './world/meadow';
 import { buildPondLife } from './world/ponds';
 import { buildRain } from './world/rain';
+import { BRIDGE_CLEARING, bridgeTrees, buildBridge } from './world/bridge';
+import { Girl } from './world/girl';
 import { buildSky } from './world/sky';
 import { buildTerrain } from './world/terrain';
 import { buildVegetation } from './world/vegetation';
@@ -116,7 +118,10 @@ async function main(hud: Hud): Promise<void> {
   scene.add(buildSaltWorks());
   hud.progress(0.52);
   await nextTask();
-  scene.add(buildVegetation(huts, surfaces.bark, fishingClearings()));
+  scene.add(buildVegetation(huts, surfaces.bark, [...fishingClearings(), BRIDGE_CLEARING], bridgeTrees()));
+  scene.add(buildBridge());
+  const girl = new Girl();
+  scene.add(girl.group);
   scene.add(buildPondLife());
   const bil = new Bil();
   scene.add(bil.group);
@@ -149,7 +154,7 @@ async function main(hud: Hud): Promise<void> {
   const weather = new Weather();
   weather.clearUntil = OPENING_CLEAR_SECONDS;
   const wind = new Wind();
-  const rain = buildRain();
+  const rain = buildRain(girl.shelter);
   scene.add(rain);
   const env = new Environment(sky, water);
   env.season = season;
@@ -569,6 +574,7 @@ async function main(hud: Hud): Promise<void> {
     const b = rig.boat;
     director.update(dt, t, camera);
     hero.update(dt, t, env.lamp, b);
+    girl.update(dt, t, b.pos, weather.rain);
     water.boat.set(b.pos.x, b.pos.z, b.heading, b.speed);
     water.oar.set(hero.bladeLocal.x, hero.bladeLocal.z, hero.bladeDrive, hero.bladeWet);
     water.swirl.copy(hero.swirl);

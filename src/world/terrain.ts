@@ -14,6 +14,7 @@ import {
   edgeHalfWidth,
   landLevel,
   riverX,
+  bridgePath,
   saltPan,
   terrainHeight,
   villageDistance,
@@ -110,13 +111,16 @@ function cover(x: number, z: number, u: number, h: number): Cover {
   const vd = villageDistance(x, z);
   const yard = smoothstep(1.0, 0.35, vd);
   ground = mixRgb(ground, COLORS.dust, yard * 0.6);
+  // the footpath over the old bridge, worn to bare earth
+  const path = bridgePath(x, z);
+  ground = mixRgb(ground, COLORS.dust, path * 0.85);
   const fields = smoothstep(0.3, 0.42, fbm(x * 0.0025 + 5, z * 0.0025, 2, 44));
   // paddy inland; on the coast, salt pans
   const salt = top * saltPan(x, z);
   const paddy = top * smoothstep(38, 75, inland) * smoothstep(1.25, 1.9, vd) * fields * (1 - coast);
   const zone = salt > 0.01 ? -salt : paddy;
   // trodden earth round the houses, and bare patches where the grass has dried out; the pans are bare clay
-  const dirt = Math.min(1, yard * 0.9 + dry * 0.35 + 0.25 * smoothstep(0.62, 0.78, fbm(x * 0.05, z * 0.05, 2, 71)) + salt + coast * 0.25);
+  const dirt = Math.min(1, yard * 0.9 + dry * 0.35 + 0.25 * smoothstep(0.62, 0.78, fbm(x * 0.05, z * 0.05, 2, 71)) + salt + coast * 0.25 + path);
   // pebbles only along the river; the ponds keep muddy banks
   const pebbles = (1 - top) * smoothstep(30, 14, inland);
   return { color: mixRgb(mud, ground, top), zone, grass: top * (1 - dirt), dirt: top * dirt, sand: 0, pebbles };
