@@ -8,8 +8,8 @@
 // joined to the sea, inland water) with a flag saying whether the height was measured or modelled:
 //   land         DeltaDTM on the low ground, FABDEM on the hills (both bare earth), blended between 5 and 10 m
 //   mangrove     the same, kept between mean sea level and high water springs (the floor of a tidal forest)
-//   tidal flat   ground the water covers part of the time (JRC occurrence): set at the level the tide stays
-//                above for that share of the satellite passes — the tide's own height distribution
+//   tidal flat   tidal wetland in Murray et al.'s map; set at the level the tide stays above for the share of
+//                the satellite passes JRC saw it wet — the tide's own height distribution
 //   sea water    below the low-water line, deepening with the distance from the shore, then GEBCO offshore
 //   inland water ponds, pans and the ash ponds: their beds a little under the surface the DEM measured
 import { existsSync, readdirSync } from 'node:fs';
@@ -20,6 +20,7 @@ import { fromFile } from 'geotiff';
 import proj4 from 'proj4';
 import { MAP_SCALE, ORIGIN, fromGround, toGround } from '../../src/geo/project.ts';
 import { BBOX, CACHE } from './config.mjs';
+import { PLACES } from './places.mjs';
 import { encodePng } from './lib/png.mjs';
 import { predictor } from './lib/tide.mjs';
 
@@ -35,6 +36,8 @@ const TIDE_SCALE = 1.38;
 const PASS_UTC_HOUR = 4;
 
 const KIND = { land: 0, mangrove: 1, tidal: 2, sea: 3, inland: 4 };
+/** Open water that may be a river or creek of the sea, decided by the flood fill (never written out). */
+const CHANNEL = 5;
 const MODELLED = 0x80;
 
 const smoothstep = (a, b, x) => {
@@ -195,9 +198,10 @@ async function bakeTerrain() {
   const deltadtm = demSampler(await Promise.all(pair('deltadtm').map(tile)));
   const gmw = nearestSampler(await Promise.all(['gmw-N22E091.tif', 'gmw-N22E092.tif'].map(tile)));
   const occurrence = await windowSampler('jrc-occurrence', Uint8Array);
-  const seasonality = await windowSampler('jrc-seasonality', Uint8Array);
   const worldcover = await windowSampler('worldcover-2021', Uint8Array);
   const gebco = await windowSampler('gebco-2025', Int16Array, true);
+  const murray = await windowSampler('murray-tidal', Uint8Array);
+  const seasonality = await windowSampler('jrc-seasonality', Uint8Array);
   const levels = await passLevels();
   /** The level the tide stays above for share `p` of the passes. */
   const exceeded = (p) => levels[Math.min(levels.length - 1, Math.max(0, Math.round((1 - p) * (levels.length - 1))))];
@@ -223,21 +227,24 @@ async function bakeTerrain() {
       occ[i] = o === null || o > 100 ? 0 : o;
       deep[i] = gebco(lat, lon) ?? 0;
       const wc = worldcover(lat, lon);
-      const months = seasonality(lat, lon) ?? 0;
       if (occ[i] >= 90) kind[i] = KIND.sea;
-      // wet part of the time in most months of the year, on open ground: a tidal flat (pans and paddies are wet only a season)
-      else if (occ[i] >= 5 && months >= 9 && (wc === 80 || wc === 60 || wc === 90 || wc === 95)) kind[i] = KIND.tidal;
       else if (wc === 95 || gmw(lat, lon) === 1) kind[i] = KIND.mangrove;
+      // Murray et al. map tidal wetland (flats, marsh) directly; JRC's wetness alone cannot tell a tidal flat
+      // from a salt pan or a shrimp pond, which are wet as often (GEO_AUDIT.md)
+      else if ((murray(lat, lon) ?? 0) >= 50) kind[i] = KIND.tidal;
+      // rivers, creeks and the port basin: wet most of the time all twelve months (pans are wet a season)
+      else if (occ[i] >= 60 && seasonality(lat, lon) === 12) kind[i] = CHANNEL;
       else if (wc === 80) kind[i] = KIND.inland;
       else kind[i] = KIND.land;
     }
   }
-  // 2. water and flats joined to the open sea (through water or flats) belong to the tide; the rest is inland
+  // 2. water and flats joined to the open sea (through water, flats or mangrove) belong to the tide; the rest is inland
   const joined = new Uint8Array(W * H);
   const queue = new Int32Array(W * H);
   let head = 0;
   let tail = 0;
   const wet = (i) => kind[i] === KIND.sea || kind[i] === KIND.tidal;
+  const passable = (i) => wet(i) || kind[i] === KIND.mangrove || kind[i] === CHANNEL;
   for (let c = 0; c < W; c++)
     for (const r of [0, H - 1]) {
       const i = r * W + c;
@@ -252,12 +259,15 @@ async function bakeTerrain() {
     const i = queue[head++];
     const c = i % W;
     for (const j of [i - W, i + W, c > 0 ? i - 1 : -1, c < W - 1 ? i + 1 : -1]) {
-      if (j < 0 || j >= W * H || joined[j] || !wet(j)) continue;
+      if (j < 0 || j >= W * H || joined[j] || !passable(j)) continue;
       joined[j] = 1;
       queue[tail++] = j;
     }
   }
-  for (let i = 0; i < W * H; i++) if (wet(i) && !joined[i]) kind[i] = KIND.inland;
+  for (let i = 0; i < W * H; i++) {
+    if (kind[i] === CHANNEL) kind[i] = joined[i] ? KIND.sea : KIND.inland;
+    else if (wet(i) && !joined[i]) kind[i] = KIND.inland;
+  }
   // 3. heights
   const seaCells = new Uint8Array(W * H);
   for (let i = 0; i < W * H; i++) seaCells[i] = kind[i] === KIND.sea ? 1 : 0;
@@ -303,7 +313,7 @@ async function bakeTerrain() {
   }
   const km2 = Object.fromEntries(Object.entries(counts).map(([k, n]) => [k, +((n * SPACING * SPACING) / 1e6).toFixed(1)]));
   await preview(g, height, kind);
-  return { grid: g, kind, km2, lowWater: +lowWater.toFixed(2), highest: +height.reduce((a, v) => Math.max(a, v), -Infinity).toFixed(1), deepest: +height.reduce((a, v) => Math.min(a, v), Infinity).toFixed(1) };
+  return { grid: g, kind, height, km2, lowWater: +lowWater.toFixed(2), highest: +height.reduce((a, v) => Math.max(a, v), -Infinity).toFixed(1), deepest: +height.reduce((a, v) => Math.min(a, v), Infinity).toFixed(1) };
 }
 
 /** A shaded relief with the kinds coloured, to look at (cache/view/terrain.png). */
@@ -475,7 +485,7 @@ async function bakeCover(g, kind) {
     const name = Object.keys(COVER).find((key) => COVER[key] === cover[i]);
     km2[name] = (km2[name] ?? 0) + (SPACING * SPACING) / 1e6;
   }
-  return { scene: sentinel.scene, km2: Object.fromEntries(Object.entries(km2).map(([k, v]) => [k, +v.toFixed(1)])) };
+  return { cover, scene: sentinel.scene, km2: Object.fromEntries(Object.entries(km2).map(([k, v]) => [k, +v.toFixed(1)])) };
 }
 
 const COVER_COLOURS = {
@@ -497,11 +507,80 @@ async function coverPreview(g, cover, canopy) {
   await writeFile(`${VIEW}cover.png`, encodePng(rgb, W, H, 3));
 }
 
+// ---------- lines from OpenStreetMap, and the landmarks ----------
+
+/**
+ * Roads, rails, waterways, built structures in the water and power lines, in ground decimetres
+ * ([east, north, east, north, …] about the origin), with power towers as points. Kept if any of a line's
+ * points lies in the grid.
+ */
+async function bakeVectors(g) {
+  const load = async (theme) => JSON.parse(await readFile(at(`osm-${theme}.json`), 'utf8')).elements;
+  const east1 = g.east0 + g.width * SPACING;
+  const north0 = g.north1 - g.height * SPACING;
+  const inGrid = (e, n) => e >= g.east0 && e <= east1 && n >= north0 && n <= g.north1;
+  const lines = [];
+  const towers = [];
+  const add = (k, e, extra) => {
+    if (e.type !== 'way' || !e.geometry?.length) return;
+    const pts = [];
+    let inside = false;
+    for (const p of e.geometry) {
+      const q = toGround(p.lat, p.lon);
+      inside ||= inGrid(q.east, q.north);
+      pts.push(Math.round(q.east * 10), Math.round(q.north * 10));
+    }
+    if (!inside) return;
+    const name = e.tags.name ?? e.tags['name:bn'] ?? e.tags['name:en'];
+    lines.push({ k, ...extra, ...(name ? { n: name } : {}), p: pts });
+  };
+  for (const e of await load('roads')) {
+    if (e.tags?.highway) add('road', e, { t: e.tags.highway, ...(e.tags.bridge && e.tags.bridge !== 'no' ? { bridge: 1 } : {}) });
+    else if (e.tags?.railway === 'rail') add('rail', e, {});
+  }
+  for (const e of await load('coast')) if (e.tags?.waterway) add('waterway', e, { t: e.tags.waterway });
+  for (const e of await load('infrastructure')) {
+    const t = e.tags ?? {};
+    if (/^(pier|breakwater|groyne|dyke|quay)$/.test(t.man_made ?? '')) add('structure', e, { t: t.man_made });
+    else if (t.embankment === 'yes') add('structure', e, { t: 'embankment' });
+    else if (/^(line|minor_line)$/.test(t.power ?? '')) add('power', e, { t: t.power, ...(t.voltage ? { v: +String(t.voltage).split(';')[0] } : {}) });
+    else if (t.power === 'tower' && e.type === 'node') {
+      const q = toGround(e.lat, e.lon);
+      if (inGrid(q.east, q.north)) towers.push(Math.round(q.east * 10), Math.round(q.north * 10));
+    }
+  }
+  await writeFile(`${OUT}vectors.bin`, deflateRawSync(Buffer.from(JSON.stringify({ unit: 'ground decimetres about the origin', lines, towers }))));
+  const count = {};
+  for (const l of lines) count[l.k] = (count[l.k] ?? 0) + 1;
+  return { ...count, towers: towers.length / 2 };
+}
+
+/** The landmarks, each with the world point and the baked ground under it (public/geo/places.json). */
+async function bakePlaces(g, height, kind, cover) {
+  const nameOf = (table, v) => Object.keys(table).find((k) => table[k] === v);
+  const out = PLACES.map((p) => {
+    const q = toGround(p.lat, p.lon);
+    const c = Math.floor((q.east - g.east0) / SPACING);
+    const r = Math.floor((g.north1 - q.north) / SPACING);
+    const i = r * g.width + c;
+    const inside = c >= 0 && r >= 0 && c < g.width && r < g.height;
+    return {
+      ...p,
+      world: { x: +(-q.east / MAP_SCALE).toFixed(1), z: +(q.north / MAP_SCALE).toFixed(1) },
+      ...(inside ? { ground: +height[i].toFixed(1), kind: nameOf(KIND, kind[i] & 0x7f), cover: nameOf(COVER, cover[i]) } : {}),
+    };
+  });
+  await writeFile(`${OUT}places.json`, JSON.stringify(out, null, 1));
+  return out;
+}
+
 const RAD_DEG = Math.PI / 180;
 const isSeasonal = (months) => months !== null && months >= 3 && months <= 9;
 
 const terrain = await bakeTerrain();
 const coverage = await bakeCover(terrain.grid, terrain.kind);
+const vectors = await bakeVectors(terrain.grid);
+const places = await bakePlaces(terrain.grid, terrain.height, terrain.kind, coverage.cover);
 const manifest = {
   made: new Date().toISOString().slice(0, 10),
   projection: { kind: 'transverse Mercator on the origin meridian, WGS84 (src/geo/project.ts)', origin: ORIGIN, mapScale: MAP_SCALE },
@@ -517,6 +596,8 @@ const manifest = {
       note: `WorldCover 2021, the commonest of nine 10 m samples per cell; sand where bare or tidal ground is brighter than ${SAND_BRIGHTNESS} in ${coverage.scene}; salt pans from OSM, and inland water wet 3–9 months a year (JRC seasonality)`,
       licence: 'ODbL (salt pans from OpenStreetMap), with CC BY 4.0 WorldCover',
     },
+    vectors: { file: 'vectors.bin', encoding: 'deflate-raw', type: 'JSON', counts: vectors, licence: 'ODbL (OpenStreetMap)' },
+    places: { file: 'places.json', note: 'landmarks with sources (scripts/geo/places.mjs)' },
     canopy: { file: 'canopy.bin', encoding: 'deflate-raw', type: 'uint8 × 2', fields: ['tree height, metres (90th percentile of canopy pixels ≥ 3 m)', 'tree cover, 0..255'], licence: 'CC BY 4.0 (Meta/WRI)' },
   },
   coverKm2: coverage.km2,
@@ -530,6 +611,7 @@ const manifest = {
     'Source: EC JRC/Google (Pekel et al. 2016)',
     '© ESA WorldCover project / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium',
     'Global Mangrove Watch v3.0 (Bunting et al. 2022), CC BY 4.0',
+    'Murray et al. 2022, Global Intertidal Change, CC BY 4.0',
     "Tide: UHSLC research quality data, Cox's Bazar (h136a)",
     'High Resolution Canopy Height Maps by WRI and Meta (2023), CC BY 4.0',
     '© OpenStreetMap contributors, ODbL',
@@ -537,4 +619,5 @@ const manifest = {
   ],
 };
 await writeFile(`${OUT}manifest.json`, JSON.stringify(manifest, null, 2));
-console.log(JSON.stringify({ grid: terrain.grid, km2: terrain.km2, cover: coverage.km2, lowWater: terrain.lowWater, highest: terrain.highest, deepest: terrain.deepest }, null, 1));
+for (const p of places) console.log(p.id.padEnd(26), String(p.ground).padStart(6), (p.kind ?? '-').padEnd(9), p.cover ?? '-');
+console.log(JSON.stringify({ grid: terrain.grid, km2: terrain.km2, cover: coverage.km2, vectors, lowWater: terrain.lowWater, highest: terrain.highest, deepest: terrain.deepest }, null, 1));

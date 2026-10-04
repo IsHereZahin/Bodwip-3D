@@ -30,6 +30,8 @@ export const SOURCES = [
   { id: 'worldcover-2021', kind: 'window', url: 'https://esa-worldcover.s3.eu-central-1.amazonaws.com/v200/2021/map/ESA_WorldCover_10m_2021_v200_N21E090_Map.tif', crs: 'EPSG:4326', licence: 'CC BY 4.0' },
   { id: 'jrc-occurrence', kind: 'window', url: 'https://storage.googleapis.com/global-surface-water/downloads2021/occurrence/occurrence_90E_30Nv1_4_2021.tif', crs: 'EPSG:4326', licence: 'free, attribution (EC JRC/Google)' },
   { id: 'jrc-seasonality', kind: 'window', url: 'https://storage.googleapis.com/global-surface-water/downloads2021/seasonality/seasonality_90E_30Nv1_4_2021.tif', crs: 'EPSG:4326', licence: 'free, attribution (EC JRC/Google)' },
+  // Murray et al. Global Intertidal Change: the chance each 30 m cell was tidal wetland (flat, mangrove or marsh) in 2017–19
+  { id: 'murray-tidal', kind: 'window', url: 'https://storage.googleapis.com/gic-archive/gic-2019-v1-0/v1-0-1/murray-gic-v1.0.1-twprobabilityEnd-0000131072-0000983040.tif', crs: 'EPSG:4326', licence: 'CC BY 4.0' },
   // Meta/WRI canopy height, 1 m: read at ≈5 m, plenty for where trees stand and how tall
   { id: 'canopy-meta', kind: 'window', url: 'https://dataforgood-fb-data.s3.amazonaws.com/forests/v1/alsgedi_global_v6_float/chm/132200010.tif', crs: 'EPSG:3857', res: 5, licence: 'CC BY 4.0' },
   { id: 'gmw-N22E091', kind: 'zip', url: GMW, member: 'gmw_v3_2020/GMW_N22E091_2020_v3.tif', licence: 'CC BY 4.0' },
