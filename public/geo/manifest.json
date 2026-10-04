@@ -38,7 +38,55 @@
         "inland": 4
       },
       "modelledBit": 128
+    },
+    "cover": {
+      "file": "cover.bin",
+      "encoding": "deflate-raw",
+      "type": "uint8",
+      "codes": {
+        "none": 0,
+        "tree": 1,
+        "shrub": 2,
+        "grass": 3,
+        "crop": 4,
+        "built": 5,
+        "bare": 6,
+        "sand": 7,
+        "mud": 8,
+        "marsh": 9,
+        "mangrove": 10,
+        "saltpan": 11,
+        "pond": 12,
+        "water": 13
+      },
+      "note": "WorldCover 2021, the commonest of nine 10 m samples per cell; sand where bare or tidal ground is brighter than 140 in sentinel-2026-02-26.png; salt pans from OSM, and inland water wet 3–9 months a year (JRC seasonality)",
+      "licence": "ODbL (salt pans from OpenStreetMap), with CC BY 4.0 WorldCover"
+    },
+    "canopy": {
+      "file": "canopy.bin",
+      "encoding": "deflate-raw",
+      "type": "uint8 × 2",
+      "fields": [
+        "tree height, metres (90th percentile of canopy pixels ≥ 3 m)",
+        "tree cover, 0..255"
+      ],
+      "licence": "CC BY 4.0 (Meta/WRI)"
     }
+  },
+  "coverKm2": {
+    "water": 642,
+    "saltpan": 128.8,
+    "sand": 19.5,
+    "tree": 210.5,
+    "crop": 200.9,
+    "grass": 25.4,
+    "bare": 13.7,
+    "pond": 61.5,
+    "mud": 57.6,
+    "built": 12.2,
+    "marsh": 4.4,
+    "mangrove": 62.5,
+    "shrub": 0.1
   },
   "tide": {
     "source": "Cox's Bazar gauge fit (tide-coxs-bazar.json)",
@@ -52,7 +100,7 @@
     "tidal": 62.8,
     "mangrove": 62.4
   },
-  "licence": "CC BY-NC-SA 4.0 (heights derived from FABDEM V1-2)",
+  "licence": "each layer its own: terrain and kind CC BY-NC-SA 4.0 (from FABDEM V1-2), cover ODbL, canopy CC BY 4.0",
   "attribution": [
     "FABDEM V1-2 (Hawker et al. 2022, University of Bristol / Fathom), CC BY-NC-SA 4.0",
     "DeltaDTM © Pronk et al. 2024, CC BY 4.0",
@@ -60,6 +108,9 @@
     "Source: EC JRC/Google (Pekel et al. 2016)",
     "© ESA WorldCover project / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium",
     "Global Mangrove Watch v3.0 (Bunting et al. 2022), CC BY 4.0",
-    "Tide: UHSLC research quality data, Cox's Bazar (h136a)"
+    "Tide: UHSLC research quality data, Cox's Bazar (h136a)",
+    "High Resolution Canopy Height Maps by WRI and Meta (2023), CC BY 4.0",
+    "© OpenStreetMap contributors, ODbL",
+    "Contains modified Copernicus Sentinel data 2026"
   ]
 }
