@@ -11,14 +11,21 @@ import {
   JOURNEY_Z1,
   PONDS,
   VILLAGES,
+  bankAt,
   edgeHalfWidth,
+  halfWidth,
   khalPoint,
   riverX,
   saltPan,
   terrainHeight,
   waterLevelAt,
 } from '../world/geography';
+import { stairAt } from '../world/moheshkhali';
+import { PLANT } from '../world/plantSite';
+import { berthPoint } from '../world/portSite';
+import { onRoad } from '../world/roads';
 import { groundAt } from '../world/terrain';
+import { kashStretch } from '../world/vegetation';
 import { GHATS } from '../world/village';
 import type { Scene, Stage } from './director';
 
@@ -132,6 +139,45 @@ const STORM_VILLAGE = VILLAGES[Math.min(1, VILLAGES.length - 1)];
 /** A village pond to walk round in the morning (in place of the made-up wetlands); the bil if there is none. */
 const POND = PONDS[0] ?? { x: riverX(BIL.z) + BIL.u, z: BIL.z, r: BIL.halfWid, level: BIL.level };
 const SONADIA_BEACH = place('sonadia-beach').world;
+const TEMPLE = place('adinath-temple').world;
+/** Gorakghata's jetty: its land end, the run out to its head, and the unit normal to its north side. */
+const JETTY = (() => {
+  const land = place('gorakghata-jetty-land').world;
+  const head = place('gorakghata-jetty-head').world;
+  const ax = head.x - land.x;
+  const az = head.z - land.z;
+  const len = Math.hypot(ax, az);
+  return { land, ax, az, nx: az / len, nz: -ax / len };
+})();
+
+/**
+ * A stand of kash on the channel's bank for the film: the first along the journey that runs at least 40 m on a
+ * bank whose top is wide (10 m of it above the spring tides and off the roads, where vegetation.ts plants it), the
+ * camera a few metres in from the edge.
+ */
+const KASH = (() => {
+  const top = (h: number) => h >= 1.9 && h <= 3.5;
+  for (let z = JOURNEY_Z0 - 400; z > JOURNEY_Z1 + 400; z -= 10) {
+    for (const side of [1, -1] as const) {
+      if (![0, 10, 20, 30, 40].every((d) => kashStretch(z - d, side))) continue;
+      const bank = bankAt(z, side, 1.9);
+      if (!bank || bank.d <= 0 || bank.d > halfWidth(z) * 2) continue;
+      const ux = (bank.x - riverX(z)) / bank.d;
+      const uz = (bank.z - z) / bank.d;
+      let wide = 0;
+      for (let d = 0; d < 14; d++) {
+        const x = bank.x + ux * d;
+        const zz = bank.z + uz * d;
+        if (top(terrainHeight(x, zz)) && !onRoad(x, zz, 1.5)) wide++;
+      }
+      if (wide < 10) continue;
+      const x = bank.x + ux * 4;
+      const zz = bank.z + uz * 4;
+      return { x, y: terrainHeight(x, zz), z: zz, ux, uz };
+    }
+  }
+  return { x: riverX(0), y: G.uWaterLevel.value, z: 0, ux: 1, uz: 0 };
+})();
 const SONADIA = place('sonadia').world;
 
 export function tourScenes(): Scene[] {
@@ -194,6 +240,29 @@ export function tourScenes(): Scene[] {
       },
     },
     {
+      caption: 'আদিনাথের সিঁড়ি',
+      seconds: 13,
+      // Falgun, the month of the temple's Shivaratri fair
+      world: { day: 62, hour: 7.6, weather: 'clear', wind: 0.3 },
+      // from beside the long stair on the hill's lower flank (the stair climbs across the slope), rising with it
+      // toward the temple at its top
+      pose: (u, _s, pos, look) => {
+        const { from, to } = GORAKGHATA.stair;
+        const dx = to.x - from.x;
+        const dz = to.z - from.z;
+        const run = Math.hypot(dx, dz);
+        const t = lerp(0.2, 0.45, u);
+        const x = from.x + dx * t - (dz / run) * 28;
+        const z = from.z + dz * t + (dx / run) * 28;
+        pos.set(x, terrainHeight(x, z) + lerp(5, 9, u), z);
+        // between the stair's upper flight and the temple's spire over it
+        const sx = from.x + dx * 0.75;
+        const sz = from.z + dz * 0.75;
+        look.set(sx, stairAt(sx, sz) ?? terrainHeight(sx, sz), sz);
+        look.lerp(tmpB.set(TEMPLE.x, terrainHeight(TEMPLE.x, TEMPLE.z) + 10, TEMPLE.z), 0.4);
+      },
+    },
+    {
       caption: 'সরু জলপথ',
       seconds: 12,
       world: { day: 110, hour: 10.5, weather: 'clear', wind: 0.6 },
@@ -206,7 +275,8 @@ export function tourScenes(): Scene[] {
     {
       caption: 'ভেসাল জাল',
       seconds: 15,
-      world: { day: 134, hour: 16.4, weather: 'clear', wind: 0.5 },
+      // a first-quarter moon brings high water to this hour (env/tide.ts), so the bank net soaks deep
+      world: { day: 134, hour: 16.4, moon: 7, weather: 'clear', wind: 0.5 },
       begin: (s) => {
         s.haul('bank', 0);
         const n = s.net('bank', 0);
@@ -318,13 +388,12 @@ export function tourScenes(): Scene[] {
       caption: 'চরের কাশবন',
       seconds: 12,
       world: { day: 262, hour: 16.4, weather: 'clear', wind: 0.9 },
-      journey: journeyAt(150),
-      // among the kash on the island's bank, its plumes tossing, the boat coming down the channel
+      journey: journeyAt(KASH.z + 150),
+      // among the kash on the bank's top, its plumes tossing, the boat coming down the channel
       pose: (u, s, pos, look) => {
-        const z = s.boatPos.z - 60 - lerp(0, 6, u);
-        const off = edgeHalfWidth(z, 1) + 5;
-        across(z, off, Math.max(terrainHeight(riverX(z) + off, z), waterLevelAt(riverX(z) + off, z)) + 1.7, pos);
-        look.lerpVectors(across(z + 90, off, onWater(1.4), a), rel(s, 0, 0, 1.2, b), 0.85);
+        const along = lerp(0, -6, u);
+        pos.set(KASH.x - KASH.uz * along, KASH.y + 1.7, KASH.z + KASH.ux * along);
+        look.lerpVectors(across(KASH.z + 90, 0, onWater(1.4), a), rel(s, 0, 0, 1.2, b), 0.85);
       },
     },
     {
@@ -343,6 +412,19 @@ export function tourScenes(): Scene[] {
         const z = lerp(GORAKGHATA.jetty.z + 70, GORAKGHATA.jetty.z + 30, u);
         across(z, edgeHalfWidth(z, 1) - lerp(150, 120, u), onWater(2.4), pos);
         across(ADINATH.z, ADINATH.u - 12, lerp(44, 48, u), look);
+      },
+    },
+    {
+      caption: 'গোরকঘাটা জেটি',
+      seconds: 13,
+      // a last-quarter moon brings the afternoon's high water (env/tide.ts), so the jetty stands in the channel
+      world: { day: 305, hour: 16.9, moon: 22, weather: 'clear', wind: 0.4 },
+      // low over the water beside the long jetty, gliding in along it from beyond its head toward the town, into
+      // the low sun
+      pose: (u, _s, pos, look) => {
+        const t = lerp(1.1, 0.75, u);
+        pos.set(JETTY.land.x + JETTY.ax * t + JETTY.nx * 22, onWater(4.5), JETTY.land.z + JETTY.az * t + JETTY.nz * 22);
+        look.set(JETTY.land.x + JETTY.ax * 0.35, onWater(2.5), JETTY.land.z + JETTY.az * 0.35);
       },
     },
     {
@@ -371,6 +453,19 @@ export function tourScenes(): Scene[] {
       },
     },
     {
+      caption: 'মাতারবাড়ী বন্দর',
+      seconds: 14,
+      world: { day: 22, hour: 14.8, weather: 'clear', wind: 0.4 },
+      begin: (s) => s.ship('berthing', 0.25),
+      // from the basin's water off the container quay: the ship eased in alongside by her tugs, under the cranes
+      pose: (u, s, pos, look) => {
+        const at = berthPoint('container', lerp(0.35, 0.55, u), -170);
+        pos.set(at.x, onWater(16), at.z);
+        const f = s.shipFocus;
+        look.set(f.x, onWater(12), f.z);
+      },
+    },
+    {
       caption: 'মোহনা',
       seconds: 12,
       world: { day: 25, hour: { at: 'sunset', offset: -0.45 }, weather: 'clear', wind: 0.6 },
@@ -395,6 +490,17 @@ export function tourScenes(): Scene[] {
         const a = bearing + lerp(0.1, -0.1, u);
         pos.copy(s.boatPos).addScaledVector(tmpA.set(Math.sin(a), 0, Math.cos(a)), -lerp(19, 14, u)).setY(onWater(1.0));
         look.copy(s.boatPos).setY(onWater(1.2));
+      },
+    },
+    {
+      caption: 'মাতারবাড়ী বিদ্যুৎকেন্দ্র',
+      seconds: 13,
+      world: { day: 290, hour: { at: 'sunset', offset: 0.35 }, weather: 'clear', wind: 0.4 },
+      // the plant from out on the port's water at dusk: the tall chimney, its plume drifting, the lights coming on
+      pose: (u, _s, pos, look) => {
+        const a = lerp(1.0, 1.3, u);
+        pos.set(PLANT.stack.x + Math.sin(a) * 900, onWater(28), PLANT.stack.z + Math.cos(a) * 900);
+        look.set(PLANT.stack.x, 105, PLANT.stack.z);
       },
     },
     {

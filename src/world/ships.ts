@@ -298,7 +298,13 @@ class Ship {
 
 // ---------- the voyage of the container ship ----------
 
-type Phase = 'anchored' | 'inbound' | 'berthing' | 'alongside' | 'unberthing' | 'astern' | 'turning' | 'outbound' | 'away';
+/** The container ship's round, from the anchorage to her berth and back out to sea. */
+export type ShipPhase = 'anchored' | 'inbound' | 'berthing' | 'alongside' | 'unberthing' | 'astern' | 'turning' | 'outbound' | 'away';
+type Phase = ShipPhase;
+
+/** Her whistle's signals (each blast's length, s): one prolonged blast leaving the berth, three short ones going astern. */
+const LEAVING = [5] as const;
+const ASTERN = [1, 1, 1] as const;
 
 /** Seconds each waiting phase lasts (real time, as everything that moves here). */
 const LINGER: Partial<Record<Phase, number>> = { anchored: 900, alongside: 1800, away: 600 };
@@ -375,6 +381,8 @@ export class Ships {
   private readonly anchored: { ship: Ship; x: number; z: number }[] = [];
   private readonly fsru: Ship | null;
   private phase: Phase = 'inbound';
+  /** Her whistle sounded at (x, z), its blasts (s each): main.ts plays them. */
+  onHorn: (x: number, z: number, blasts: readonly number[]) => void = () => {};
   private clock = 0;
   private s = 0;
   private readonly inbound: Path;
@@ -637,6 +645,8 @@ export class Ships {
     this.clock = 0;
     this.s = 0;
     const c = this.container;
+    if (this.phase === 'unberthing') this.onHorn(c.x, c.z, LEAVING);
+    if (this.phase === 'astern') this.onHorn(c.x, c.z, ASTERN);
     if (this.phase === 'anchored') {
       // the next ship, lying at the anchorage
       c.x = this.anchorage.x;

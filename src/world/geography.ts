@@ -90,6 +90,32 @@ export function halfWidth(z: number): number {
   return (edgeHalfWidth(z, 1) + edgeHalfWidth(z, -1)) / 2;
 }
 
+/**
+ * Where the shore on `side` of the channel at `z` first rises to `level` (m about MSL), walking out from the
+ * channel's middle square to its run: the bank itself as drawn, for what must stand right on it (the half-widths
+ * above are smoothed low-water lines). Coarse steps, then halved to a quarter metre; null if none within `reach`.
+ */
+export function bankAt(z: number, side: 1 | -1, level: number, reach = 800): { x: number; z: number; d: number } | null {
+  const [dx, dz] = downstream(z);
+  const ax = -side * dz;
+  const az = side * dx;
+  const x0 = riverX(z);
+  const high = (d: number) => terrainHeight(x0 + ax * d, z + az * d) >= level;
+  if (high(0)) return { x: x0, z, d: 0 };
+  for (let d = 4; d <= reach; d += 4) {
+    if (!high(d)) continue;
+    let lo = d - 4;
+    let hi = d;
+    while (hi - lo > 0.25) {
+      const mid = (lo + hi) / 2;
+      if (high(mid)) hi = mid;
+      else lo = mid;
+    }
+    return { x: x0 + ax * hi, z: z + az * hi, d: hi };
+  }
+  return null;
+}
+
 /** How deep the channel's bed lies below mean sea level in its middle at z (m). */
 export function riverDepth(z: number): number {
   return Math.max(0, -heightAt(riverX(z), z));

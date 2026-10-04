@@ -25,6 +25,7 @@ import {
   VILLAGES,
   VILLAGE_CENTERS,
   WETLANDS,
+  bankAt,
   bankInfo,
   bilDepth,
   bilReach,
@@ -367,6 +368,13 @@ function tuft(rng: Rng, count: [number, number], height: [number, number], width
 
 /** The stretch of the channel the bank plantings run along, head to mouth. */
 const BANKS = { z0: CHANNEL_SPAN.north, z1: CHANNEL_SPAN.south };
+/** Kash stands only above this (m): beyond the spring tides' reach. */
+const KASH_ABOVE = 1.9;
+
+/** Whether the bank on `side` of the channel at `z` is in one of the stretches kash grows along (the film finds them too). */
+export function kashStretch(z: number, side: 1 | -1): boolean {
+  return fbm(z * 0.01, side * 9.3, 2, 62) >= 0.55;
+}
 
 interface Spot {
   x: number;
@@ -771,18 +779,24 @@ export function buildVegetation(
     });
   }
 
-  // kash on low stretches of bank
+  // kash in stretches along the bank's top, on the real shore just above the spring tides' reach (≈1.8 m), where
+  // the bank stays dry; not on the roads, the salt pans or the landmarks
   const kashItems: Placement[][] = kash.map(() => []);
   for (const side of [-1, 1] as const) {
     for (let z = BANKS.z0; z > BANKS.z1; z -= 2.8) {
-      if (fbm(z * 0.01, side * 9.3, 2, 62) < 0.55) continue;
-      const we = edgeHalfWidth(z, side);
-      for (let k = 0; k < 2; k++) {
-        const x = riverX(z) + side * (we + rng.range(2.5, 7));
-        const h = terrainHeight(x, z);
-        // only above the spring tides' reach (≈1.8 m), where the bank stays dry
-        if (h < 1.9 || h > 3.5) continue;
-        kashItems[rng.int(0, kash.length - 1)].push({ x, y: h - 0.05, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.75, 1.1) });
+      if (!kashStretch(z, side)) continue;
+      const bank = bankAt(z, side, KASH_ABOVE);
+      if (!bank || bank.d <= 0) continue;
+      const ux = (bank.x - riverX(z)) / bank.d;
+      const uz = (bank.z - z) / bank.d;
+      for (let k = 0; k < 4; k++) {
+        const d = rng.range(0.5, 12);
+        const jitter = rng.range(-1.4, 1.4);
+        const x = bank.x + ux * d - uz * jitter;
+        const zz = bank.z + uz * d + ux * jitter;
+        const h = terrainHeight(x, zz);
+        if (h < KASH_ABOVE || h > 3.5 || !onDryLand(x, zz, 0)) continue;
+        kashItems[rng.int(0, kash.length - 1)].push({ x, y: h - 0.05, z: zz, ry: rng.range(0, Math.PI * 2), s: rng.range(0.75, 1.1) });
       }
     }
   }

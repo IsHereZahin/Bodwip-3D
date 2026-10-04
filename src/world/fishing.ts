@@ -21,7 +21,7 @@ import { MeshBuilder, rgb, scaleRgb, taperedTube } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { netTexture, plankTexture } from '../render/textures';
 import { Boatman, type Hold, type Outfit } from './boatman';
-import { downstream, edgeHalfWidth, halfWidth, riverLane, riverX, terrainHeight } from './geography';
+import { bankAt, downstream, halfWidth, riverLane, riverX, terrainHeight } from './geography';
 import { buildHull, hullHalfWidthAt, hullStation, type HullShape } from './hull';
 import { LiftNet, type LiftNetMaterials, type LiftNetSpec } from './liftNet';
 import { makeBodyDrive, type BodyDrive } from './paddle';
@@ -40,15 +40,17 @@ import { hullWaves, type HullWaves } from './waves';
 // shallow, it stays hoisted and idle.
 
 /**
- * The bank nets along the boat's way down the channel, clear of the villages and the jetties (also framed by
- * the film tour). Where the channel's fishermen really set theirs is not mapped: the plan's fishing step
- * places them again.
+ * The bank nets along the boat's way down the channel (the first is framed by the film tour). Where the
+ * channel's fishermen really set theirs is not mapped, so they stand where a rule puts them [মডেল]: a bank
+ * steep enough that the water under the net is at least 0.9 m deep at mean sea level (worth setting from half
+ * flood), the machan on firm ground (not in the mangroves), well clear of the landmarks, the jetties, the port,
+ * the plant and the boat's lane, nearer a village the better; the best by that, at least 700 m apart.
  */
 export const LIFT_NETS: readonly { z: number; side: 1 | -1 }[] = [
-  { z: 6100, side: -1 },
-  { z: 4700, side: 1 },
-  { z: 2300, side: -1 },
-  { z: -700, side: 1 },
+  { z: 6180, side: -1 },
+  { z: 4860, side: -1 },
+  { z: 2000, side: 1 },
+  { z: -1100, side: -1 },
 ];
 
 /** Where the fishing boats ride at anchor: near which z, and on which side of the river's lane they prefer. */
@@ -188,10 +190,14 @@ interface ShorePlan {
   poles: [Vector3, Vector3][];
 }
 
+/** The bank's lip, where a bank net's A-frame stands: the first ground this high (m) out from the channel's middle. */
+const BANK_LIP = 0.5;
+
 function shorePlan(site: { z: number; side: 1 | -1 }): ShorePlan {
   const [dx, dz] = downstream(site.z);
   const out = new Vector3(site.side * dz, 0, -site.side * dx);
-  const edge = new Vector3(riverX(site.z) + site.side * edgeHalfWidth(site.z, site.side), 0, site.z);
+  const bank = bankAt(site.z, site.side, BANK_LIP);
+  const edge = bank ? new Vector3(bank.x, 0, bank.z) : new Vector3(riverX(site.z), 0, site.z);
   const inland = (d: number) => edge.clone().addScaledVector(out, -d);
   // the A-frame stands where the bank meets the water; the butt swings over the machan behind it
   const pivot = inland(2);

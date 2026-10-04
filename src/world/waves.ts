@@ -279,6 +279,18 @@ export function swellFactor(x: number, z: number): number {
   return Math.min(exposure * shoal, (0.39 * depth) / G.uSwell.value.w);
 }
 
+/** How hard the swell is breaking at (x, z), 0..1 (the GLSL `swellBreaking` the surf's foam is drawn by). */
+export function swellBreaking(x: number, z: number): number {
+  const exposure = exposureAt(x, z);
+  if (exposure < 0.002 || G.uSwell.value.w <= 0) return 0;
+  const depth = G.uWaterLevel.value - terrainHeight(x, z);
+  if (depth <= 0.05) return 0;
+  const shoal = Math.min(1.6, Math.max(1, (SHOAL_REF / Math.max(depth, 0.5)) ** 0.25));
+  const k = (exposure * shoal * G.uSwell.value.w) / Math.max(0.39 * depth, 1e-3);
+  const t = Math.min(1, Math.max(0, (k - 0.6) / 0.45));
+  return t * t * (3 - 2 * t);
+}
+
 /** The swell's height at (x, z), time t, before its factor there. */
 function swellRaw(x: number, z: number, t: number): number {
   let h = 0;

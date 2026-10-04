@@ -51,6 +51,7 @@ import { WindFarm } from './world/windFarm';
 import { Port } from './world/port';
 import { MapPanel, type MapActions } from './ui/mapPanel';
 import { setWalls } from './world/walkable';
+import { ambienceAt } from './world/ambience';
 import { routeLength } from './world/navigation';
 import { Ships } from './world/ships';
 import { cullBeyond, updateCulling } from './render/cull';
@@ -292,6 +293,10 @@ async function main(hud: Hud): Promise<void> {
     },
     haul: (kind, index) => fishing.haul(kind, index),
     net: (kind, index) => fishing.view(kind, index),
+    ship: (phase, along) => ships.jump(phase, along),
+    get shipFocus() {
+      return ships.focus;
+    },
     birds: (at, heading) => life.launchAll(at, heading, 60),
     get sunDir() {
       return env.sunDir;
@@ -309,6 +314,7 @@ async function main(hud: Hud): Promise<void> {
   const director = new Director(tourScenes(), stage);
   const sound = new Soundscape();
   hero.onStroke = (power) => sound.splash(power);
+  ships.onHorn = (x, z, blasts) => sound.horn(Math.hypot(camera.position.x - x, camera.position.z - z), blasts);
   hud.progress(0.85);
   await nextTask();
 
@@ -784,7 +790,8 @@ async function main(hud: Hud): Promise<void> {
     focus.set(Math.round(focus.x / 12) * 12, 0, Math.round(focus.z / 12) * 12);
     if (env.aimShadow(focus, false)) renderer.shadowMap.needsUpdate = true;
     if (weather.struck) sound.thunder();
-    sound.update(dt, env.night, G.uWind.value.z, weather.rain, plant.loudness(camera.position));
+    const near = ambienceAt(camera.position, clock.hour, dt);
+    sound.update(dt, env.night, G.uWind.value.z, weather.rain, { plant: plant.loudness(camera.position), surf: near.surf, market: near.market });
   };
   updateSky(0, true);
   step(0);

@@ -1,12 +1,12 @@
 import type { Vector3 } from 'three';
 import { DEG, clamp } from '../core/mathx';
 
-// Sun and moon over Bengal (latitude 23.7° N). The sun's place on the ecliptic follows the day of the
-// year (`setSunDay`), so summer days are long and the sun high, winter days short and the sun low, and
-// sunrise and sunset move through the year. The moon walks the ecliptic about 12° a day ahead of the
-// sun, so it rises roughly 50 minutes later each night and passes through its phases.
+// Sun and moon over Moheshkhali (latitude 21.6° N, the island's middle). The sun's place on the ecliptic
+// follows the day of the year (`setSunDay`), so summer days are long and the sun high, winter days short and
+// the sun low, and sunrise and sunset move through the year. The moon walks the ecliptic about 12° a day
+// ahead of the sun, so it rises roughly 50 minutes later each night and passes through its phases.
 
-const LATITUDE = 23.7 * DEG;
+const LATITUDE = 21.6 * DEG;
 const OBLIQUITY = 23.44 * DEG;
 /** Days from one new moon to the next. */
 export const SYNODIC_MONTH = 29.53;

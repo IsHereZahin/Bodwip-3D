@@ -1,8 +1,19 @@
 /**
  * The whole soundscape is synthesised with Web Audio from one noise buffer and a few oscillators:
- * river, wind, oar splashes, birds by day, crickets by night, the power plant's drone near it. Nothing is downloaded.
+ * river, wind, oar splashes, birds by day, crickets by night, and the places near the listener (world/ambience.ts):
+ * the power plant's drone, the surf on the beaches, Gorakghata's bazaar; a ship's whistle. Nothing is downloaded.
  * Browsers only allow audio after a user gesture, so `start()` is called from one.
  */
+/** How near each place's sound is (0..1). */
+export interface Nearby {
+  plant: number;
+  surf: number;
+  market: number;
+}
+
+/** The speed of sound (m/s): a far ship's whistle comes late. */
+const SOUND_SPEED = 343;
+
 export class Soundscape {
   private ctx: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -13,7 +24,11 @@ export class Soundscape {
   private windFilter: BiquadFilterNode | null = null;
   private rain: GainNode | null = null;
   private hum: GainNode | null = null;
+  private surf: GainNode | null = null;
+  private market: GainNode | null = null;
   private nextBird = 2;
+  private nextBreaker = 3;
+  private nextVoice = 0;
   private nextCricket = 0;
   muted = false;
 
@@ -86,6 +101,9 @@ export class Soundscape {
     const rg = ctx.createGain();
     rg.gain.value = 1.2;
     this.loop().connect(rumble).connect(rg).connect(this.hum);
+    // the surf's wash between its breakers, and the bazaar's murmur under its voices: silent away from them
+    this.surf = this.bed(700, 70, 0);
+    this.market = this.bed(1800, 260, 0);
   }
 
   setMuted(muted: boolean): void {
@@ -188,6 +206,90 @@ export class Soundscape {
     o.stop(t + 1.8);
   }
 
+  /** A breaker on the beach: a roar that crashes and drains away down the sand. */
+  private breaker(level: number): void {
+    const ctx = this.ctx!;
+    const t = ctx.currentTime + 0.05;
+    const s = ctx.createBufferSource();
+    s.buffer = this.noise;
+    s.playbackRate.value = 0.55 + Math.random() * 0.2;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(2400, t);
+    lp.frequency.exponentialRampToValueAtTime(300, t + 2.8);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.22 * level, t + 0.35);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 3.2);
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = Math.random() - 0.5;
+    s.connect(lp).connect(g).connect(pan).connect(this.master!);
+    s.start(t, Math.random() * 3);
+    s.stop(t + 3.3);
+  }
+
+  /** One voice in the bazaar's crowd: a short vowel-like burst of noise. */
+  private voice(level: number): void {
+    const ctx = this.ctx!;
+    const t = ctx.currentTime + 0.02;
+    const dur = 0.12 + Math.random() * 0.2;
+    const s = ctx.createBufferSource();
+    s.buffer = this.noise;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.setValueAtTime(450 + Math.random() * 1100, t);
+    bp.frequency.linearRampToValueAtTime(400 + Math.random() * 1200, t + dur);
+    bp.Q.value = 6;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.05 * level, t + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = Math.random() * 1.4 - 0.7;
+    s.connect(bp).connect(g).connect(pan).connect(this.master!);
+    s.start(t, Math.random() * 3);
+    s.stop(t + dur + 0.02);
+  }
+
+  /** A ship's whistle `distance` m off: its blasts (s each), as late and as soft as the distance makes them. */
+  horn(distance: number, blasts: readonly number[]): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.master || this.muted) return;
+    const level = 0.3 / (1 + distance / 300);
+    if (level < 0.01) return;
+    let t = ctx.currentTime + 0.05 + distance / SOUND_SPEED;
+    // the air takes the top off a far one
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 900 / (1 + distance / 1500);
+    const g = ctx.createGain();
+    g.gain.value = 0.0001;
+    lp.connect(g).connect(this.master);
+    const from = t;
+    for (const len of blasts) {
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(level, t + 0.15);
+      g.gain.setValueAtTime(level, t + len - 0.2);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + len);
+      t += len + 1;
+    }
+    // a big ship's whistle: low, its fifth and octave over it
+    for (const [f, share] of [
+      [92, 0.5],
+      [138, 0.3],
+      [184, 0.15],
+    ]) {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.value = f;
+      const og = ctx.createGain();
+      og.gain.value = share;
+      o.connect(og).connect(lp);
+      o.start(from);
+      o.stop(t);
+    }
+  }
+
   /** Thunder after a lightning flash: a low roll that swells and dies away. */
   thunder(): void {
     const ctx = this.ctx;
@@ -208,12 +310,14 @@ export class Soundscape {
     s.stop(t + 6);
   }
 
-  /** `plant`: how near the power plant is (0..1, world/powerPlant.ts loudness). */
-  update(dt: number, night: number, wind: number, rain: number, plant = 0): void {
+  /** `near`: how near the places that sound are (world/powerPlant.ts loudness, world/ambience.ts). */
+  update(dt: number, night: number, wind: number, rain: number, near: Nearby): void {
     const ctx = this.ctx;
-    if (!ctx || !this.master || !this.wind || !this.windFilter || !this.river || !this.rain || !this.hum) return;
+    if (!ctx || !this.master || !this.wind || !this.windFilter || !this.river || !this.rain || !this.hum || !this.surf || !this.market) return;
     const now = ctx.currentTime;
-    this.hum.gain.setTargetAtTime(0.05 * plant, now, 1);
+    this.hum.gain.setTargetAtTime(0.05 * near.plant, now, 1);
+    this.surf.gain.setTargetAtTime(0.1 * near.surf, now, 1.5);
+    this.market.gain.setTargetAtTime(0.035 * near.market, now, 1.5);
     // the river carries further in the still night air
     this.river.gain.setTargetAtTime(0.2 + 0.08 * night, now, 2);
     // the wind roars more than it grows: louder and higher as it strengthens
@@ -230,6 +334,17 @@ export class Soundscape {
     if (this.nextCricket <= 0) {
       if (night > 0.3) this.crickets(night);
       this.nextCricket = 0.6 + Math.random() * 1.6;
+    }
+    // a breaker every swell or so, and the crowd's voices the busier the nearer
+    this.nextBreaker -= dt;
+    if (this.nextBreaker <= 0) {
+      if (near.surf > 0.03) this.breaker(near.surf);
+      this.nextBreaker = 4.5 + Math.random() * 5;
+    }
+    this.nextVoice -= dt;
+    if (this.nextVoice <= 0) {
+      if (near.market > 0.03) this.voice(near.market);
+      this.nextVoice = 0.08 + (Math.random() * 0.25) / Math.max(0.2, near.market);
     }
   }
 }
