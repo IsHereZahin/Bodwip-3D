@@ -17,7 +17,7 @@ import { fbm, valueNoise } from '../core/noise';
 import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
-import { bankInfo, onBridge } from './geography';
+import { bankInfo, onBridge, onLandmark } from './geography';
 import { groundLattice } from './terrain';
 import { GHATS, type HutPlan } from './village';
 
@@ -329,7 +329,7 @@ export class Meadow {
           continue;
         }
         if (huts.some((h) => Math.hypot(h.x - x, h.z - z) < Math.max(h.l, h.w) * 0.6 + 0.4)) continue;
-        if (onBridge(x, z)) continue;
+        if (onBridge(x, z) || onLandmark(x, z)) continue;
         if (ghats.some((gh) => Math.abs(gh.z - z) < 3.2 && bankInfo(x, z).side === gh.side && bankInfo(x, z).inland < 21)) continue;
         // grass where the ground is grassy, in drifts, thinning on trodden earth and in the paddy
         const drift = smoothstep(0.28, 0.62, fbm(x * 0.07, z * 0.07, 2, 91));

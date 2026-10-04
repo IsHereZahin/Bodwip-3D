@@ -3,6 +3,14 @@ import { clamp, smoothstep } from '../core/mathx';
 
 // Where land and water are. The terrain mesh, the water field and every placement read these,
 // so the boat, the trees and the riverbed always agree.
+// The world is Moheshkhali, off Cox's Bazar, scaled down about 1:5 along its length (heights kept near
+// their own): the boat goes south down the Moheshkhali channel. On its right bank (west, +x) lies the
+// island, the only hilly island in Bangladesh: a strip of villages along its east coast, Gorakghata with
+// its jetty under Adinath hill, the forested hill range down its middle and east, its low tract of paddy
+// and salt fields to the west cut off by the Kohelia (Matarbari and Dhalghata beyond it), and its beaches
+// on the Bay; its north coast faces the Kutubdia channel, and across a canal off its south end lies
+// crescent Sonadia, dunes and mangroves at the channel's mouth. On the left bank (east) is the mainland:
+// villages and fields, the shapla bil, and toward the mouth the flats of Cox's Bazar with hills beyond.
 
 /** World extent along the river (it flows toward −z). */
 export const WORLD_Z0 = 460;
@@ -134,7 +142,7 @@ export interface Village {
 }
 
 export const VILLAGES: readonly Village[] = [
-  { z: 210, side: 1, inland: 40, radius: 75 },
+  { z: 130, side: 1, inland: 40, radius: 75 },
   { z: -160, side: -1, inland: 35, radius: 70 },
   { z: -430, side: -1, inland: 55, radius: 85 },
   { z: -780, side: 1, inland: 38, radius: 80 },
@@ -142,11 +150,12 @@ export const VILLAGES: readonly Village[] = [
   { z: -1420, side: -1, inland: 36, radius: 85 },
   { z: -1720, side: 1, inland: 45, radius: 75 },
   { z: -2080, side: -1, inland: 40, radius: 80 },
-  { z: -2380, side: 1, inland: 50, radius: 85 },
+  // Gorakghata, the island's town, below Adinath hill (its jetty in world/moheshkhali.ts)
+  { z: -2440, side: 1, inland: 45, radius: 95 },
   { z: -2730, side: -1, inland: 38, radius: 75 },
-  // the salt workers' villages on the coast
+  // the salt workers' village on the mainland's coast, and the fishermen's on Sonadia
   { z: -3640, side: -1, inland: 70, radius: 70 },
-  { z: -3980, side: 1, inland: 90, radius: 65 },
+  { z: -3820, side: 1, inland: 560, radius: 55 },
 ];
 
 export interface Point2 {
@@ -159,10 +168,10 @@ export const VILLAGE_CENTERS: readonly Point2[] = VILLAGES.map((v) => ({
   z: v.z,
 }));
 
-/** One pond per village, behind the houses. */
+/** One pond per village: behind the houses on the mainland, beside them on the island (behind them rise its hills). */
 export const PONDS: readonly (Point2 & { r: number })[] = VILLAGES.map((v, i) => ({
-  x: VILLAGE_CENTERS[i].x + v.side * v.radius * 1.15,
-  z: v.z + (i % 2 ? 22 : -22),
+  x: VILLAGE_CENTERS[i].x + (v.side > 0 ? 0 : v.side * v.radius * 1.15),
+  z: v.z + (v.side > 0 ? (i % 2 ? 1 : -1) * v.radius * 1.15 : i % 2 ? 22 : -22),
   r: 13 + (i % 3) * 2,
 }));
 
@@ -190,12 +199,240 @@ export function coastal(z: number): number {
   return smoothstep(COAST_Z0, COAST_Z1, z);
 }
 
+// ---------- Moheshkhali island (the right bank) ----------
+
+/** The island's coasts: where its north coast meets the channel (z), its south coast across the canal from Sonadia (z), its west coast on the Bay (u). */
+export const ISLAND = { northZ: 235, southZ: -3440, westU: 1950 } as const;
+/** Sonadia: a crescent of dunes and mangroves off the island's south end (its circle's middle and radius, in z and u). */
+export const SONADIA = { z: -3880, u: 880, r: 400 } as const;
+/** Adinath hill (Mainak pahar) above Gorakghata: where its top is (z, u), how high, and the level ground the temple stands on. */
+export const ADINATH = (() => {
+  const z = -2290;
+  return { z, u: edgeHalfWidth(z, 1) + 225, top: 46, flat: 15, radius: 105 };
+})();
+/**
+ * Gorakghata's landmarks (built in world/moheshkhali.ts): the jetty reaching out into the channel from the
+ * town's bank (where it leaves the bank, its length and width), the brick buildings along the bank road by
+ * it (a strip of the bank: z from–to, how far inland), the stair up Adinath hill from the edge of the town to
+ * the temple's terrace (from–to, world), and the Rakhine pagoda behind the town.
+ */
+export const GORAKGHATA = (() => {
+  const z = -2468;
+  const edge = edgeHalfWidth(z, 1);
+  const at = (zz: number, inland: number) => ({ x: riverX(zz) + edgeHalfWidth(zz, 1) + inland, z: zz });
+  return {
+    jetty: { x: riverX(z) + edge + 4, z, length: 58, width: 3.2 },
+    town: { z0: -2515, z1: -2440, inland0: 6, inland1: 34 },
+    stair: { from: at(-2372, 128), to: at(ADINATH.z - 10, 214) },
+    pagoda: { ...at(-2560, 125), r: 10 },
+  };
+})();
+
+/** Cox's Bazar's buildings across the channel's mouth on the mainland: z from–to, u from–to (left of the channel). */
+export const COXS_BAZAR = { z0: -4050, z1: -4290, u0: -420, u1: -1300 } as const;
+
+/** The dry-fish yards (shutki): by Sonadia's fishing village, and on the mainland's point at the channel's mouth. */
+export const SHUTKI_YARDS: readonly { x: number; z: number; ry: number; rows: number }[] = (() => {
+  const i = VILLAGES.findIndex((v) => v.side > 0 && v.z < -3700);
+  const mz = -3920;
+  return [
+    ...(i >= 0 ? [{ x: VILLAGE_CENTERS[i].x + 40, z: VILLAGE_CENTERS[i].z + 30, ry: 0.4, rows: 6 }] : []),
+    { x: riverX(mz) - edgeHalfWidth(mz, -1) - 70, z: mz, ry: -0.3, rows: 7 },
+  ];
+})();
+
+/** Adinath hill's top and its face toward the channel, kept open (grass and scrub) so the temple and its stair show from the water: trees keep off it. */
+export function onTempleHill(x: number, z: number): boolean {
+  const u = x - riverX(z);
+  const d = Math.hypot(u - ADINATH.u, z - ADINATH.z);
+  return d < ADINATH.flat + 30 || (d < ADINATH.radius && u < ADINATH.u + 10);
+}
+
+/** Ground the landmarks stand on (with `margin` m round it): no huts, trees or tall grass there. */
+export function onLandmark(x: number, z: number, margin = 0): boolean {
+  const g = GORAKGHATA;
+  const u = x - riverX(z);
+  const inland = u - edgeHalfWidth(z, 1);
+  if (z < g.town.z1 + margin && z > g.town.z0 - margin && inland > g.town.inland0 - 4 - margin && inland < g.town.inland1 + margin) return true;
+  if (Math.hypot(x - g.pagoda.x, z - g.pagoda.z) < g.pagoda.r + margin) return true;
+  for (const y of SHUTKI_YARDS) if (Math.hypot(x - y.x, z - y.z) < 14 + margin) return true;
+  if (Math.hypot(u - ADINATH.u, z - ADINATH.z) < ADINATH.flat + 3 + margin) return true;
+  // along the stair
+  const sx = g.stair.to.x - g.stair.from.x;
+  const sz = g.stair.to.z - g.stair.from.z;
+  const t = Math.max(0, Math.min(1, ((x - g.stair.from.x) * sx + (z - g.stair.from.z) * sz) / (sx * sx + sz * sz)));
+  return Math.hypot(x - g.stair.from.x - sx * t, z - g.stair.from.z - sz * t) < 2.6 + margin;
+}
+
+/** The Kohelia: a tidal river down the island's low west, from its head (z) to the sea. */
+const KOHELIA = { head: -650, u: 1330 } as const;
+
+/** The island's west coast (u) at z: it narrows toward its south end. */
+export function islandWestCoast(z: number): number {
+  return westCoastU(z);
+}
+
+/** The island's north coast (z) at u. */
+export function islandNorthCoast(u: number): number {
+  return ISLAND.northZ - 0.13 * Math.max(u - 150, 0) + 20 * Math.sin(u * 0.009);
+}
+
+function westCoastU(z: number): number {
+  const taper = smoothstep(-2500, ISLAND.southZ, z);
+  return ISLAND.westU + 130 * Math.sin(z * 0.0012 + 0.9) + 60 * Math.sin(z * 0.0037 + 2.1) - taper * 850;
+}
+
+/** How far inside the island (z, u) lies from its nearest coast on the sea (m; negative off it). */
+export function islandCoast(z: number, u: number): number {
+  const north = islandNorthCoast(u);
+  const south = ISLAND.southZ + 0.08 * Math.max(u - 200, 0) + 15 * Math.sin(u * 0.011 + 1);
+  return Math.min(north - z, westCoastU(z) - u, z - south);
+}
+
+/** The Kohelia's centre line (u) at z, its half-width there, and how far (z, u) is from it (+∞ above its head). */
+function koheliaDistance(z: number, u: number): { d: number; hw: number } {
+  if (z > KOHELIA.head + 30) return { d: Infinity, hw: 0 };
+  const c = KOHELIA.u + 60 * Math.sin(z * 0.004 + 0.7) + 25 * Math.sin(z * 0.011 + 1.9);
+  const hw = 5 + 22 * smoothstep(KOHELIA.head, ISLAND.southZ, z);
+  return { d: Math.hypot(u - c, Math.max(0, z - KOHELIA.head)), hw };
+}
+
+/** The line along the top of the island's hills (u) at z. */
+function hillCrestU(z: number): number {
+  return edgeHalfWidth(z, 1) + 420 + 70 * Math.sin(z * 0.0013 + 0.8) + 30 * Math.sin(z * 0.0041 + 2.0);
+}
+
+/**
+ * The island's hills: a range of steep, forested hills about 50–85 m high down its middle and along its east
+ * coast, many knolls and saddles, ravines down their flanks, steeper toward the channel; they die away at its
+ * north and south ends and give way to the khals that wind along their foot. Adinath hill stands apart by the
+ * coast, its level top the temple's.
+ */
+export function hillHeight(x: number, z: number): number {
+  const u = x - riverX(z);
+  if (u < 100) return 0;
+  const rise = smoothstep(ISLAND.northZ - 60, ISLAND.northZ - 420, z) * smoothstep(ISLAND.southZ + 60, ISLAND.southZ + 520, z);
+  let h = 0;
+  if (rise > 0) {
+    const d = u - hillCrestU(z);
+    const t = d < 0 ? -d / 220 : d / 560;
+    if (t < 1) {
+      const dome = 0.5 + 0.5 * Math.cos(Math.PI * t);
+      const peak = 54 + 20 * Math.sin(z * 0.0029 + 1.7) + 12 * Math.sin(z * 0.0071 + 0.3);
+      const massif = 0.45 + 0.75 * fbm(x * 0.0055, z * 0.0055, 3, 101);
+      const ravine = Math.abs(fbm(x * 0.014, z * 0.014, 2, 103) * 2 - 1);
+      h = rise * peak * dome * massif * (0.68 + 0.32 * Math.min(1, ravine * 2.2));
+    }
+  }
+  const a = Math.hypot(u - ADINATH.u, z - ADINATH.z);
+  if (a < ADINATH.radius) {
+    const k = a < ADINATH.flat ? 1 : 0.5 + 0.5 * Math.cos((Math.PI * (a - ADINATH.flat)) / (ADINATH.radius - ADINATH.flat));
+    h = Math.max(h, ADINATH.top * k);
+  }
+  // the creeks along their foot keep their valleys
+  if (h > 0) {
+    for (let i = 0; i < KHALS.length; i++) {
+      const k = KHALS[i];
+      if (k.side < 0 || z > Math.max(k.z0, k.z1) + 40 || z < Math.min(k.z0, k.z1) - 40) continue;
+      const gap = Math.abs(u - khalLine(i, z));
+      if (gap < 80) h *= smoothstep(18, 80, gap);
+    }
+  }
+  return h;
+}
+
+/** How far inside Sonadia's crescent (z, u) lies (m; negative off it, −999 well clear): the circle with a bite out of its south-west side, opening onto the Bay. */
+function sonadiaInside(z: number, u: number): number {
+  const r1 = Math.hypot(z - SONADIA.z, u - SONADIA.u);
+  if (r1 > SONADIA.r + 120) return -999;
+  const r2 = Math.hypot(z - (SONADIA.z - 270), u - (SONADIA.u + 240));
+  return Math.min(SONADIA.r - r1, r2 - SONADIA.r * 0.82);
+}
+
+/** Sonadia's ground at (z, u): low dunes inside the crescent, its beaches, and the sea round it (−99 well clear of it). */
+function sonadiaHeight(z: number, u: number): number {
+  const inside = sonadiaInside(z, u);
+  if (inside < -900) return -99;
+  if (inside < 0) return Math.max(-3.2, 0.45 + inside * 0.05);
+  const dunes = 1.4 + 3 * fbm(z * 0.02, u * 0.02, 3, 111) * fbm(z * 0.006 + 4, u * 0.006, 2, 113);
+  return 0.45 + (dunes - 0.45) * smoothstep(0, 70, inside);
+}
+
+/** The island's ground (u > 0): its low tract and coastal strip, its hills, the Kohelia, and its beaches down to the sea. */
+function islandLevel(x: number, z: number, u: number, base: number): number {
+  const coast = islandCoast(z, u);
+  // the low tract lies a little above the monsoon's water, lower toward the west coast
+  let h = base - 0.4 * smoothstep(500, 1300, u);
+  h += hillHeight(x, z);
+  const k = koheliaDistance(z, u);
+  if (k.d < k.hw + 10) {
+    const bed = -2.2 * (1 - smoothstep(0.3, 1, k.d / Math.max(k.hw, 1)));
+    h = Math.min(h, k.d < k.hw ? bed : bed + (h - bed) * smoothstep(k.hw, k.hw + 10, k.d));
+  }
+  // its beaches on the Bay (and on the Kutubdia channel, and the canal to Sonadia), and the sea floor beyond
+  if (coast < 90) {
+    const beach = 0.4 + 0.3 * fbm(x * 0.02, z * 0.02, 2, 109);
+    h = coast > 0 ? beach + (h - beach) * smoothstep(0, 90, coast) : Math.max(-3.2, beach + coast * 0.05);
+  }
+  return Math.max(h, sonadiaHeight(z, u));
+}
+
+/** How much of (x, z) is hill forest (0..1): the island's hills and the mainland's. */
+export function forestCover(x: number, z: number): number {
+  const u = x - riverX(z);
+  return smoothstep(0.8, 5, u > 0 ? hillHeight(x, z) : mainlandHills(x, z, u));
+}
+
+/** How much of (x, z) is beach or dune sand (0..1): along the island's coasts on the sea, and all over Sonadia. */
+export function sandCover(x: number, z: number): number {
+  const u = x - riverX(z);
+  if (u <= 0) return 0;
+  const coast = islandCoast(z, u);
+  const beach = coast > -60 ? smoothstep(70, 18, coast) : 0;
+  return Math.max(beach, smoothstep(-25, 25, sonadiaInside(z, u)));
+}
+
+/**
+ * Where mangroves grow (0..1): on the tidal mud along the channel toward its two mouths, along the Kohelia,
+ * on the island's north shore and round Sonadia's inner side, a little above and below the water's reach.
+ */
+export function mangroveZone(x: number, z: number, h: number): number {
+  const reach = smoothstep(-0.35, 0, h) * smoothstep(1.1, 0.5, h);
+  if (reach <= 0) return 0;
+  const u = x - riverX(z);
+  const ends = Math.max(smoothstep(-200, 150, z), smoothstep(-3100, -3500, z));
+  let near = 0;
+  if (Math.abs(u) - edgeHalfWidth(z, u >= 0 ? 1 : -1) < 40) near = ends;
+  if (u > 0) {
+    const k = koheliaDistance(z, u);
+    if (k.d < k.hw + 30) near = Math.max(near, 0.9);
+    if (islandCoast(z, u) < 50 && z > ISLAND.northZ - 600) near = Math.max(near, 0.8);
+    const s = sonadiaInside(z, u);
+    if (s > -40 && s < 60 && z > SONADIA.z - 150) near = Math.max(near, 0.9);
+  }
+  return reach * near * (0.55 + 0.45 * fbm(x * 0.03, z * 0.03, 2, 117));
+}
+
+/**
+ * The mainland's hills, far off on the left bank toward Cox's Bazar (0 elsewhere): a range, falling away again
+ * before the world's east and south edges, where the ground ends and they would stand cut off like a wall.
+ */
+function mainlandHills(x: number, z: number, u: number): number {
+  if (u > -1350) return 0;
+  const across = smoothstep(-1350, -1850, u) * smoothstep(-WORLD_U, -WORLD_U + 380, u);
+  const along = smoothstep(-800, -1700, z) * smoothstep(WORLD_Z1, WORLD_Z1 + 450, z);
+  return across * along * (50 + 35 * fbm(x * 0.004, z * 0.004, 3, 107));
+}
+
 /** Height of the floodplain (fields, village mounds) ignoring the river. */
 export function landLevel(x: number, z: number): number {
   let h = 1.8 + (fbm(x * 0.003, z * 0.003, 3, 11) - 0.5) * 0.9;
-  // toward the sea the land sinks to low, level flats, a little above the monsoon's water
-  const c = coastal(z);
+  const u = x - riverX(z);
+  // toward the sea the mainland sinks to low, level flats, a little above the monsoon's water; the island has its own ground
+  const c = u < 0 ? coastal(z) : 0;
   if (c > 0) h += (0.95 + (fbm(x * 0.01, z * 0.01, 2, 61) - 0.5) * 0.12 - h) * c;
+  if (u > 0) h = islandLevel(x, z, u, h);
+  else h += mainlandHills(x, z, u);
   // villages sit on raised mounds (bhita) above the monsoon floods
   h += 1.25 * smoothstep(1.5, 0.55, villageDistance(x, z));
   return h;
@@ -542,6 +779,7 @@ function findWetlands(): (Point2 & { r: number })[] {
           const x = riverX(z) + side * (edgeHalfWidth(z, side) + inland);
           // inside the river's field (the water's depth is read from it) and clear of everything wet or built
           if (Math.abs(x) > 600 - r * 1.5) continue;
+          if (side > 0 && hillHeight(x, z) > 0.3) continue;
           if (VILLAGES.some((v, i) => Math.hypot(x - VILLAGE_CENTERS[i].x, z - VILLAGE_CENTERS[i].z) < v.radius + r * 1.4 + 15)) continue;
           if (PONDS.some((p) => Math.hypot(x - p.x, z - p.z) < p.r + r * 1.4 + 10)) continue;
           if (nearBackwater(x, z, r * 1.4 + 12)) continue;
@@ -590,15 +828,39 @@ export function wetlandMarsh(x: number, z: number): number {
   return m;
 }
 
-/** Salt pans at (x, z): on the low coastal flats, back from the bank and clear of the villages and backwaters (0..1). */
+/**
+ * Salt pans at (x, z) (0..1): on the island's low tract west of its hills (more of it toward the south, all of
+ * Matarbari and Dhalghata beyond the Kohelia) and on the mainland's coastal flats toward Cox's Bazar; back
+ * from the banks and the beaches, clear of the villages, the backwaters and the hills.
+ */
 export function saltPan(x: number, z: number): number {
-  const c = coastal(z);
-  if (c <= 0) return 0;
   const u = x - riverX(z);
   const side = u >= 0 ? 1 : -1;
   const inland = Math.abs(u) - edgeHalfWidth(z, side);
   if (inland < 8 || nearBackwater(x, z, 6)) return 0;
-  return c * smoothstep(10, 24, inland) * smoothstep(1.25, 1.8, villageDistance(x, z)) * smoothstep(1100, 800, inland);
+  const clear = smoothstep(10, 24, inland) * smoothstep(1.25, 1.8, villageDistance(x, z));
+  if (onLandmark(x, z, 8)) return 0;
+  if (side < 0) {
+    // not under the town
+    const c = COXS_BAZAR;
+    if (z < c.z0 + 30 && z > c.z1 - 30 && u < c.u0 + 30 && u > c.u1 - 30) return 0;
+    return worked(coastal(z) * clear * smoothstep(1100, 800, inland));
+  }
+  const k = koheliaDistance(z, u);
+  if (k.d < k.hw + 12) return 0;
+  const low = 1 - smoothstep(0.4, 2.2, hillHeight(x, z));
+  const ashore = smoothstep(40, 120, islandCoast(z, u));
+  // the tract (the west lowland south of the Kohelia's head, and everything beyond the Kohelia) ends along a
+  // wandering line, and over a short way
+  const wander = 70 * Math.sin(u * 0.009 + 1.3) + 30 * Math.sin(z * 0.013 + 0.4);
+  const south = smoothstep(-1150, -1230, z + wander) * smoothstep(740, 800, u + wander * 0.6);
+  const beyond = smoothstep(KOHELIA.u - 70, KOHELIA.u - 20, u + wander * 0.4);
+  return worked(clear * low * ashore * Math.max(south, beyond));
+}
+
+/** A pan is worked or it is not: a long fade would draw the pans faint through the grass round the tract. */
+function worked(v: number): number {
+  return smoothstep(0.3, 0.7, v);
 }
 
 export function terrainHeight(x: number, z: number): number {

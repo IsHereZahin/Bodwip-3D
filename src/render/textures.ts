@@ -1181,3 +1181,27 @@ export function printTexture(ground: string, sprig: string, leaf: string, seed: 
   });
   return toTexture(ctx, { repeat: true });
 }
+
+/** Casuarina (jhau) foliage: fine grey-green needles hanging in tufts from thin twigs, for its feathery crown. */
+export function needleTexture(seed: number): DataTexture {
+  const S = 128;
+  const rng = new Rng(seed);
+  const ctx = paint(S, S, (c) => {
+    c.lineCap = 'round';
+    for (let t = 0; t < 26; t++) {
+      const x = rng.range(10, S - 10);
+      const y = rng.range(6, S * 0.5);
+      for (let k = 0; k < 22; k++) {
+        c.strokeStyle = rng.pick(['#3f5638', '#4c6442', '#58704c', '#647a56', '#36492f']);
+        c.lineWidth = rng.range(0.8, 1.5);
+        const a = Math.PI / 2 + rng.range(-0.5, 0.5);
+        const l = rng.range(18, 48);
+        c.beginPath();
+        c.moveTo(x, y);
+        c.quadraticCurveTo(x + Math.cos(a) * l * 0.4, y + Math.sin(a) * l * 0.4, x + Math.cos(a) * l, y + Math.sin(a) * l);
+        c.stroke();
+      }
+    }
+  });
+  return toTexture(ctx, { bleed: true });
+}

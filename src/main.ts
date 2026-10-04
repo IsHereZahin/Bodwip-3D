@@ -36,6 +36,8 @@ import { buildPondLife } from './world/ponds';
 import { buildRain } from './world/rain';
 import { BRIDGE_CLEARING, bridgeTrees, buildBridge } from './world/bridge';
 import { Girl } from './world/girl';
+import { buildMoheshkhali } from './world/moheshkhali';
+import { cullBeyond, updateCulling } from './render/cull';
 import { buildSky } from './world/sky';
 import { buildTerrain } from './world/terrain';
 import { buildVegetation } from './world/vegetation';
@@ -115,10 +117,19 @@ async function main(hud: Hud): Promise<void> {
   await nextTask();
   const huts = planHuts();
   scene.add(buildVillages(huts));
-  scene.add(buildSaltWorks());
+  // small things far off are left undrawn (render/cull.ts): the salt works' bunds and heaps, the betel
+  // gardens and dry-fish yards, and the trees beyond the haze
+  const saltWorks = buildSaltWorks();
+  scene.add(saltWorks);
+  cullBeyond(saltWorks, 1100);
+  const landmarks = buildMoheshkhali();
+  scene.add(landmarks.seen, landmarks.near);
+  cullBeyond(landmarks.near, 1500);
   hud.progress(0.52);
   await nextTask();
-  scene.add(buildVegetation(huts, surfaces.bark, [...fishingClearings(), BRIDGE_CLEARING], bridgeTrees()));
+  const vegetation = buildVegetation(huts, surfaces.bark, [...fishingClearings(), BRIDGE_CLEARING], bridgeTrees());
+  scene.add(vegetation);
+  cullBeyond(vegetation, 1900);
   scene.add(buildBridge());
   const girl = new Girl();
   scene.add(girl.group);
@@ -623,6 +634,7 @@ async function main(hud: Hud): Promise<void> {
     const cut = clamp(1 - (now - readyAt) / 2600, 0, 1);
     // the journey's mist fade belongs to the boat; a free camera elsewhere doesn't see the boat loop
     const loop = rig.mode === 'follow' || director.active ? rig.fade : 0;
+    updateCulling(camera.position);
     pipeline.render(renderer, scene, camera, {
       exposure: env.exposure,
       fade: Math.max(cut, loop),

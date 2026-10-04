@@ -16,8 +16,9 @@ export interface Placement {
 }
 
 export interface InstanceOptions {
-  /** Instances are split into slabs this long along z, so slabs off-screen are culled. */
+  /** Instances are split into slabs this long along z and this wide across x, so slabs off-screen (or far off, see cull.ts) are left undrawn. */
   chunk?: number;
+  across?: number;
   cast?: boolean;
   receive?: boolean;
   layer?: number;
@@ -31,9 +32,10 @@ export function instanced(
 ): Group {
   const group = new Group();
   const chunk = options.chunk ?? 600;
+  const across = options.across ?? 1300;
   const buckets = new Map<number, Placement[]>();
   for (const p of items) {
-    const k = Math.floor(p.z / chunk);
+    const k = Math.floor(p.z / chunk) * 64 + Math.floor(p.x / across);
     let list = buckets.get(k);
     if (!list) buckets.set(k, (list = []));
     list.push(p);

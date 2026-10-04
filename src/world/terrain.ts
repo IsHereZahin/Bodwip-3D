@@ -15,6 +15,9 @@ import {
   landLevel,
   riverX,
   bridgePath,
+  forestCover,
+  mangroveZone,
+  sandCover,
   saltPan,
   terrainHeight,
   villageDistance,
@@ -34,6 +37,12 @@ const COLORS = {
   grassB: rgb('#647b33'),
   grassDry: rgb('#857e48'),
   dust: rgb('#7d6849'),
+  /** The hills under their forest: dark canopy greens, and the red earth where it shows through. */
+  forest: rgb('#1f3317'),
+  forestLight: rgb('#33502a'),
+  laterite: rgb('#7a4a30'),
+  /** Tidal mud where the mangroves stand. */
+  tidalMud: rgb('#4a4236'),
   /** The coastal flats: grey, salty clay with a thin, wiry grass. */
   saltClay: rgb('#8a8170'),
   coastGrass: rgb('#6d7442'),
@@ -42,27 +51,28 @@ const COLORS = {
 /**
  * Columns are laid out across the river from its centre line, so the grid is dense where
  * the banks and khals are (and follows them round every bend), still fine over the bil behind
- * the left bank, and coarse out in the fields.
+ * the left bank and over the island's hills on the right, and coarser out in the fields and the sea.
  */
 function columnOffsets(): number[] {
   const near: number[] = [];
   for (let u = -460; u < -240; u += 4) near.push(u);
   for (let u = -240; u <= 260; u += 3) near.push(u);
-  // the estuary's right bank, where the river is widest
+  // the estuary's right bank, where the river is widest, then the island's hills
   for (let u = 264; u <= 420; u += 4) near.push(u);
-  const far = (from: number, step: number): number[] => {
+  for (let u = 428; u <= 1080; u += 8) near.push(u);
+  const far = (from: number, step: number, most: number): number[] => {
     const out: number[] = [];
     let u = from;
     let d = step;
     while (u < WORLD_U) {
-      d *= 1.09;
+      d = Math.min(d * 1.09, most);
       u = Math.min(u + d, WORLD_U);
       out.push(u);
     }
     return out;
   };
-  const left = far(-near[0], 4).map((v) => -v).reverse();
-  return [...left, ...near, ...far(near[near.length - 1], 3)];
+  const left = far(-near[0], 4, 30).map((v) => -v).reverse();
+  return [...left, ...near, ...far(near[near.length - 1], 8, 40)];
 }
 
 /**
@@ -114,16 +124,29 @@ function cover(x: number, z: number, u: number, h: number): Cover {
   // the footpath over the old bridge, worn to bare earth
   const path = bridgePath(x, z);
   ground = mixRgb(ground, COLORS.dust, path * 0.85);
+  // the hills under their forest, red earth showing in patches and down the steepest gullies
+  const forest = forestCover(x, z);
+  if (forest > 0) {
+    const canopy = mixRgb(COLORS.forest, COLORS.forestLight, fbm(x * 0.02, z * 0.02, 3, 121));
+    const bare = smoothstep(0.72, 0.85, fbm(x * 0.03 + 9, z * 0.03, 2, 123));
+    ground = mixRgb(ground, mixRgb(canopy, COLORS.laterite, bare * 0.8), forest);
+  }
+  // beaches and Sonadia's dunes, and the tidal mud of the mangroves
+  const sand = sandCover(x, z);
+  ground = mixRgb(ground, mixRgb(COLORS.sand, COLORS.sandWet, smoothstep(1.2, 0.3, h)), sand);
+  const mangrove = mangroveZone(x, z, h);
+  ground = mixRgb(ground, COLORS.tidalMud, mangrove * 0.8);
   const fields = smoothstep(0.3, 0.42, fbm(x * 0.0025 + 5, z * 0.0025, 2, 44));
-  // paddy inland; on the coast, salt pans
+  // paddy inland (not up the hills, on the beaches or in the mangroves); on the coast, salt pans
   const salt = top * saltPan(x, z);
-  const paddy = top * smoothstep(38, 75, inland) * smoothstep(1.25, 1.9, vd) * fields * (1 - coast);
+  const paddy = top * smoothstep(38, 75, inland) * smoothstep(1.25, 1.9, vd) * fields * (1 - coast) * (1 - forest) * (1 - sand) * (1 - mangrove);
   const zone = salt > 0.01 ? -salt : paddy;
   // trodden earth round the houses, and bare patches where the grass has dried out; the pans are bare clay
   const dirt = Math.min(1, yard * 0.9 + dry * 0.35 + 0.25 * smoothstep(0.62, 0.78, fbm(x * 0.05, z * 0.05, 2, 71)) + salt + coast * 0.25 + path);
   // pebbles only along the river; the ponds keep muddy banks
   const pebbles = (1 - top) * smoothstep(30, 14, inland);
-  return { color: mixRgb(mud, ground, top), zone, grass: top * (1 - dirt), dirt: top * dirt, sand: 0, pebbles };
+  const sandW = top * sand;
+  return { color: mixRgb(mud, ground, top), zone, grass: top * (1 - dirt) * (1 - sand * 0.8) * (1 - mangrove) * (1 - forest * 0.5), dirt: top * dirt * (1 - sand), sand: sandW, pebbles };
 }
 
 /** Ground cover at a point of the world (see `Cover`), with the terrain height there. */

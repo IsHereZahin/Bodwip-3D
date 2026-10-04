@@ -5,9 +5,10 @@ import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
 import { instanced, type Placement } from '../render/instancing';
 import { patchMaterial } from '../render/patch';
-import { COAST_Z0, WORLD_Z1, riverX, saltPan, terrainHeight } from './geography';
+import { WORLD_U, WORLD_Z0, WORLD_Z1, riverX, saltPan, terrainHeight } from './geography';
 
-// The salt works on the coastal flats. The ground of each block is painted by the terrain (render/patch.ts):
+// The salt works on Moheshkhali's low tract and the mainland's flats toward Cox's Bazar. The ground of each
+// block is painted by the terrain (render/patch.ts):
 // salt farms (a settling pond, evaporation beds, crystallizers on black plastic), shrimp ponds and barren
 // mudflat. Here is what stands on it: the earth bunds between the beds and round every block; the heaps of
 // salt raked up along the crystallizers' bunds (white and drying while the salt season runs, gone to market
@@ -148,16 +149,16 @@ export function buildSaltWorks(): Group {
   const fresh: Placement[] = [];
   const covered: Placement[] = [];
   const sheds = new MeshBuilder();
-  // the bunds, in slabs down the coast so those out of view are culled
+  // the bunds, in cells of the coast so those out of view, or far off, are left undrawn
   const slabs = new Map<number, MeshBuilder>();
-  const slabOf = (z: number) => {
-    const k = Math.floor(z / 300);
+  const slabOf = (x: number, z: number) => {
+    const k = Math.floor(z / 300) * 64 + Math.floor(x / 400);
     let b = slabs.get(k);
     if (!b) slabs.set(k, (b = new MeshBuilder()));
     return b;
   };
   const z0 = WORLD_Z1;
-  const z1 = COAST_Z0;
+  const z1 = WORLD_Z0;
   for (let band = Math.floor(z0 / LAYOUT.band); band <= Math.floor(z1 / LAYOUT.band); band++) {
     const a = blockAngle(band * LAYOUT.band);
     const c = Math.cos(a);
@@ -165,7 +166,7 @@ export function buildSaltWorks(): Group {
     const toWorld = (qx: number, qy: number): [number, number] => [c * qx - s * qy, s * qx + c * qy];
     const inBand = (z: number) => Math.floor(z / LAYOUT.band) === band;
     // the blocks that can touch this band of the coast
-    const xs = [riverX(band * LAYOUT.band) - 1300, riverX(band * LAYOUT.band) + 1300];
+    const xs = [riverX(band * LAYOUT.band) - WORLD_U, riverX(band * LAYOUT.band) + WORLD_U];
     const zs = [band * LAYOUT.band, (band + 1) * LAYOUT.band];
     const qxs = xs.flatMap((x) => zs.map((z) => c * x + s * z));
     const qys = xs.flatMap((x) => zs.map((z) => -s * x + c * z));
@@ -176,8 +177,8 @@ export function buildSaltWorks(): Group {
         const oy = by * LAYOUT.h;
         const [mx, mz] = toWorld(ox + LAYOUT.w / 2, oy + LAYOUT.h / 2);
         if (!inBand(mz) || saltPan(mx, mz) < 0.3) continue;
-        // bunds, in pieces of a few metres (so each follows the ground); on a block at the works' edge, only
-        // the pieces where the works lie solid (most blocks lie wholly inside)
+        // bunds, in pieces (so each follows the level ground closely enough); on a block at the works' edge,
+        // only the pieces where the works lie solid (most blocks lie wholly inside)
         const corners = [
           [0, 0],
           [LAYOUT.w, 0],
@@ -186,14 +187,14 @@ export function buildSaltWorks(): Group {
         ].map(([qx, qy]) => toWorld(ox + qx, oy + qy));
         const solid = corners.every(([x, z]) => inBand(z) && saltPan(x, z) > SOLID);
         for (const [x0, y0, x1, y1] of bundLines(kind)) {
-          const steps = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / 6));
+          const steps = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / (solid ? 24 : 8)));
           for (let k = 0; k < steps; k++) {
             const [ax, az] = toWorld(ox + x0 + ((x1 - x0) * k) / steps, oy + y0 + ((y1 - y0) * k) / steps);
             const [bx2, bz2] = toWorld(ox + x0 + ((x1 - x0) * (k + 1)) / steps, oy + y0 + ((y1 - y0) * (k + 1)) / steps);
             const mxk = (ax + bx2) / 2;
             const mzk = (az + bz2) / 2;
             if (!solid && !(inBand(mzk) && saltPan(mxk, mzk) > SOLID)) continue;
-            bund(slabOf(az), ax, az, bx2, bz2, terrainHeight(mxk, mzk));
+            bund(slabOf(ax, az), ax, az, bx2, bz2, terrainHeight(mxk, mzk));
           }
         }
         if (kind === 'farm') {

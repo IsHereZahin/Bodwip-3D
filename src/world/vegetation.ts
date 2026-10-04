@@ -14,6 +14,7 @@ import {
   kashTexture,
   leafClusterTexture,
   palmBarkTexture,
+  needleTexture,
   palmFrondTexture,
 } from '../render/textures';
 import {
@@ -32,12 +33,19 @@ import {
   charHeight,
   coastal,
   edgeHalfWidth,
+  forestCover,
+  islandNorthCoast,
+  islandWestCoast,
   khalPoint,
   landLevel,
   nearBackwater,
   riverX,
   routeGap,
+  mangroveZone,
+  onLandmark,
+  onTempleHill,
   saltPan,
+  sandCover,
   terrainHeight,
   villageDistance,
 } from './geography';
@@ -376,19 +384,41 @@ function treeLine(side: 1 | -1, offset: number, seed: number): BufferGeometry {
 
 // ---------- placement ----------
 
+/** Where the casuarina belt runs down the island's west coast (z), from its north end to its south. */
+const ISLAND_BELT = { z0: 120, z1: -3350 };
+
 interface Spot {
   x: number;
   z: number;
   r: number;
 }
 
+/** Where things already stand, in a spatial hash (thousands of trees are placed against it). */
 class Occupancy {
-  private readonly spots: Spot[] = [];
+  private static readonly CELL = 10;
+  private readonly cells = new Map<number, Spot[]>();
+  private widest = 0;
+  private key(i: number, j: number): number {
+    return (i + 4096) * 8192 + (j + 4096);
+  }
   add(x: number, z: number, r: number): void {
-    this.spots.push({ x, z, r });
+    const k = this.key(Math.floor(x / Occupancy.CELL), Math.floor(z / Occupancy.CELL));
+    let list = this.cells.get(k);
+    if (!list) this.cells.set(k, (list = []));
+    list.push({ x, z, r });
+    this.widest = Math.max(this.widest, r);
   }
   free(x: number, z: number, r: number): boolean {
-    for (const s of this.spots) if (Math.abs(s.z - z) < s.r + r && Math.hypot(s.x - x, s.z - z) < s.r + r) return false;
+    const reach = Math.ceil((r + this.widest) / Occupancy.CELL);
+    const ci = Math.floor(x / Occupancy.CELL);
+    const cj = Math.floor(z / Occupancy.CELL);
+    for (let i = ci - reach; i <= ci + reach; i++) {
+      for (let j = cj - reach; j <= cj + reach; j++) {
+        const list = this.cells.get(this.key(i, j));
+        if (!list) continue;
+        for (const s of list) if (Math.hypot(s.x - x, s.z - z) < s.r + r) return false;
+      }
+    }
     return true;
   }
 }
@@ -407,8 +437,11 @@ function onDryLand(x: number, z: number, minInland: number): boolean {
   if (info.inland < minInland) return false;
   for (const p of PONDS) if (Math.hypot(x - p.x, z - p.z) < p.r * 1.35) return false;
   for (const w of WETLANDS) if (Math.hypot(x - w.x, z - w.z) < w.r * 1.5) return false;
-  // nothing grows on the salt pans
+  // nothing grows on the salt pans, nor (but the mangroves and casuarinas, set apart) at the sea's edge
   if (saltPan(x, z) > 0.2) return false;
+  if (sandCover(x, z) > 0.4) return false;
+  const h = terrainHeight(x, z);
+  if (h < 0.3 || mangroveZone(x, z, h) > 0.3 || onLandmark(x, z, 3) || onTempleHill(x, z)) return false;
   return !nearBackwater(x, z, 3);
 }
 
@@ -444,6 +477,9 @@ export function buildVegetation(
     kash: kashTexture(16),
     grass: grassTexture(17),
     bark: palmBarkTexture(18),
+    // the mangroves' small, leathery leaves, greyed with salt; the casuarina's needles
+    mangrove: leafClusterTexture(20, ['#4a6338', '#566f42', '#62794a', '#6e8454', '#7b8f5e'], { count: 190, len: [0.05, 0.09], width: 0.45 }),
+    needles: needleTexture(21),
   };
 
   const leafMat = (set: { map: Texture; normal?: Texture }, wind = 0.22, windHeight = 10, roughness = 0.78, seasonal: 'leaf' | 'tree' = 'leaf') =>
@@ -491,6 +527,8 @@ export function buildVegetation(
       { wind: 0.35, windHeight: 2.2, translucency: 2.2, foliage: true, seasonal: 'kash' },
     ),
     grass: leafMat({ map: tex.grass }, 0.15, 0.8),
+    mangrove: leafMat(tex.mangrove, 0.22, 5),
+    needles: leafMat({ map: tex.needles }, 0.4, 14),
   };
 
   // a few shapes per species; instances vary them further by yaw and scale
@@ -505,6 +543,21 @@ export function buildVegetation(
     broadleaf(r, { height: 4, trunkR: 0.4, crown: 5.5, flat: 0.75, lobes: 4, cards: 34, cardSize: 2.6, tint: rgb('#c8d0b8'), bark: barkTint }),
   );
   const joba = variants(3, hibiscus);
+  // the hills' forest crowns: few, large cards, so a slope seen edge-on is not dozens of layers of leaves deep
+  const hillTree = variants(3, (r) =>
+    broadleaf(r, { height: r.range(3.5, 5), trunkR: 0.35, crown: r.range(5, 6.5), flat: 0.75, lobes: 4, cards: 16, cardSize: 3.6, tint: rgb('#c4ccb4'), bark: barkTint }),
+  );
+  // keora: slender, its crown loose and drooping; baen: low and spreading, dense to the mud
+  const keora = variants(3, (r) =>
+    broadleaf(r, { height: r.range(4.2, 6), trunkR: 0.22, crown: r.range(2.8, 3.5), flat: 1.25, lobes: 5, cards: 70, cardSize: 1.0, tint: rgb('#d8e2cc'), bark: barkTint }),
+  );
+  const baen = variants(3, (r) =>
+    broadleaf(r, { height: r.range(1.2, 1.8), trunkR: 0.17, crown: r.range(2.3, 3.0), flat: 0.72, lobes: 5, cards: 62, cardSize: 0.95, tint: rgb('#c8d4b6'), bark: barkTint }),
+  );
+  // casuarina (jhau), planted in belts behind the beaches: tall, its feathery crown a narrow spire
+  const jhau = variants(3, (r) =>
+    broadleaf(r, { height: r.range(6.5, 9), trunkR: 0.2, crown: r.range(1.9, 2.4), flat: 2.1, lobes: 6, cards: 72, cardSize: 1.3, tint: WHITE, bark: barkTint }),
+  );
   const coconut = variants(3, (r) => palm(r, 'coconut'));
   const supari = variants(3, (r) => palm(r, 'supari'));
   const date = variants(2, (r) => palm(r, 'date'));
@@ -530,6 +583,10 @@ export function buildVegetation(
     banana: bucket(bananas, mats.banana),
     bamboo: bucket(bamboos, mats.bamboo, culmMat),
     joba: bucket(joba, mats.hibiscus, flowerMat),
+    hill: bucket(hillTree, mats.mango),
+    keora: bucket(keora, mats.mangrove),
+    baen: bucket(baen, mats.mangrove),
+    jhau: bucket(jhau, mats.needles),
   };
   const put = (b: Bucket, p: Placement) => b.items[rng.int(0, b.items.length - 1)].push(p);
   for (const f of featured) put(B[f.kind], { x: f.x, y: terrainHeight(f.x, f.z) - 0.15, z: f.z, ry: f.ry, s: f.s });
@@ -648,10 +705,73 @@ export function buildVegetation(
       for (const band of [rng.range(260, 420), rng.range(480, 700)]) {
         if (fbm(z * 0.004 + band * 0.01, side * 2.7, 2, 8) < 0.42) continue;
         const x = riverX(z) + side * (edgeHalfWidth(z, side) + band);
-        if (!onDryLand(x, z, 30)) continue;
+        // on the island the hills' forest stands in for them
+        if (side > 0 || !onDryLand(x, z, 30)) continue;
         put(B.far, at(x, z, rng, rng.range(1.2, 1.9), 0.4));
       }
     }
+  }
+
+  // the island's hills under forest: dense on the slopes facing the channel, thinner beyond the crest; the
+  // mainland's far hills thinly (their painted ground carries them); on a jittered grid, so no two crowns meet
+  // (big, cheap crowns: the painted forest floor between them reads as forest from the river, and every
+  // tree is drawn again in the water's mirror; only near the shore the odd full mango or rain tree)
+  for (let z = WORLD_Z0; z > WORLD_Z1; z -= 15) {
+    for (let u = 110; u < 1150; u += rng.range(u < 520 ? 16 : 28, u < 520 ? 22 : 38)) {
+      const x = riverX(z) + u + rng.range(-6, 6);
+      const zz = z + rng.range(-6, 6);
+      const f = forestCover(x, zz);
+      if (f < 0.25 || rng.next() > f * (u < 520 ? 0.9 : 0.45) || villageDistance(x, zz) < 1.2 || onLandmark(x, zz, 4) || onTempleHill(x, zz) || !occ.free(x, zz, 2)) continue;
+      const r = rng.next();
+      put(u < 300 && r < 0.08 ? (r < 0.04 ? B.rain : B.mango) : B.hill, at(x, zz, rng, rng.range(1.0, 1.5), 0.3));
+    }
+  }
+  for (let z = -700; z > WORLD_Z1; z -= 30) {
+    for (let u = -1350; u > -2600; u -= rng.range(30, 42)) {
+      const x = riverX(z) + u;
+      if (rng.next() > forestCover(x, z) * 0.18) continue;
+      put(B.hill, at(x, z, rng, rng.range(1.2, 1.7), 0.4));
+    }
+  }
+
+  // mangroves on the tidal mud: along the channel toward its mouths, the Kohelia, the island's north shore
+  // and Sonadia's inner side; baen to the water, keora behind
+  for (let k = 0, placed = 0; k < 70000 && placed < 1000; k++) {
+    let x: number;
+    let z: number;
+    if (k % 2 === 0) {
+      const side = rng.sign();
+      z = rng.range(WORLD_Z1, WORLD_Z0);
+      x = riverX(z) + side * (edgeHalfWidth(z, side) + rng.range(-8, 24));
+    } else {
+      z = rng.range(WORLD_Z1, WORLD_Z0);
+      x = riverX(z) + rng.range(300, 2300);
+    }
+    const h = terrainHeight(x, z);
+    const m = mangroveZone(x, z, h);
+    // in stands along the shore, not an even hedge
+    if (m < 0.2 || rng.next() > m || fbm(x * 0.012, z * 0.012, 2, 119) < 0.47 || !occ.free(x, z, 2.4)) continue;
+    occ.add(x, z, 2.4);
+    put(h < 0.35 ? B.baen : rng.next() < 0.5 ? B.keora : B.baen, { x, y: h - 0.1, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.8, 1.2) });
+    placed++;
+  }
+
+  // casuarina belts behind the island's beaches on the Bay and on the Kutubdia channel, and on Sonadia's dunes
+  const jhauAt = (x: number, z: number) => {
+    const h = terrainHeight(x, z);
+    if (h < 0.6 || saltPan(x, z) > 0.2 || !occ.free(x, z, 2.2)) return;
+    occ.add(x, z, 2.2);
+    put(B.jhau, { x, y: h - 0.15, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.85, 1.2) });
+  };
+  for (let z = ISLAND_BELT.z0; z > ISLAND_BELT.z1; z -= rng.range(7, 11)) jhauAt(riverX(z) + islandWestCoast(z) - rng.range(40, 60), z);
+  for (let u = 260; u < 2000; u += rng.range(7, 11)) {
+    const z = islandNorthCoast(u) - rng.range(40, 60);
+    jhauAt(riverX(z) + u, z);
+  }
+  for (let k = 0; k < 1500; k++) {
+    const z = rng.range(-4300, -3450);
+    const x = riverX(z) + rng.range(450, 1300);
+    if (sandCover(x, z) > 0.8 && terrainHeight(x, z) > 1.4 && rng.next() < 0.35) jhauAt(x, z);
   }
 
   for (const b of Object.values(B)) {
@@ -710,10 +830,9 @@ export function buildVegetation(
 
   // horizon tree lines
   const lineMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 1, side: DoubleSide }), {});
-  for (const side of [-1, 1] as const) {
-    group.add(new Mesh(treeLine(side, 820, side > 0 ? 3 : 5), lineMat));
-    group.add(new Mesh(treeLine(side, 1250, side > 0 ? 7 : 9), lineMat));
-  }
+  // the mainland's horizon; on the island its hills and casuarina belts make their own
+  group.add(new Mesh(treeLine(-1, 820, 5), lineMat));
+  group.add(new Mesh(treeLine(-1, 1250, 9), lineMat));
 
   return group;
 }

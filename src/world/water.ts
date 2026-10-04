@@ -25,13 +25,12 @@ import { GLSL_COMMON } from '../render/glsl';
 import { HERO_HULL, HERO_SINK, hullWaterlineGlsl } from './hull';
 import { wakeGlsl } from './wake';
 import { SHELTERED, waveHeightLodGlsl, waveSlopeGlsl } from './waves';
-import { WORLD_Z0, WORLD_Z1, downstream, halfWidth, riverX, streamSpeed, terrainHeight } from './geography';
+import { WORLD_U, WORLD_Z0, WORLD_Z1, downstream, edgeHalfWidth, halfWidth, islandCoast, riverX, streamSpeed, terrainHeight } from './geography';
 
-const FIELD_X0 = -620;
-const FIELD_SX = 1240;
-/** About 3 m a texel across, so the khals and the bil's channels have a depth of their own. */
-const FIELD_W = 384;
-const FIELD_H = 1280;
+/** The fine field over the channel and its backwaters: about 3 m a texel across, so the khals and the bil's channels have a depth of their own. */
+const FIELD = { x0: -620, sx: 1240, w: 384, h: 1280 };
+/** The wide field out to the open sea west of the island (and the mainland's edge east), coarser. */
+const FIELD_WIDE = { x0: -WORLD_U - 100, sx: (WORLD_U + 100) * 2, w: 384, h: 640 };
 
 /** Tiling ripple normals, generated once. */
 function rippleNormals(maxAnisotropy: number): DataTexture {
@@ -75,33 +74,49 @@ function rippleNormals(maxAnisotropy: number): DataTexture {
   return t;
 }
 
-/** r: riverbed height, gb: surface current (m/s). Lets the water know its depth and flow anywhere (khals and the bil lie still). */
-function riverField(): { texture: DataTexture; bounds: Vector4 } {
+/**
+ * r: the bed's height, gb: the surface current (m/s), a: how open the water is to the wind and the swell
+ * (1 in the channel and out on the sea, 0 in the khals, the bil, the ponds and the creeks, which lie still).
+ * Lets the water know its depth, its flow and its shelter anywhere.
+ */
+function riverField(o: { x0: number; sx: number; w: number; h: number }): { texture: DataTexture; bounds: Vector4 } {
   const SZ = WORLD_Z0 - WORLD_Z1;
-  const data = new Uint16Array(FIELD_W * FIELD_H * 4);
-  for (let j = 0; j < FIELD_H; j++) {
-    const z = WORLD_Z1 + ((j + 0.5) / FIELD_H) * SZ;
+  const data = new Uint16Array(o.w * o.h * 4);
+  for (let j = 0; j < o.h; j++) {
+    const z = WORLD_Z1 + ((j + 0.5) / o.h) * SZ;
     const cx = riverX(z);
     const hw = halfWidth(z);
     const [fx, fz] = downstream(z);
     const mid = streamSpeed(z);
-    for (let i = 0; i < FIELD_W; i++) {
-      const x = FIELD_X0 + ((i + 0.5) / FIELD_W) * FIELD_SX;
+    for (let i = 0; i < o.w; i++) {
+      const x = o.x0 + ((i + 0.5) / o.w) * o.sx;
       const h = terrainHeight(x, z);
-      const t = (x - cx) / hw;
+      const u = x - cx;
+      const t = u / hw;
       const speed = h < 0 ? mid * Math.max(0, 1 - t * t) : 0;
-      const k = (j * FIELD_W + i) * 4;
+      const inChannel = Math.abs(u) < edgeHalfWidth(z, u >= 0 ? 1 : -1) + 6;
+      const atSea = u > 0 && islandCoast(z, u) < -10;
+      const k = (j * o.w + i) * 4;
       data[k] = DataUtils.toHalfFloat(Math.max(-12, Math.min(12, h)));
       data[k + 1] = DataUtils.toHalfFloat(fx * speed);
       data[k + 2] = DataUtils.toHalfFloat(fz * speed);
-      data[k + 3] = DataUtils.toHalfFloat(1);
+      data[k + 3] = DataUtils.toHalfFloat(h < 0 && (inChannel || atSea) ? 1 : 0);
     }
   }
-  const texture = new DataTexture(data, FIELD_W, FIELD_H, RGBAFormat, HalfFloatType);
+  const texture = new DataTexture(data, o.w, o.h, RGBAFormat, HalfFloatType);
   texture.minFilter = texture.magFilter = LinearFilter;
   texture.needsUpdate = true;
-  return { texture, bounds: new Vector4(FIELD_X0, WORLD_Z1, 1 / FIELD_SX, 1 / SZ) };
+  return { texture, bounds: new Vector4(o.x0, WORLD_Z1, 1 / o.sx, 1 / SZ) };
 }
+
+/** GLSL: the water field at p, from the fine one over the channel or the wide one beyond it. */
+const FIELD_GLSL = /* glsl */ `
+vec4 waterField(vec2 p) {
+  vec2 f = (p - uField.xy) * uField.zw;
+  vec4 fine = texture2D(tField, f);
+  vec4 wide = texture2D(tFieldWide, (p - uFieldWide.xy) * uFieldWide.zw);
+  return f.x > 0.01 && f.x < 0.99 ? fine : wide;
+}`;
 
 /** Angular segments of the water's grid; its vertices lie this share of their distance from the camera apart. */
 const GRID_SEGMENTS = 256;
@@ -109,8 +124,8 @@ const GRID_SPACING = (Math.PI * 2) / GRID_SEGMENTS;
 /** Out to here (m) the grid is fine enough to carry waves; beyond, its rings widen fast to the world's edge. */
 const GRID_WAVES = 300;
 const GRID_FAR = 6000;
-/** The water's extent, as the world's (x0, z0, x1, z1). */
-const WATER_BOUNDS = new Vector4(-700, WORLD_Z1, 700, WORLD_Z0);
+/** The water's extent (x0, z0, x1, z1): the world's, and the open Bay on to the horizon west and south. */
+const WATER_BOUNDS = new Vector4(-WORLD_U, WORLD_Z1 - 5000, WORLD_U + 4000, WORLD_Z0);
 
 /**
  * The water's mesh: rings round the camera, each a little wider than the last, so its vertices lie about as
@@ -160,11 +175,14 @@ const VERT = /* glsl */ `
 ${GLSL_COMMON}
 uniform sampler2D tField;
 uniform vec4 uField;
+uniform sampler2D tFieldWide;
+uniform vec4 uFieldWide;
 uniform vec4 uBoat;
 uniform vec4 uOar;
 uniform vec4 uBounds;
 varying vec3 vWorld;
 varying float vWave;
+${FIELD_GLSL}
 ${waveHeightLodGlsl()}
 ${wakeGlsl()}
 void main() {
@@ -172,10 +190,10 @@ void main() {
   vec2 local = position.xz;
   float spacing = max(length(local), 0.6) * ${GRID_SPACING.toFixed(5)};
   vec2 xz = clamp(uCamPos.xz + local, uBounds.xy, uBounds.zw);
-  vec4 fld = texture2D(tField, (xz - uField.xy) * uField.zw);
+  vec4 fld = waterField(xz);
   float depth = max(uWaterLevel - fld.r, 0.0);
-  // still water carries a share of the river's waves, and they die out on the shallows by the shore
-  float running = smoothstep(0.0, 0.2, length(fld.gb) * uFlowScale);
+  // still water carries a share of the open water's waves, and they die out on the shallows by the shore
+  float running = max(smoothstep(0.0, 0.2, length(fld.gb) * uFlowScale), fld.a);
   float shoal = smoothstep(0.0, 0.6, depth);
   float h = waveHeightLod(xz, spacing) * mix(${SHELTERED.toFixed(2)}, 1.0, running) * shoal;
   vWave = h;
@@ -197,6 +215,8 @@ uniform mat4 uTexMatrix;
 uniform sampler2D tNormal;
 uniform sampler2D tField;
 uniform vec4 uField;
+uniform sampler2D tFieldWide;
+uniform vec4 uFieldWide;
 uniform vec4 uBoat;      // x, z, heading, speed through the water
 uniform vec4 uOar;       // the paddle's blade in the boat's frame (x across, z along), how hard it pulls, how deep it is (0..1)
 uniform vec4 uSwirl;     // where the blade last came out (world x, z), seconds since, how hard it had pulled
@@ -208,6 +228,7 @@ uniform vec3 uAmb;
 varying vec3 vWorld;
 varying float vWave;
 
+${FIELD_GLSL}
 ${hullWaterlineGlsl(HERO_HULL, HERO_SINK)}
 ${waveSlopeGlsl()}
 ${wakeGlsl()}
@@ -283,7 +304,7 @@ void main() {
   if (abs(sAlong) < 1.0 && abs(q.x) < hullHalfBeamAtWater(sAlong) * 0.96) discard;
   float boatSpd = clamp(uBoat.w / 2.0, 0.0, 1.4);
 
-  vec4 fld = texture2D(tField, (wp.xz - uField.xy) * uField.zw);
+  vec4 fld = waterField(wp.xz);
   float depth = max(uWaterLevel - fld.r, 0.0);
   // the season sets the river's pace: fast and full in the rains, slack in the dry months
   vec2 flow = fld.gb * uFlowScale;
@@ -307,8 +328,8 @@ void main() {
   // a slow broad swell
   vec2 nC = ripple(wp.xz / 46.0 + vec2(uTime * 0.004, -uTime * 0.006));
   float far = 1.0 / (1.0 + dist * 0.01);
-  // still water (the bil, the khals, the slack by the banks) lies glassier than the running river
-  float running = smoothstep(0.0, 0.2, spd);
+  // still water (the bil, the khals, the slack by the banks) lies glassier than the running channel and the open sea
+  float running = max(smoothstep(0.0, 0.2, spd), fld.a);
   vec2 slope = nA * (0.07 + 0.13 * running) + nB * (0.06 + 0.1 * uWind.z) * (0.6 + 0.4 * running) * far + nC * (0.04 + 0.06 * running);
   // the wind's waves the boat and the floating plants ride (see waves.ts), as the surface stands on them,
   // damped where the water is sheltered and dying out on the shallows; under a gust front the ripples
@@ -441,7 +462,8 @@ export interface Water {
 }
 
 export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAnisotropy: number): Water {
-  const field = riverField();
+  const field = riverField(FIELD);
+  const wide = riverField(FIELD_WIDE);
   const boat = new Vector4();
   const oar = new Vector4();
   const swirl = new Vector4(0, 0, 99, 0);
@@ -456,6 +478,8 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
       tNormal: { value: rippleNormals(maxAnisotropy) },
       tField: { value: field.texture },
       uField: { value: field.bounds },
+      tFieldWide: { value: wide.texture },
+      uFieldWide: { value: wide.bounds },
       uBoat: { value: boat },
       uOar: { value: oar },
       uSwirl: { value: swirl },

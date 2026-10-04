@@ -2,8 +2,11 @@ import { Vector3 } from 'three';
 import { G } from '../core/globals';
 import { angleDelta, lerp } from '../core/mathx';
 import {
+  ADINATH,
   CHARS,
+  GORAKGHATA,
   JOURNEY_Z0,
+  SONADIA,
   JOURNEY_Z1,
   VILLAGES,
   WETLANDS,
@@ -19,11 +22,12 @@ import { groundAt } from '../world/terrain';
 import { GHATS } from '../world/village';
 import type { Scene, Stage } from './director';
 
-// The film tour: a year and a day on the river, as a short documentary would show it. A winter dawn in
+// The film tour: a year and a day on the Moheshkhali channel, as a short documentary would show it. A winter dawn in
 // mist and the boatman at sunrise, mustard in the fields and a village ghat; spring's blossom and the
 // narrows; summer's fishermen at their nets, a khal at golden hour and a nor'wester; the monsoon's rain and
-// its flooded fields; under the old bridge into the shapla bil, a wetland and the kash of autumn; the golden harvest; the salt fields
-// and the estuary in winter; and the evening on the river: sunset, moonrise and night.
+// its flooded fields; under the old bridge into the shapla bil, a wetland and the kash of autumn; the golden harvest;
+// Adinath hill over Gorakghata in the morning, the island's salt fields under its hills, Sonadia and the estuary in
+// winter; and the evening on the river: sunset, moonrise and night.
 // Each scene sets its own season, hour and weather (director.ts), so every part of the world is shown at
 // its best, wherever the viewer's boat happens to be.
 
@@ -77,10 +81,10 @@ function fieldRun(z0: number, side: 1 | -1): { from: Vector3; to: Vector3 } {
   return { from: new Vector3(riverX(z) + side * 150, 0, z), to: new Vector3(riverX(z - 60) + side * 150, 0, z - 60) };
 }
 
-/** Salt pans to crane over on the coast: a run of 50 m all in pans, on `side`. */
+/** Salt pans to crane over: a run of 50 m all in pans, on `side` (on the island they lie beyond its hills). */
 function saltRun(z0: number, side: 1 | -1): { from: Vector3; to: Vector3 } {
   for (let z = z0; z > z0 - 400; z -= 20) {
-    for (let inland = 60; inland <= 400; inland += 20) {
+    for (let inland = 60; inland <= 1500; inland += 20) {
       const at = (zz: number) => riverX(zz) + side * (edgeHalfWidth(zz, side) + inland);
       if ([0, 25, 50].every((d) => saltPan(at(z - d), z - d) > 0.95)) return { from: new Vector3(at(z), 0, z), to: new Vector3(at(z - 50), 0, z - 50) };
     }
@@ -104,10 +108,10 @@ function glide(run: { from: Vector3; to: Vector3 }, side: 1 | -1, height: number
 }
 
 // places found once, at load (deterministic)
-const MUSTARD = fieldRun(-180, 1);
+const MUSTARD = fieldRun(-180, -1);
 const FLOODED = fieldRun(-1900, -1);
-const HARVEST = fieldRun(-2300, 1);
-const SALT = saltRun(-3780, -1);
+const HARVEST = fieldRun(-2300, -1);
+const SALT = saltRun(-2150, 1);
 const KASH_CHAR = CHARS[0];
 const VILLAGE_GHAT = GHATS[2];
 const STORM_VILLAGE = VILLAGES[1];
@@ -320,7 +324,19 @@ export function tourScenes(): Scene[] {
       caption: 'হেমন্তের ধান',
       seconds: 12,
       world: { day: 318, hour: 15.4, weather: 'clear', wind: 0.5 },
-      pose: (u, _s, pos, look) => glide(HARVEST, 1, 6, u, pos, look, true),
+      pose: (u, _s, pos, look) => glide(HARVEST, -1, 6, u, pos, look, true),
+    },
+    {
+      caption: 'আদিনাথ পাহাড়',
+      seconds: 15,
+      world: { day: 300, hour: { at: 'sunrise', offset: 0.7 }, weather: 'clear', wind: 0.3 },
+      // early on the channel, the morning sun behind the camera: Gorakghata's jetty and town on the shore, the
+      // forested hills behind, and on the top of its hill the white spire of Adinath temple; drifting slowly in
+      pose: (u, _s, pos, look) => {
+        const z = lerp(GORAKGHATA.jetty.z + 70, GORAKGHATA.jetty.z + 30, u);
+        across(z, edgeHalfWidth(z, 1) - lerp(150, 120, u), onWater(2.4), pos);
+        across(ADINATH.z, ADINATH.u - 12, lerp(44, 48, u), look);
+      },
     },
     {
       caption: 'লবণ মাঠ',
@@ -333,6 +349,18 @@ export function tourScenes(): Scene[] {
         const dir = tmpA.subVectors(SALT.to, SALT.from).normalize();
         look.copy(pos).addScaledVector(dir, 70);
         look.y = terrainHeight(look.x, look.z);
+      },
+    },
+    {
+      caption: 'সোনাদিয়া',
+      seconds: 13,
+      world: { day: 20, hour: { at: 'sunset', offset: -0.9 }, weather: 'clear', wind: 0.6 },
+      // a long glide in from the Bay over Sonadia at the channel's mouth, the low sun behind: its beach, its
+      // dunes and casuarinas, the mangroves on its inner shore, the island's hills beyond
+      pose: (u, _s, pos, look) => {
+        const z = lerp(SONADIA.z - 380, SONADIA.z - 250, u);
+        across(z, SONADIA.u - lerp(260, 160, u), onWater(lerp(32, 20, u)), pos);
+        across(SONADIA.z + 140, SONADIA.u + 60, onWater(2), look);
       },
     },
     {
