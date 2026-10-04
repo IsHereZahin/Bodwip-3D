@@ -1,0 +1,65 @@
+{
+  "made": "2026-10-04",
+  "projection": {
+    "kind": "transverse Mercator on the origin meridian, WGS84 (src/geo/project.ts)",
+    "origin": {
+      "lat": 21.5182,
+      "lon": 91.9716
+    },
+    "mapScale": 3
+  },
+  "grid": {
+    "spacing": 30,
+    "east0": -21870,
+    "north1": 33390,
+    "width": 1033,
+    "height": 1548,
+    "rows": "north to south",
+    "columns": "west to east",
+    "note": "cell centre (c, r): east = east0 + (c + 0.5)·spacing, north = north1 − (r + 0.5)·spacing, ground metres"
+  },
+  "layers": {
+    "terrain": {
+      "file": "terrain.bin",
+      "encoding": "deflate-raw",
+      "type": "int16",
+      "unit": "decimetre",
+      "datum": "mean sea level (EGM2008)"
+    },
+    "kind": {
+      "file": "kind.bin",
+      "encoding": "deflate-raw",
+      "type": "uint8",
+      "codes": {
+        "land": 0,
+        "mangrove": 1,
+        "tidal": 2,
+        "sea": 3,
+        "inland": 4
+      },
+      "modelledBit": 128
+    }
+  },
+  "tide": {
+    "source": "Cox's Bazar gauge fit (tide-coxs-bazar.json)",
+    "amplitudeScale": 1.38,
+    "lowWater": -1.12
+  },
+  "areaKm2": {
+    "sea": 642,
+    "inland": 183.9,
+    "land": 488,
+    "tidal": 62.8,
+    "mangrove": 62.4
+  },
+  "licence": "CC BY-NC-SA 4.0 (heights derived from FABDEM V1-2)",
+  "attribution": [
+    "FABDEM V1-2 (Hawker et al. 2022, University of Bristol / Fathom), CC BY-NC-SA 4.0",
+    "DeltaDTM © Pronk et al. 2024, CC BY 4.0",
+    "GEBCO Compilation Group (2025) GEBCO 2025 Grid (doi:10.5285/37c52e96-24ea-67ce-e063-7086abc05f29)",
+    "Source: EC JRC/Google (Pekel et al. 2016)",
+    "© ESA WorldCover project / Contains modified Copernicus Sentinel data (2021) processed by ESA WorldCover consortium",
+    "Global Mangrove Watch v3.0 (Bunting et al. 2022), CC BY 4.0",
+    "Tide: UHSLC research quality data, Cox's Bazar (h136a)"
+  ]
+}

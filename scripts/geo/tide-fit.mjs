@@ -1,68 +1,13 @@
 // Least-squares tidal harmonic analysis of the Cox's Bazar gauge (UHSLC hourly, UTC), one year at a time:
 // amplitude and Greenwich phase lag of each constituent, nodal corrections taken at mid-year. No open
 // table of the constants exists for Cox's Bazar (GEOGRAPHY_PLAN.md §3.6), so they are fitted here.
-// Ported from the research session's harm.py, same conventions (Doodson/Schureman V0, Foreman f and u).
+// Ported from the research session's harm.py; the conventions (Doodson/Schureman V0, Foreman f and u) are in lib/tide.mjs.
 //
 //   node scripts/geo/tide-fit.mjs 1983 1990 1995 …   fit these years, then their mean
 import { readFile, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { CACHE } from './config.mjs';
-
-/** Speeds, degrees per hour. */
-const FREQ = {
-  Sa: 0.0410686, Ssa: 0.0821373, MSf: 1.0158958,
-  Q1: 13.3986609, O1: 13.9430356, P1: 14.9589314, K1: 15.0410686,
-  N2: 28.4397295, M2: 28.9841042, S2: 30.0, K2: 30.0821373,
-  MN4: 57.4238337, M4: 57.9682084, MS4: 58.9841042, M6: 86.9523127,
-};
-const NAMES = Object.keys(FREQ);
-const RAD = Math.PI / 180;
-const mod360 = (a) => ((a % 360) + 360) % 360;
-
-/** Mean longitudes of the moon (s), sun (h), lunar perigee (p) and the moon's ascending node (N), degrees. */
-function astro(date) {
-  const d = (date - Date.UTC(2000, 0, 1, 12)) / 86400000;
-  return { s: mod360(218.3164 + 13.17639648 * d), h: mod360(280.4661 + 0.98564736 * d), p: mod360(83.3535 + 0.11140353 * d), N: mod360(125.0445 - 0.05295377 * d) };
-}
-
-/** Equilibrium argument V0 at `date` (UTC). */
-function v0(name, date) {
-  const { s, h, p } = astro(date);
-  const t = new Date(date);
-  const T = 180 + 15 * (t.getUTCHours() + t.getUTCMinutes() / 60);
-  const V = {
-    Sa: h, Ssa: 2 * h, MSf: 2 * s - 2 * h,
-    Q1: T + h - 3 * s + p + 90, O1: T + h - 2 * s + 90, P1: T - h + 90, K1: T + h - 90,
-    N2: 2 * T + 2 * h - 3 * s + p, M2: 2 * T + 2 * h - 2 * s, S2: 2 * T, K2: 2 * T + 2 * h,
-  };
-  V.M4 = 2 * V.M2;
-  V.MS4 = V.M2 + V.S2;
-  V.MN4 = V.M2 + V.N2;
-  V.M6 = 3 * V.M2;
-  return mod360(V[name]);
-}
-
-/** Nodal factor f and angle u (degrees) at `date`. */
-function nodal(name, date) {
-  const N = astro(date).N * RAD;
-  const c = Math.cos;
-  const s = Math.sin;
-  const fM2 = 1.0004 - 0.0373 * c(N) + 0.0002 * c(2 * N);
-  const uM2 = -2.14 * s(N);
-  const fK1 = 1.006 + 0.115 * c(N) - 0.0088 * c(2 * N) + 0.0006 * c(3 * N);
-  const uK1 = -8.86 * s(N) + 0.68 * s(2 * N) - 0.07 * s(3 * N);
-  const fO1 = 1.0089 + 0.1871 * c(N) - 0.0147 * c(2 * N) + 0.0014 * c(3 * N);
-  const uO1 = 10.8 * s(N) - 1.34 * s(2 * N) + 0.19 * s(3 * N);
-  const fK2 = 1.0241 + 0.2863 * c(N) + 0.0083 * c(2 * N) - 0.0015 * c(3 * N);
-  const uK2 = -17.74 * s(N) + 0.68 * s(2 * N) - 0.04 * s(3 * N);
-  const table = {
-    M2: [fM2, uM2], N2: [fM2, uM2], S2: [1, 0], K2: [fK2, uK2],
-    K1: [fK1, uK1], O1: [fO1, uO1], Q1: [fO1, uO1], P1: [1, 0],
-    M4: [fM2 ** 2, 2 * uM2], MS4: [fM2, uM2], MN4: [fM2 ** 2, 2 * uM2], M6: [fM2 ** 3, 3 * uM2],
-    Sa: [1, 0], Ssa: [1, 0], MSf: [fM2, -uM2],
-  };
-  return table[name];
-}
+import { FREQ, NAMES, RAD, mod360, nodal, v0 } from './lib/tide.mjs';
 
 /** Gaussian elimination with partial pivoting (the normal equations are small). */
 function solve(A, b) {
