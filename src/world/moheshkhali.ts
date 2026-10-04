@@ -290,6 +290,82 @@ function jetty(s: Sets, j: JettySpec): void {
   for (let k = 0; k < 10; k++) box(s.concrete, end + 6.6, DECK - 0.3 - k * 0.32, -3, 0.9, 0.3, 2.4, rgb('#a8a49a'), 1);
 }
 
+/** Gorakghata's two jetties side by side, and the Adinath jetty below the temple. */
+function jetties(): JettySpec[] {
+  const g = GORAKGHATA;
+  return [
+    { ...g.jetty, offset: 0, head: 'shed' },
+    { ...g.jetty, width: g.newJetty.width, offset: g.newJetty.offset, head: 'shed' },
+    { ...g.adinathJetty, offset: 0, head: 'tee' },
+  ];
+}
+
+/** A flat deck one can walk on: its middle, the way it runs (unit), its half-length and half-width (m), its top. */
+export interface Deck {
+  x: number;
+  z: number;
+  ux: number;
+  uz: number;
+  half: number;
+  wide: number;
+  top: number;
+}
+
+/** The jetties' decks and their heads' landings, as built, for walking on them (world/walkable.ts). */
+export function jettyDecks(): Deck[] {
+  const out: Deck[] = [];
+  for (const j of jetties()) {
+    const ry = Math.atan2(j.toZ - j.z, -(j.toX - j.x));
+    const at = frame(j.x, j.z, ry);
+    const A = (a: number, c: number) => at(-a, c + j.offset);
+    // the frame's −a runs out toward the head
+    const [x0, z0] = A(0, 0);
+    const [x1, z1] = A(1, 0);
+    const ux = x1 - x0;
+    const uz = z1 - z0;
+    const deck = (a0: number, a1: number, wide: number) => {
+      const [cx, cz] = A((a0 + a1) / 2, 0);
+      out.push({ x: cx, z: cz, ux, uz, half: (a1 - a0) / 2, wide, top: DECK });
+    };
+    deck(-14, j.length, j.width / 2);
+    if (j.head === 'shed') deck(j.length - 0.25, j.length + 6.25, 4.5);
+    else deck(j.length, j.length + 5, 15);
+  }
+  return out;
+}
+
+/** The stair up to the temple as built: the height of its tread at (x, z), or null off it. */
+export function stairAt(x: number, z: number): number | null {
+  const s = STAIR_STEPS();
+  const dx = x - s.from.x;
+  const dz = z - s.from.z;
+  const t = (dx * s.ux + dz * s.uz) / s.run;
+  if (t < -0.02 || t > 1.02) return null;
+  if (Math.abs(-dx * s.uz + dz * s.ux) > 1.2) return null;
+  const i = Math.max(0, Math.min(s.heights.length - 1, Math.round(t * (s.heights.length - 1))));
+  return s.heights[i];
+}
+
+let stairSteps: { from: { x: number; z: number }; ux: number; uz: number; run: number; heights: number[] } | null = null;
+/** The stair's steps, each at least level with the one below it (stair() builds the same). */
+function STAIR_STEPS(): { from: { x: number; z: number }; ux: number; uz: number; run: number; heights: number[] } {
+  if (stairSteps) return stairSteps;
+  const { from, to } = GORAKGHATA.stair;
+  const dx = to.x - from.x;
+  const dz = to.z - from.z;
+  const run = Math.hypot(dx, dz);
+  const n = Math.ceil(run / 0.42);
+  const heights: number[] = [];
+  let last = -Infinity;
+  for (let i = 0; i <= n; i++) {
+    const y = Math.max(terrainHeight(from.x + (dx * i) / n, from.z + (dz * i) / n) + 0.08, last);
+    heights.push(y);
+    last = y;
+  }
+  stairSteps = { from, ux: dx / run, uz: dz / run, run, heights };
+  return stairSteps;
+}
+
 /** The Rakhine pagoda: three square terraces, a bell-shaped stupa, its spire of rings, a golden hti. */
 function pagoda(s: Sets): void {
   const p = GORAKGHATA.pagoda;
@@ -402,11 +478,7 @@ export function buildMoheshkhali(): { seen: Group; near: Group } {
   const town = newSets();
   temple(town, rng);
   stair(town);
-  // Gorakghata's two jetties side by side, and the Adinath jetty below the temple
-  const g = GORAKGHATA;
-  jetty(town, { ...g.jetty, offset: 0, head: 'shed' });
-  jetty(town, { ...g.jetty, width: g.newJetty.width, offset: g.newJetty.offset, head: 'shed' });
-  jetty(town, { ...g.adinathJetty, offset: 0, head: 'tee' });
+  for (const j of jetties()) jetty(town, j);
   pagoda(town);
   const gardens = new Map<number, Sets>();
   betelGardens(gardens, rng);

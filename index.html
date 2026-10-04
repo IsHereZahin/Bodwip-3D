@@ -280,6 +280,10 @@
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18M3 12h18M9.5 5.5 12 3l2.5 2.5M9.5 18.5 12 21l2.5-2.5M5.5 9.5 3 12l2.5 2.5M18.5 9.5 21 12l-2.5 2.5" /></svg>
             <span>মুক্ত</span>
           </button>
+          <button type="button" data-mode="walk" aria-pressed="false" title="নৌকা থেকে নেমে হাঁটুন (G)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="13" cy="4.5" r="1.8" /><path d="M10 21l2.2-6.2L15 17v4" /><path d="M12.2 14.8 13 9l-3.5 2-1 3.2" /><path d="M13 9l2.2 3 2.8.8" /></svg>
+            <span>হাঁটা</span>
+          </button>
           <button type="button" data-mode="film" aria-pressed="false" title="চলচ্চিত্র (C)">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="6" width="13" height="12" rx="2" /><path d="M16 10.5l5-3v9l-5-3z" /></svg>
             <span>চলচ্চিত্র</span>
@@ -317,6 +321,9 @@
         <button id="hide-ui" class="ibtn" type="button" aria-label="নিয়ন্ত্রণ লুকান" title="নিয়ন্ত্রণ লুকান (H)">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12S7 6.5 12 6.5 20.5 12 20.5 12 17 17.5 12 17.5 3.5 12 3.5 12z" /><circle cx="12" cy="12" r="2.5" /><path d="M4 20 20 4" /></svg>
         </button>
+        <button id="map-btn" class="ibtn" type="button" aria-label="মানচিত্র" title="মানচিত্র: কোথায় যাবেন (L)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20z" /><path d="M9 4v13.5M15 6.5V20" /></svg>
+        </button>
         <button id="help-btn" class="ibtn" type="button" aria-label="সব নিয়ন্ত্রণ" title="সব নিয়ন্ত্রণ (?)">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.6" /><path d="M12 17h.01" /></svg>
         </button>
@@ -352,6 +359,15 @@
             <dt><kbd>E</kbd> <kbd>Q</kbd></dt><dd>ওপরে, নিচে</dd>
             <dt><kbd>Shift</kbd></dt><dd>দ্রুত</dd>
             <dt>স্ক্রল · পিঞ্চ</dt><dd>সামনে-পেছনে</dd>
+          </dl>
+        </section>
+        <section>
+          <h3>হাঁটা, হাল ও মানচিত্র</h3>
+          <dl>
+            <dt><kbd>G</kbd></dt><dd>নৌকা থেকে ঘাটে বা পাড়ে নামা, আবার নৌকায় ওঠা</dd>
+            <dt><kbd>W</kbd> <kbd>S</kbd> · <kbd>A</kbd> <kbd>D</kbd></dt><dd>হেঁটে সামনে-পেছনে, ঘোরা (<kbd>Shift</kbd> দৌড়)</dd>
+            <dt><kbd>K</kbd></dt><dd>হাল নিজের হাতে: <kbd>A</kbd> <kbd>D</kbd> দিক, <kbd>W</kbd> বাওয়া, <kbd>S</kbd> থামা; আবার চাপলে মাঝির হাতে</dd>
+            <dt><kbd>L</kbd></dt><dd>মানচিত্র: নৌকায় জলপথে, হেঁটে, বা ওপর থেকে কোনো জায়গায় যাওয়া</dd>
           </dl>
         </section>
         <section>

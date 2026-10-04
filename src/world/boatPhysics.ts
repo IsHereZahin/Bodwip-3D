@@ -12,7 +12,8 @@ import { SHELTERED, hullWaves, type HullWaves } from './waves';
 // side, and the boatman's steering. Out of it: heave, pitch and roll, each a damped spring toward the wave
 // surface as the hull averages it (short chop cancels along a 9 m hull; long swell lifts it), plus the
 // boatman's weight as he leans into each stroke. Angles are the group's Euler x (bow down +) and z
-// (starboard up +).
+// (starboard up +). He rows on his own stroke clock: told to rest, he finishes the stroke he is in and
+// holds the paddle up at the end of its recovery, ready for the next catch; tied up, a line holds her.
 
 /**
  * Surface current (m/s): fastest mid-river and through the narrows, slack at the banks and in the
@@ -88,6 +89,11 @@ const MAX_POWER = 2.2;
 /** The most the wind and waves heel her (rad): past a point he throws his weight to windward and her flare bites. */
 const MAX_HEEL = 0.24;
 
+/** Where in the stroke he rests the paddle when not rowing: near the end of the recovery, blade forward and clear. */
+const REST_PHASE = 0.93;
+/** A mooring line: how hard it pulls her back to her place (N/m), and its damping (N·s/m). */
+const MOOR = { k: 140, c: 420 };
+
 const tmp = { x: 0, z: 0 };
 const air = { x: 0, z: 0 };
 const stroke: PaddleForce = { thrust: 0, side: 0, x: 0, z: 0 };
@@ -115,6 +121,12 @@ export class BoatBody {
   power = 1;
   /** Her speed through the water averaged over about a stroke, which is what he judges his pull by. */
   meanSpeed = CRUISE;
+  /** His own stroke clock (s): it runs while he rows (the paddle, his body and the thrust all read it). */
+  strokeTime = 0;
+  /** Whether he rows; resting, he holds the paddle up at the end of a recovery. */
+  rowing = true;
+  /** Where a line holds her (and the way she lies there), or null when she is free. */
+  moor: { x: number; z: number; heading: number } | null = null;
   private vHeave = 0;
   /** The sea's level when she last moved: she rises and falls with the tide as it is, the spring only rides the waves. */
   private level = Number.NaN;
@@ -152,13 +164,15 @@ export class BoatBody {
   }
 
   private substep(dt: number, t: number, target: { x: number; z: number }, crew: Crew): void {
+    // his stroke clock runs while he rows, or until he has brought the paddle up to rest
+    if (this.rowing || Math.abs(strokePhase(this.strokeTime) - REST_PHASE) > 0.01) this.strokeTime += dt;
     // at each catch he settles how hard to pull this stroke
-    const n = Math.floor(t / STROKE_SECONDS);
+    const n = Math.floor(this.strokeTime / STROKE_SECONDS);
     if (n !== this.strokeIndex) {
       this.strokeIndex = n;
       this.power = strokePower(n, this.meanSpeed);
     }
-    paddleForce(strokePhase(t), stroke, this.power);
+    paddleForce(strokePhase(this.strokeTime), stroke, this.power);
     const fx = Math.sin(this.heading);
     const fz = Math.cos(this.heading);
     const sx = Math.cos(this.heading);
@@ -172,7 +186,8 @@ export class BoatBody {
     const wr = rx * sx + rz * sz;
     this.speed = ur;
     this.meanSpeed += (ur - this.meanSpeed) * (1 - Math.exp(-dt / STROKE_SECONDS));
-    const desired = Math.atan2(target.x - this.pos.x, target.z - this.pos.z);
+    // tied up, she lies the way her line holds her; else he steers for the target
+    const desired = this.moor ? this.moor.heading : Math.atan2(target.x - this.pos.x, target.z - this.pos.z);
     const err = angleDelta(this.heading, desired);
     const helm = Math.max(-STEER.max, Math.min(STEER.max, STEER.kp * err - STEER.kd * this.yawRate));
     // the wind on her (the air past her, less her own way through it), mostly on her side; it pushes her
@@ -185,8 +200,16 @@ export class BoatBody {
     const windSurge = WINDAGE.k * WINDAGE.end * au * Math.abs(au);
     this.windSide = WINDAGE.k * WINDAGE.side * aw * Math.abs(aw);
     // the helm acts as a push across the stern; the paddle drives in pulses, and pushes a little across
-    const side = stroke.side + this.windSide - helm / STERN_ARM;
-    const surge = (stroke.thrust + windSurge - DRAG.lin * ur - DRAG.quad * ur * Math.abs(ur)) / SURGE_MASS;
+    let side = stroke.side + this.windSide - helm / STERN_ARM;
+    let pull = 0;
+    if (this.moor) {
+      // the line: a pull back toward her place, along her and across her
+      const mx = MOOR.k * (this.moor.x - this.pos.x) - MOOR.c * this.vel.x;
+      const mz = MOOR.k * (this.moor.z - this.pos.z) - MOOR.c * this.vel.z;
+      pull = mx * fx + mz * fz;
+      side += mx * sx + mz * sz;
+    }
+    const surge = (stroke.thrust + pull + windSurge - DRAG.lin * ur - DRAG.quad * ur * Math.abs(ur)) / SURGE_MASS;
     const sway = (side - SWAY_DRAG.lin * wr - SWAY_DRAG.quad * wr * Math.abs(wr)) / SWAY_MASS;
     this.vel.x += (fx * surge + sx * sway) * dt;
     this.vel.z += (fz * surge + sz * sway) * dt;

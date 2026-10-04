@@ -8,7 +8,7 @@ import type { ViewName } from '../rig/rig';
 import { EVENT_NAME, MOON_PHASES, bn, clockLabel, nearestPhase, tithiLabel } from './bangla';
 import './controls.css';
 
-export type CameraChoice = 'follow' | 'free' | 'film';
+export type CameraChoice = 'follow' | 'free' | 'walk' | 'film';
 
 /** The weather menu: by the season, or held clear, breezy, windy, raining or stormy. */
 export const WEATHER_PICKS = [
@@ -38,6 +38,8 @@ export interface ControlHandlers {
   season(choice: number | 'today'): void;
   weather(choice: WeatherPick): void;
   sound(): void;
+  /** Opens or closes the map. */
+  map(): void;
   /** Any use of the controls; it counts as activity, like touching the scene. */
   touched(): void;
 }
@@ -172,6 +174,7 @@ export class Controls {
     });
     $<HTMLElement>('#hide-ui').addEventListener('click', use(() => this.toggleUi()));
     $<HTMLElement>('#ui-restore').addEventListener('click', use(() => this.toggleUi()));
+    $<HTMLElement>('#map-btn').addEventListener('click', use(() => h.map()));
     $<HTMLElement>('#help-btn').addEventListener('click', use(() => this.toggleHelp()));
     // a click on the dimmed backdrop closes the sheet
     this.help.addEventListener('click', (e) => {

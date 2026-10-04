@@ -35,19 +35,19 @@ import type { BodyDrive } from './paddle';
 // He faces +z, so his right side is −x; he paddles on his left (+x).
 
 const UP = new Vector3(0, 1, 0);
-const SHIN = 0.41;
-const THIGH = 0.42;
-const ANKLE = 0.07;
-const UPPER_ARM = 0.29;
-const FOREARM = 0.26;
+export const SHIN = 0.41;
+export const THIGH = 0.42;
+export const ANKLE = 0.07;
+export const UPPER_ARM = 0.29;
+export const FOREARM = 0.26;
 const REACH = UPPER_ARM + FOREARM;
-const HIP_HALF = 0.09;
+export const HIP_HALF = 0.09;
 /** Hip joints above the soles, knees softly bent. */
-const PELVIS_HEIGHT = 0.82;
+export const PELVIS_HEIGHT = 0.82;
 /** From the hip joints to the base of the chest. */
-const SPINE = 0.08;
-const SHOULDER = new Vector3(0.18, 0.4, 0);
-const NECK_BASE = new Vector3(0, 0.46, 0.01);
+export const SPINE = 0.08;
+export const SHOULDER = new Vector3(0.18, 0.4, 0);
+export const NECK_BASE = new Vector3(0, 0.46, 0.01);
 /** Balance: how fast he rights himself as the deck tilts, and how far (he leaves a little to the deck). */
 const BALANCE = { f: 1.3, zeta: 0.55, share: 0.85 };
 /**
@@ -61,7 +61,7 @@ export const SKIN_TONE = '#8d5a3b';
 const LEAN_MAX = 0.16;
 
 /** The trunk's lathe profile, [radius, height above the chest's base]; front to back it is TRUNK_DEPTH of this. */
-const TRUNK: readonly (readonly [number, number])[] = [
+export const TRUNK: readonly (readonly [number, number])[] = [
   [0.13, 0],
   [0.14, 0.08],
   [0.148, 0.18],
@@ -71,7 +71,7 @@ const TRUNK: readonly (readonly [number, number])[] = [
   [0.12, 0.455],
   [0.05, 0.475],
 ];
-const TRUNK_DEPTH = 0.7;
+export const TRUNK_DEPTH = 0.7;
 const TRUNK_BY_HEIGHT = TRUNK.map(([r, y]) => [y, r] as const);
 /** The vest's radius by height on the chest, [height, radius]: loose over the belly, hugging the chest. */
 const VEST: readonly (readonly [number, number])[] = [
@@ -87,7 +87,7 @@ const VEST_LENGTH = 0.4;
 /** The vest's shoulder straps, either side of the neck. */
 const STRAP_X = 0.105;
 /** The forearm, elbow to wrist: [height, half-width across the wrist's broad axis, half-depth]. */
-const FOREARM_RINGS: readonly (readonly [number, number, number])[] = [
+export const FOREARM_RINGS: readonly (readonly [number, number, number])[] = [
   [0, 0.04, 0.038],
   [0.05, 0.044, 0.039],
   [0.11, 0.04, 0.034],
@@ -103,7 +103,7 @@ const LUNGI_TOP: readonly (readonly [number, number, number, number])[] = [
 ];
 const LUNGI_HIPS = 0.2;
 /** The thigh's radius from hip (0) to knee (1). */
-const THIGH_RADIUS: readonly (readonly [number, number])[] = [
+export const THIGH_RADIUS: readonly (readonly [number, number])[] = [
   [0, 0.075],
   [0.25, 0.08],
   [0.5, 0.07],
@@ -170,7 +170,7 @@ function onShoulder(x: number, psi: number, lift: number, p: Vector3, n: Vector3
 }
 
 /** The lungi's folds: pleats gathered at the knot, the overlap running down from it, drape, the waist's roll, a ragged hem. */
-function lungiFold(t: number, th: number): { r: number; y: number } {
+export function lungiFold(t: number, th: number): { r: number; y: number } {
   const knot = Math.PI / 2;
   const near = (c: number, w: number) => Math.exp(-((wrap(th - c) / w) ** 2));
   const drape = (0.004 + 0.014 * t) * (0.55 * Math.sin(5 * th + 1.3) + 0.35 * Math.sin(9 * th + 0.4) + 0.22 * Math.sin(14 * th + 2.1));

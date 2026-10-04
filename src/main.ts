@@ -26,11 +26,11 @@ import { Hud } from './ui/hud';
 import { Bil } from './world/bil';
 import { buildSaltWorks } from './world/coast';
 import { RiverTraffic } from './world/boats';
-import { JOURNEY_Z0, JOURNEY_Z1, WETLANDS, terrainHeight } from './world/geography';
+import { JOURNEY_Z0, JOURNEY_Z1, WETLANDS, terrainHeight, waterLevelAt } from './world/geography';
 import { Drift } from './world/drift';
 import { sea, setSwell, swellFactor, updateSea } from './world/waves';
 import { exposureAt } from './world/exposure';
-import { coverAt, kindAt } from './geo/data';
+import { PLACES, coverAt, kindAt, type Place } from './geo/data';
 import { Fishing, fishingClearings } from './world/fishing';
 import { HeroBoat } from './world/hero';
 import { Life } from './world/life';
@@ -49,6 +49,9 @@ import { PowerPlant } from './world/powerPlant';
 import { buildPowerLines } from './world/powerLines';
 import { WindFarm } from './world/windFarm';
 import { Port } from './world/port';
+import { MapPanel, type MapActions } from './ui/mapPanel';
+import { setWalls } from './world/walkable';
+import { routeLength } from './world/navigation';
 import { Ships } from './world/ships';
 import { cullBeyond, updateCulling } from './render/cull';
 import { buildSky } from './world/sky';
@@ -222,6 +225,10 @@ async function main(hud: Hud): Promise<void> {
   env.addTo(scene);
   env.setShadowMapSize(Math.min(4096, renderer.capabilities.maxTextureSize) >= 4096 && devicePixelRatio <= 1.5 ? 4096 : 2048);
   const rig = new Rig(camera, canvas);
+  // the viewer on foot, and the walls he cannot walk through (the huts and the map's buildings)
+  scene.add(rig.walker.group);
+  setWalls(standing);
+  rig.onNotice = (text) => hud.toast(text, null);
 
   // ---- the film tour's stage: what its scenes set in the world (season, hour, moon, weather, the boat,
   // the fishermen, the birds) and read from it; the viewer's own world is kept and put back after ----
@@ -510,13 +517,94 @@ async function main(hud: Hud): Promise<void> {
     season: chooseSeason,
     weather: chooseWeather,
     sound: toggleSound,
+    map: () => mapPanel.toggle(),
     touched: noteInput,
   });
+
+  // ---- the map: the ways to a place, by the boat, on foot or from above ----
+  /** A jump through mist (s each way): it thickens, the act happens unseen, it clears. */
+  const MAP_JUMP = 0.9;
+  let mapJump: { at: number; act: (() => void) | null } | null = null;
+  const jumpThroughMist = (act: () => void) => {
+    noteInput();
+    if (director.active) setFilm(false);
+    mapJump = { at: performance.now(), act };
+  };
+  const jumpFade = (now: number) => {
+    if (!mapJump) return 0;
+    const t = (now - mapJump.at) / 1000 / MAP_JUMP;
+    if (t >= 1 && mapJump.act) {
+      mapJump.act();
+      mapJump.act = null;
+    }
+    if (t >= 2) mapJump = null;
+    return smooth(t < 1 ? t : Math.max(0, 2 - t));
+  };
+  /** Somewhere to stand near (x, z), dry ground first, looked for outward in rings; null if none within 90 m. */
+  const standNear = (x: number, z: number): { x: number; z: number } | null => {
+    let wet: { x: number; z: number } | null = null;
+    for (let r = 0; r <= 90; r += 3) {
+      const n = Math.max(1, Math.round((r * Math.PI * 2) / 4));
+      for (let k = 0; k < n; k++) {
+        const px = x + Math.sin((k / n) * Math.PI * 2) * r;
+        const pz = z + Math.cos((k / n) * Math.PI * 2) * r;
+        if (!rig.walker.canStand(px, pz)) continue;
+        if (waterLevelAt(px, pz) < terrainHeight(px, pz)) return { x: px, z: pz };
+        wet ??= { x: px, z: pz };
+      }
+    }
+    return wet;
+  };
+  /** A voyage longer than this (m) passes through the mist to the last SAIL_NEAR of it; she rows the rest. */
+  const SAIL_SKIP = 900;
+  const SAIL_NEAR = 350;
+  const goTo: MapActions = {
+    sail: (place: Place) => {
+      const way = rig.routeTo(place.world.x, place.world.z);
+      if (!way) {
+        hud.toast(`${place.name}: এখন জলপথে যাওয়া যাচ্ছে না (হয়তো ভাটা)`, null);
+        return;
+      }
+      const length = routeLength(rig.boat.pos.x, rig.boat.pos.z, way);
+      const go = (rest: { x: number; z: number }[]) => {
+        rig.sail(rest, place.name);
+        hud.toast(`নৌকা চলল: ${place.name}`, null);
+      };
+      if (rig.mode === 'follow' && length <= SAIL_SKIP) {
+        noteInput();
+        if (director.active) setFilm(false);
+        go(way);
+      } else
+        jumpThroughMist(() => {
+          const rest = length > SAIL_SKIP ? rig.skipAlong(way, SAIL_NEAR) : way;
+          rig.aboard(false);
+          go(rest);
+        });
+    },
+    walk: (place: Place) => {
+      const at = standNear(place.world.x, place.world.z);
+      if (!at) {
+        hud.toast(`${place.name}: সেখানে দাঁড়ানোর মতো জায়গা পাওয়া গেল না`, null);
+        return;
+      }
+      jumpThroughMist(() => rig.walkFrom(at.x, at.z, Math.atan2(place.world.x - at.x, place.world.z - at.z)));
+    },
+    fly: (place: Place) => {
+      const y = terrainHeight(place.world.x, place.world.z);
+      jumpThroughMist(() => rig.placeFree(place.world.x + 160, Math.max(y, 0) + 170, place.world.z + 160, Math.atan2(-160, -160), -0.62));
+    },
+  };
+  const mapPanel = new MapPanel(goTo);
 
   // ---- keyboard: one place for every shortcut (the help sheet lists them) ----
   const held = new Set<string>();
   window.addEventListener('keydown', (e) => {
     if (controls.helpOpen || e.ctrlKey || e.metaKey || e.altKey) return;
+    // the map takes the keys while open, but L closes it again
+    if (mapPanel.isOpen) {
+      if (e.code === 'KeyL') mapPanel.close();
+      return;
+    }
     // leave keys to a focused dropdown, and arrows to the focused timeline
     const target = e.target;
     if (target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement) return;
@@ -581,6 +669,18 @@ async function main(hud: Hud): Promise<void> {
         break;
       case 'KeyH':
         controls.toggleUi();
+        break;
+      case 'KeyG':
+        // ashore from the boat, or back aboard
+        chooseCamera(rig.mode === 'walk' ? 'follow' : 'walk');
+        break;
+      case 'KeyK':
+        noteInput();
+        if (director.active) setFilm(false);
+        rig.toggleHelm();
+        break;
+      case 'KeyL':
+        mapPanel.toggle();
         break;
     }
   });
@@ -672,7 +772,7 @@ async function main(hud: Hud): Promise<void> {
     // birds and fireflies gather round whoever is being watched: the boat, or the free camera
     life.update(dt, t, director.active ? director.focus : rig.subject, director.active ? rig.boat.course : rig.subjectHeading, env.night, weather.rain);
     // the beach's crabs round the camera (none away from the beaches); nobody else walks there yet
-    crabs.update(dt, camera.position, [], weather.rain);
+    crabs.update(dt, camera.position, rig.mode === 'walk' ? [rig.subject] : [], weather.rain);
     sky.mesh.position.copy(camera.position);
     terrain.update(camera.position);
     water.update(camera.position.x, camera.position.z);
@@ -707,8 +807,9 @@ async function main(hud: Hud): Promise<void> {
     if (!director.active && !reducedMotion && !watch.event && now - lastInput > FILM_IDLE_MS) setFilm(true);
     if (sessionUntil && now > sessionUntil && !director.active) backToToday();
     const cut = clamp(1 - (now - readyAt) / 2600, 0, 1);
-    // the journey's mist fade belongs to the boat; a free camera elsewhere doesn't see the boat loop
-    const loop = rig.mode === 'follow' || director.active ? rig.fade : 0;
+    // the journey's mist fade belongs to the boat; a free camera elsewhere doesn't see the boat loop; a jump
+    // from the map passes through mist too
+    const loop = Math.max(rig.mode === 'follow' || director.active ? rig.fade : 0, jumpFade(now));
     updateCulling(camera.position);
     pipeline.render(renderer, scene, camera, {
       exposure: env.exposure,
@@ -721,6 +822,8 @@ async function main(hud: Hud): Promise<void> {
     });
     hud.setCaption(director.caption, director.captionAlpha, pipeline.bar);
     controls.update(clock, director.active ? 'film' : rig.mode, soundOn, tideLabel(tide.flow, tide.level));
+    const who = rig.subject;
+    mapPanel.update(who.x, who.z, rig.subjectHeading);
 
     // adaptive resolution: hold ~45–60 fps by trading pixels, never below 60% scale
     perf.frames++;
@@ -915,6 +1018,23 @@ async function main(hud: Hud): Promise<void> {
             if (o.name === name) o.visible = false;
           });
           step(0);
+        },
+        /** On foot at (x, z) facing `heading` (the boat tied up where she is); returns where he stands. */
+        walk(x: number, z: number, heading = 0) {
+          rig.walkFrom(x, z, heading);
+          step(0);
+          return { x: rig.walker.x, y: rig.walker.y, z: rig.walker.z, mode: rig.mode };
+        },
+        /** The boat's voyage, and the walker's place. */
+        voyage() {
+          const b = rig.boat;
+          return { voyage: rig.voyage, mode: rig.mode, boat: { x: Math.round(b.pos.x), z: Math.round(b.pos.z), speed: Math.round(b.speed * 10) / 10, rowing: b.rowing }, walker: { x: Math.round(rig.walker.x * 10) / 10, y: Math.round(rig.walker.y * 10) / 10, z: Math.round(rig.walker.z * 10) / 10, wading: Math.round(rig.walker.wading * 100) / 100 } };
+        },
+        /** Goes to a place (its id) the way the map's buttons do: by the boat, on foot or from above. */
+        go(id: string, how: keyof MapActions = 'sail') {
+          const p = PLACES.find((q) => q.id === id);
+          if (p) goTo[how](p);
+          return !!p;
         },
         /** The container ship's round (where she is, her phase and speed); with a phase, put her there first. */
         ships(phase?: Parameters<Ships['jump']>[0], along?: number) {

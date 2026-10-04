@@ -556,7 +556,7 @@ export class HeroBoat {
 
   /** Sets the boat where `body` has her, works the paddle, poses the boatman, swings the lantern. */
   update(dt: number, t: number, lamp: number, body: BoatBody): void {
-    const phase = strokePhase(t);
+    const phase = strokePhase(body.strokeTime);
     if (phase < this.lastPhase && this.onStroke) this.onStroke(body.power);
     this.lastPhase = phase;
 
