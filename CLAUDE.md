@@ -5,6 +5,7 @@ Standalone site: Vite 8 + TypeScript 7 + three r186. Almost everything (terrain,
 ## Start here
 
 - `HANDOFF.md` is the saved record of the session that built this: the requests, decisions, what exists, verification done, bugs fixed, known issues and the backlog. Read it before changing anything.
+- `GEOGRAPHY_PLAN.md` (21st request, not started) is the plan to rebuild the world on Moheshkhali–Matarbari's real geography from open GIS data. The map is scaled uniformly to 1:3; objects (boats, people, trees, buildings, ships) and hill heights stay real size. It holds the researched coordinates, data sources and licences, the scale rules and their exceptions (§5.1), the phases, and the user's decisions D1–D10 (answered 2026-10-04). The work goes on branch `geo-foundation`.
 - The user asked for replies in Bangla (বাংলা) during this work. Keep replying in Bangla unless they switch.
 - `README.md` is the user-facing run guide (in Bangla).
 
@@ -18,6 +19,10 @@ Standalone site: Vite 8 + TypeScript 7 + three r186. Almost everything (terrain,
 
 - `npm run dev` serves on http://localhost:5173. `npm run build` writes `dist/` (hashed files in `dist/bundle/`). `npm run typecheck` runs `tsc --noEmit`. `npm run preview` serves `dist/`.
 - Visual check (only when asked): with the dev server running, `node scripts/headless/shoot.mjs <outDir> --shots '<json>'`. It saves PNGs and prints draw calls, triangles, frame ms and every page console message. It needs Chrome (set `CHROME_PATH` if Chrome is not at the default Windows path). The shot format and the debug API are documented in `HANDOFF.md`.
+- Geo data (`GEOGRAPHY_PLAN.md`, branch `geo-foundation`; `scripts/geo/`):
+  - `node scripts/geo/fetch.mjs [ids…] [--force]` downloads the open data into `scripts/geo/cache/` (≈320 MB, git-ignored). Sources and licences are in `scripts/geo/config.mjs`; each file's checksum and date go into `cache/manifest.json`. Some hosts need the User-Agent (`lib/http.mjs`); big COGs are read in strips (`lib/raster.mjs`); tiles inside multi-GB zips are taken by range requests (`lib/zip.mjs`).
+  - `node scripts/geo/tide-fit.mjs <years…>` fits the Cox's Bazar tide harmonics.
+  - `node scripts/geo/audit.mjs` prints the P0 audit and writes satellite crops to `cache/audit/`. The findings are in `GEO_AUDIT.md`.
 - The build warns that the bundle is over 500 kB. That is expected: three.js is a large share of it (the whole bundle is ≈896 kB, ≈265 kB gzipped).
 
 ## Architecture (`src/`)
