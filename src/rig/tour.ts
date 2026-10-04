@@ -140,6 +140,11 @@ const STORM_VILLAGE = VILLAGES[Math.min(1, VILLAGES.length - 1)];
 const POND = PONDS[0] ?? { x: riverX(BIL.z) + BIL.u, z: BIL.z, r: BIL.halfWid, level: BIL.level };
 const SONADIA_BEACH = place('sonadia-beach').world;
 const TEMPLE = place('adinath-temple').world;
+/** Where the film watches the red crabs: Sonadia's beach, among their burrows (crabs.ts `habitat`). */
+const CRAB_BEACH = (() => {
+  const p = SONADIA_BEACH;
+  return { x: p.x, y: terrainHeight(p.x, p.z), z: p.z };
+})();
 /** Gorakghata's jetty: its land end, the run out to its head, and the unit normal to its north side. */
 const JETTY = (() => {
   const land = place('gorakghata-jetty-land').world;
@@ -450,6 +455,20 @@ export function tourScenes(): Scene[] {
         const d = lerp(260, 140, u);
         pos.set(SONADIA_BEACH.x + d * 0.7, onWater(lerp(32, 20, u)), SONADIA_BEACH.z - d * 0.7);
         look.set(SONADIA.x, onWater(2), SONADIA.z);
+      },
+    },
+    {
+      caption: 'লাল কাঁকড়া',
+      seconds: 12,
+      // a first-quarter moon brings low water to the morning (env/tide.ts): the beach's sand lies bare and dry
+      world: { day: 20, hour: 10, moon: 7, weather: 'clear', wind: 0.4 },
+      begin: (s) => s.crabs(a.set(CRAB_BEACH.x, CRAB_BEACH.y, CRAB_BEACH.z)),
+      // a hand's breadth over the sand among the burrows, the red crabs out and dashing toward the water
+      pose: (u, _s, pos, look) => {
+        const x = CRAB_BEACH.x - 2.5 + 1.2 * u;
+        const z = CRAB_BEACH.z + lerp(0.8, -0.6, u);
+        pos.set(x, terrainHeight(x, z) + 0.28, z);
+        look.set(x + 3.2, terrainHeight(x + 3.2, z) + 0.03, z - 0.4);
       },
     },
     {

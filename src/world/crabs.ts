@@ -41,6 +41,8 @@ const REACH = 36;
 /** Most burrows and crabs made at once. */
 const MAX_BURROWS = 6000;
 const MAX_CRABS = 400;
+/** How far round the film's shot the burrows are woken (m). */
+const WAKE = 8;
 /** How near (m) someone low on the beach may come before a crab runs [মডেল]; the camera counts as someone below this height above the sand. */
 const FLIGHT = 4;
 const LOW = 3;
@@ -110,7 +112,8 @@ const nearBeach = (x: number, z: number) => {
 };
 
 /** Whether a burrow could be dug at (x, z): beach sand in the band above the water. */
-function habitat(x: number, z: number): boolean {
+/** Whether red crabs burrow at (x, z): beach sand within the tides' band, off the roads. */
+export function habitat(x: number, z: number): boolean {
   if (coverAt(x, z) !== COVER.sand) return false;
   const h = terrainHeight(x, z);
   return h >= BAND.low && h <= BAND.high && !onRoad(x, z, 2);
@@ -202,6 +205,8 @@ export class Crabs {
   private readonly s = new Vector3();
   private readonly up = new Vector3(0, 1, 0);
   private readonly rng = new Rng(131);
+  /** While the film watches (as a long lens would, from off the beach), its low camera does not scare them. */
+  unseen = false;
 
   constructor() {
     this.group.name = 'crabs';
@@ -280,6 +285,21 @@ export class Crabs {
   }
 
   /**
+   * Lets the crabs round `at` out of their burrows within a second or two, and half the burrows within WAKE m
+   * of it have one: a morning when most of them are out (the film's shot of them).
+   */
+  wake(at: Vector3): void {
+    this.populate(at.x, at.z);
+    const taken = new Set(this.crabs.map((c) => `${c.hx},${c.hz}`));
+    for (const h of this.holes) {
+      if (this.crabs.length >= MAX_CRABS) break;
+      if (Math.hypot(h.x - at.x, h.z - at.z) > WAKE || taken.has(`${h.x},${h.z}`) || this.rng.next() < 0.5) continue;
+      this.crabs.push({ x: h.x, z: h.z, facing: this.rng.next() * Math.PI * 2, hx: h.x, hz: h.z, state: 'in', timer: 0, moving: false, tx: h.x, tz: h.z, speed: 0, scared: 0, gait: 0, size: 0.8 + 0.35 * this.rng.next(), slot: this.crabs.length });
+    }
+    for (const c of this.crabs) if (c.state === 'in') c.timer = this.rng.next() * 1.5;
+  }
+
+  /**
    * One step for the crabs round the camera: `threats` are where people (or a low camera, a boat at the beach)
    * stand; `rain` how hard it rains (0..1).
    */
@@ -296,7 +316,7 @@ export class Crabs {
     // who is near: the threats, and the camera itself when it is down on the beach
     const near = (c: Crab) => {
       for (const p of threats) if (Math.hypot(p.x - c.x, p.z - c.z) < FLIGHT) return p;
-      if (camera.y - terrainHeight(camera.x, camera.z) < LOW && Math.hypot(camera.x - c.x, camera.z - c.z) < FLIGHT) return camera;
+      if (!this.unseen && camera.y - terrainHeight(camera.x, camera.z) < LOW && Math.hypot(camera.x - c.x, camera.z - c.z) < FLIGHT) return camera;
       return null;
     };
     let shown = 0;

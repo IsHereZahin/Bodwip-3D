@@ -41,6 +41,7 @@ import { buildPondLife } from './world/ponds';
 import { buildRain } from './world/rain';
 import { buildRoads } from './world/roads';
 import { Crabs } from './world/crabs';
+import { Mudskippers } from './world/mudskippers';
 import { Ferries } from './world/ferries';
 import { BRIDGE_CLEARING, bridgeTrees, buildBridge } from './world/bridge';
 import { Girl } from './world/girl';
@@ -209,6 +210,9 @@ async function main(hud: Hud): Promise<void> {
   const life = new Life();
   scene.add(life.group);
   const crabs = new Crabs();
+  // the mudskippers out on the mud the tide leaves bare by the mangroves
+  const skippers = new Mudskippers();
+  scene.add(skippers.group);
   scene.add(crabs.group);
   const ferries = new Ferries();
   scene.add(ferries.group);
@@ -304,6 +308,7 @@ async function main(hud: Hud): Promise<void> {
     get shipFocus() {
       return ships.focus;
     },
+    crabs: (at) => crabs.wake(at),
     birds: (at, heading) => life.launchAll(at, heading, 60),
     get sunDir() {
       return env.sunDir;
@@ -804,7 +809,9 @@ async function main(hud: Hud): Promise<void> {
     // birds and fireflies gather round whoever is being watched: the boat, or the free camera
     life.update(dt, t, director.active ? director.focus : rig.subject, director.active ? rig.boat.course : rig.subjectHeading, env.night, weather.rain);
     // the beach's crabs round the camera (none away from the beaches), wary of the viewer on foot
+    crabs.unseen = director.active;
     crabs.update(dt, camera.position, rig.mode === 'walk' ? [rig.subject] : [], weather.rain);
+    skippers.update(dt, camera.position, rig.mode === 'walk' ? [rig.subject, rig.boat.pos] : [rig.boat.pos]);
     sky.mesh.position.copy(camera.position);
     terrain.update(camera.position);
     water.update(camera.position.x, camera.position.z);
@@ -1058,6 +1065,9 @@ async function main(hud: Hud): Promise<void> {
         /** How many crab burrows and crabs are made round the camera, and how many crabs are out. */
         crabs() {
           return crabs.counts;
+        },
+        skippers() {
+          return skippers.counts;
         },
         /** Hides every object with this name (debugging what draws where). */
         hide(name: string) {

@@ -42,6 +42,8 @@ export interface Stage {
   ship(phase: ShipPhase, along: number): void;
   /** Where the container ship is now, her heading and her length. */
   readonly shipFocus: { x: number; z: number; heading: number; length: number };
+  /** Lets the beach's red crabs round a point out of their burrows now. */
+  crabs(at: Vector3): void;
   /** Sends the flocks of birds across, near a point and heading. */
   birds(at: Vector3, heading: number): void;
   readonly sunDir: Vector3;
