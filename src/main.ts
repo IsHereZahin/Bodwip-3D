@@ -48,6 +48,8 @@ import { Beacons } from './world/beacons';
 import { PowerPlant } from './world/powerPlant';
 import { buildPowerLines } from './world/powerLines';
 import { WindFarm } from './world/windFarm';
+import { Port } from './world/port';
+import { Ships } from './world/ships';
 import { cullBeyond, updateCulling } from './render/cull';
 import { buildSky } from './world/sky';
 import { Terrain } from './world/terrain';
@@ -156,7 +158,12 @@ async function main(hud: Hud): Promise<void> {
   cullBeyond(powerLines, 4500);
   const windFarm = new WindFarm();
   scene.add(windFarm.group);
-  const beacons = new Beacons([...plant.lights, ...windFarm.lights]);
+  // Matarbari's deep-sea port, finished, and the ships that use it
+  const port = new Port();
+  scene.add(port.group);
+  const ships = new Ships();
+  scene.add(ships.group);
+  const beacons = new Beacons([...plant.lights, ...windFarm.lights, ...port.lights]);
   scene.add(beacons.points);
   hud.progress(0.52);
   await nextTask();
@@ -314,6 +321,8 @@ async function main(hud: Hud): Promise<void> {
     pipeline.setSize(W, H);
     life.setPixelRatio(k);
     beacons.setPixelRatio(k);
+    port.setPixelRatio(k);
+    ships.setPixelRatio(k);
   };
   resize();
   window.addEventListener('resize', resize);
@@ -643,6 +652,13 @@ async function main(hud: Hud): Promise<void> {
     ferries.update(dt, t);
     plant.update(dt);
     windFarm.update(dt);
+    port.update(t);
+    // the ships move and float; the three nearest moving ones make their waves on the water
+    ships.update(dt, t, camera.position);
+    for (let i = 0; i < 3; i++) {
+      water.ships[i].copy(ships.wakes[i]);
+      water.shipSizes[i].copy(ships.wakeSizes[i]);
+    }
     const simStart = performance.now();
     // the hyacinth meets the hero's hull and blade, and the fishermen's boats, poles and nets
     drift.update(dt, t, camera.position.z, b, hero.blade, fishing.obstacles());
@@ -774,6 +790,7 @@ async function main(hud: Hud): Promise<void> {
           updateSky(0, true);
           plant.settle();
           windFarm.update(0, true);
+          ships.settle();
           // the boat goes in after the river has its level
           if (o.journey !== undefined) rig.place(o.journey);
           env.update(clock.hour, clock.moonAge);
@@ -898,6 +915,11 @@ async function main(hud: Hud): Promise<void> {
             if (o.name === name) o.visible = false;
           });
           step(0);
+        },
+        /** The container ship's round (where she is, her phase and speed); with a phase, put her there first. */
+        ships(phase?: Parameters<Ships['jump']>[0], along?: number) {
+          if (phase) ships.jump(phase, along);
+          return ships.state;
         },
         /** Whether the Matarbari plant runs (its plume shows); with an argument, set it. */
         plant(on?: boolean) {

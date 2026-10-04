@@ -7,6 +7,7 @@ import { patchMaterial } from '../render/patch';
 import type { GroundSet } from '../render/surfaces';
 import { WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, bilMarsh, bridgePath, riverX, seaWaterAt, terrainHeight, villageDistance, waterLevelAt } from './geography';
 import { plantCover } from './plantSite';
+import { portCover } from './portSite';
 import { roadCover } from './roads';
 
 // The ground: the baked map's heights (geography.ts terrainHeight) and covers (geo/data.ts), drawn as a
@@ -36,6 +37,7 @@ const COLORS = {
   /** The power plant's platform: pale dredged sand, levelled and rolled; its embankment faced with stone. */
   fill: rgb('#b8a78b'),
   revetment: rgb('#837d72'),
+  paving: rgb('#a19f98'),
 };
 
 /**
@@ -129,7 +131,8 @@ function cover(x: number, z: number, h: number): Cover {
   }
   let ground = look.color;
   const site = plantCover(x, z);
-  const plant = site.top + site.bank;
+  const paved = portCover(x, z);
+  const plant = Math.min(1, site.top + site.bank + paved);
   // some variety: greener and drier patches, and on the hills red earth showing through the forest
   ground = mixRgb(ground, COLORS.grassB, (fbm(x * 0.012, z * 0.012, 2, 21) - 0.5) * 0.6 * look.grass);
   const dry = smoothstep(0.6, 0.8, fbm(x * 0.004, z * 0.004, 2, 33));
@@ -143,6 +146,8 @@ function cover(x: number, z: number, h: number): Cover {
   if (plant > 0) {
     ground = mixRgb(ground, mixRgb(COLORS.fill, COLORS.dust, (fbm(x * 0.05, z * 0.05, 2, 41) - 0.5) * 0.8), site.top);
     ground = mixRgb(ground, COLORS.revetment, site.bank);
+    // the port's yard and quays: concrete paving, a little stained
+    ground = mixRgb(ground, mixRgb(COLORS.paving, COLORS.revetment, (fbm(x * 0.08, z * 0.08, 2, 43) - 0.5) * 0.5), paved);
   }
   // round the houses the ground is trodden bare; the footpath over the old bridge is worn to earth
   const yard = smoothstep(1.0, 0.35, villageDistance(x, z));
@@ -165,8 +170,8 @@ function cover(x: number, z: number, h: number): Cover {
     // paddy plots and salt pans only on their own ground above the water, and off the roads and the plant
     zone: look.zone * top * (1 - road) * wild,
     grass: Math.max(0, look.grass * top * (1 - dirt) * (1 - road) + marsh * 0.8) * wild,
-    dirt: dirt * top * (1 - look.sand) * wild + site.top * 0.55 + site.bank * 0.7,
-    sand: look.sand * wild + site.top * 0.45,
+    dirt: dirt * top * (1 - look.sand) * wild + site.top * 0.55 + site.bank * 0.7 + paved * 0.9,
+    sand: look.sand * wild + site.top * 0.45 + paved * 0.1,
     pebbles: site.bank,
   };
 }

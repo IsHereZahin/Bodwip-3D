@@ -49,6 +49,13 @@ const INLAND_SLOPE = 3;
  * (m about MSL) are [মডেল]. The east pond (way 1537056321) is mostly dry sand on the same scene and stays land.
  */
 const ASH_POND = { id: 1537055661, level: 6, bund: 8 };
+/**
+ * Matarbari port's works, reclaimed and dredged after the DEMs, JRC's water and WorldCover were made: inside
+ * this box the ground is land or water as Sentinel-2 saw it (2026-02-26), the reclaimed land standing at
+ * `reclaimed` m about MSL [মডেল: the fill's level is not published]; the breakwaters (OSM) stay water, their
+ * mounds drawn by the scene (world/port.ts).
+ */
+const PORT_ZONE = { s: 21.68, n: 21.7065, w: 91.841, e: 91.879, reclaimed: 4.5 };
 
 const smoothstep = (a, b, x) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
@@ -200,6 +207,31 @@ function distanceToOutside(inside, w, h) {
   return d;
 }
 
+/** OSM's breakwaters by the port, in ground metres: [[east, north], …] for each. */
+async function portBreakwaters() {
+  const { elements } = JSON.parse(await readFile(at('osm-infrastructure.json'), 'utf8'));
+  return elements
+    .filter((e) => e.type === 'way' && e.tags?.man_made === 'breakwater' && e.geometry?.length)
+    .map((e) => e.geometry.map((p) => {
+      const q = toGround(p.lat, p.lon);
+      return [q.east, q.north];
+    }));
+}
+
+/** Whether (east, north) lies within `d` m of any of the lines. */
+function nearLine(lines, e, n, d) {
+  for (const l of lines)
+    for (let k = 1; k < l.length; k++) {
+      const [ax, ay] = l[k - 1];
+      const [bx, by] = l[k];
+      const sx = bx - ax;
+      const sy = by - ay;
+      const t = Math.max(0, Math.min(1, ((e - ax) * sx + (n - ay) * sy) / (sx * sx + sy * sy || 1)));
+      if (Math.hypot(e - ax - sx * t, n - ay - sy * t) < d) return true;
+    }
+  return false;
+}
+
 /** The ash pond on the grid: 1 inside its outline, 2 for the ring of cells round it (its bunds). */
 async function ashPondMask(g) {
   const { width: W, height: H } = g;
@@ -237,6 +269,8 @@ async function bakeTerrain() {
   const murray = await windowSampler('murray-tidal', Uint8Array);
   const seasonality = await windowSampler('jrc-seasonality', Uint8Array);
   const levels = await passLevels();
+  const scene = await sentinelBrightest();
+  const breakwaters = await portBreakwaters();
   /** The level the tide stays above for share `p` of the passes. */
   const exceeded = (p) => levels[Math.min(levels.length - 1, Math.max(0, Math.round((1 - p) * (levels.length - 1))))];
   const lowWater = exceeded(0.9);
@@ -249,6 +283,8 @@ async function bakeTerrain() {
   const deep = new Float32Array(W * H);
   /** WorldCover's class under each cell. */
   const cls = new Uint8Array(W * H);
+  /** The cells of the port's zone, taken from Sentinel-2. */
+  const zone = new Uint8Array(W * H);
   // 1. what each cell is, and its height where the DEMs measured it
   for (let r = 0; r < H; r++) {
     const north = g.north1 - (r + 0.5) * SPACING;
@@ -273,6 +309,41 @@ async function bakeTerrain() {
       else if (occ[i] >= 60 && seasonality(lat, lon) === 12) kind[i] = CHANNEL;
       else if (wc === 80) kind[i] = KIND.inland;
       else kind[i] = KIND.land;
+      // the port's works as Sentinel-2 saw them: open water (green over red) or land; the mixed edge as it was
+      if (lat > PORT_ZONE.s && lat < PORT_ZONE.n && lon > PORT_ZONE.w && lon < PORT_ZONE.e && !nearLine(breakwaters, g.east0 + (c + 0.5) * SPACING, north, 25)) {
+        zone[i] = 1;
+        const rgb = scene.mean(lat, lon);
+        if (rgb && rgb[1] - rgb[0] >= 15 && rgb[1] >= rgb[2]) {
+          kind[i] = KIND.sea;
+          occ[i] = 100;
+        } else if (rgb && rgb[1] - rgb[0] <= 5 && kind[i] !== KIND.land) {
+          kind[i] = KIND.land;
+          dem[i] = Math.max(dem[i], PORT_ZONE.reclaimed);
+        }
+      }
+    }
+  }
+  // ... and no islets or ponds a cell or two across left by the scene's mixed pixels: each cell of the zone
+  // goes with the most of the nine round it, twice over
+  for (let pass = 0; pass < 2; pass++) {
+    const was = kind.slice();
+    for (let i = 0; i < W * H; i++) {
+      if (!zone[i]) continue;
+      const c = i % W;
+      let wet = 0;
+      for (let dr = -1; dr <= 1; dr++)
+        for (let dc = -1; dc <= 1; dc++) {
+          const j = i + dr * W + dc;
+          if (c + dc < 0 || c + dc >= W || j < 0 || j >= W * H) continue;
+          if (was[j] !== KIND.land) wet++;
+        }
+      if (wet >= 6 && was[i] === KIND.land) {
+        kind[i] = KIND.sea;
+        occ[i] = 100;
+      } else if (wet <= 3 && was[i] !== KIND.land) {
+        kind[i] = KIND.land;
+        dem[i] = Math.max(dem[i], PORT_ZONE.reclaimed);
+      }
     }
   }
   // 2. water and flats joined to the open sea (through water, flats or mangrove) belong to the tide; the rest is inland
@@ -492,6 +563,24 @@ async function sentinelBrightest() {
   const stride = meta.width * 3 + 1;
   return {
     scene: name,
+    /** The scene's mean colour over the 3 × 3 pixels round a point (≈ a cell), [r, g, b]. */
+    mean(lat, lon) {
+      const [e, n] = proj4('EPSG:4326', 'EPSG:32646', [lon, lat]);
+      const c0 = Math.floor((e - meta.bbox[0]) / 10);
+      const r0 = Math.floor((meta.bbox[3] - n) / 10);
+      const out = [0, 0, 0];
+      let k = 0;
+      for (let r = r0 - 1; r <= r0 + 1; r++)
+        for (let c = c0 - 1; c <= c0 + 1; c++) {
+          if (r < 0 || c < 0 || r >= meta.height || c >= meta.width) continue;
+          const o = r * stride + 1 + c * 3;
+          out[0] += raw[o];
+          out[1] += raw[o + 1];
+          out[2] += raw[o + 2];
+          k++;
+        }
+      return k ? out.map((v) => v / k) : null;
+    },
     at(lat, lon) {
       const [e, n] = proj4('EPSG:4326', 'EPSG:32646', [lon, lat]);
       const c0 = Math.floor((e - meta.bbox[0]) / 10);

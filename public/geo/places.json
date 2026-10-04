@@ -299,9 +299,9 @@
    "x": 3887.6,
    "z": 6393.9
   },
-  "ground": -1.2,
-  "kind": "inland",
-  "cover": "pond"
+  "ground": 0.6,
+  "kind": "tidal",
+  "cover": "mud"
  },
  {
   "id": "summit-fsru",

@@ -168,6 +168,12 @@ vec3 applyAtmosphere(vec3 col, vec3 wpos) {
     ro += rd * t0;
     dist = max(dist - t0, 0.0);
   }
+  // seen from above the water, the haze ends at its surface: the water colours the rest (underwater()), and
+  // the height fog's density, growing below sea level, must not thicken over a deep bed
+  if (uReflPass < 0.5 && rd.y < -1e-4) {
+    float surface = waterSurface(wpos.xz);
+    if (wpos.y < surface && ro.y > surface) dist = min(dist, (surface - ro.y) / rd.y);
+  }
   float y0 = max(ro.y, 0.0);
   // each density integrated along the ray, written as a difference of the two ends' exponentials: the
   // product form (exp(-y0 f) times a growing exp(dist |k|)) is 0 times infinity in fp32 once the eye is a

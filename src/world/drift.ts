@@ -9,6 +9,7 @@ import { currentAt, type BoatBody } from './boatPhysics';
 import { halfWidth, riverX, terrainHeight } from './geography';
 import { HERO_HULL, heroBeamAtWater, hullHalfWidthAt, type HullShape } from './hull';
 import type { LiftNet } from './liftNet';
+import { shipWaves } from './ships';
 import { wakeHeight } from './wake';
 import { SHELTERED, waveHeight, waveSlope } from './waves';
 
@@ -575,6 +576,8 @@ export class Drift {
       const bx = x - boat.pos.x;
       const bz = z - boat.pos.z;
       if (Math.abs(bx) + Math.abs(bz) < 150) y += wakeHeight(bx * ch - bz * sh, bx * sh + bz * ch, boat.speed);
+      // and the big ships' waves, where one passes
+      y += shipWaves(x, z);
       waveSlope(x, z, t, this.slope, shelter);
       const sl = Math.hypot(this.slope.x, this.slope.z);
       this.q.setFromAxisAngle(UP, this.yaw[i]);

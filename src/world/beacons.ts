@@ -6,9 +6,11 @@ import { GLSL_COMMON } from '../render/glsl';
 // boilers, the unloaders' booms, the wind turbines' nacelles) and the plant's floodlights and street lamps.
 // Points a few pixels across, larger near, dimmed by the haze; their glow is the bloom's. Each light's kind
 // sets its colour and whether it flashes: obstacle lights on a structure over 150 m flash red at night
-// (ICAO Annex 14, medium intensity: 20–60 a minute), the others burn steady.
+// (ICAO Annex 14, medium intensity: 20–60 a minute), the others burn steady; the port's and the channel's
+// marks flash red to port and green to starboard as a ship comes in from the sea (IALA region A). Things that
+// move (buoys, ships) move their lights each frame (`move`).
 
-export const BEACON = { flashing: 0, red: 1, sodium: 2, white: 3 } as const;
+export const BEACON = { flashing: 0, red: 1, sodium: 2, white: 3, green: 4 } as const;
 export type BeaconKind = (typeof BEACON)[keyof typeof BEACON];
 
 export interface Beacon {
@@ -28,12 +30,12 @@ void main() {
   vec4 mv = viewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mv;
   float d = -mv.z;
-  vCol = aKind < 1.5 ? vec3(1.0, 0.07, 0.03) : aKind < 2.5 ? vec3(1.0, 0.56, 0.2) : vec3(0.88, 0.94, 1.0);
-  // about forty flashes a minute, all together
-  float on = aKind < 0.5 ? step(fract(uTime * 0.667), 0.3) : 1.0;
+  vCol = aKind < 1.5 ? vec3(1.0, 0.07, 0.03) : aKind < 2.5 ? vec3(1.0, 0.56, 0.2) : aKind < 3.5 ? vec3(0.88, 0.94, 1.0) : vec3(0.1, 1.0, 0.35);
+  // about forty flashes a minute, all together; the green marks a flash every four seconds
+  float on = aKind < 0.5 ? step(fract(uTime * 0.667), 0.3) : aKind > 3.5 ? step(fract(uTime * 0.25 + position.x * 0.013), 0.12) : 1.0;
   // lit from dusk; the haze swallows them with distance
   vA = on * smoothstep(0.2, 0.65, uNight) * exp(-d * uFogDensity * 0.45) * (1.0 - 0.5 * smoothstep(0.3, 0.9, uRain));
-  vCol *= aKind < 1.5 ? 1.0 : aKind < 2.5 ? 0.45 : 0.6;
+  vCol *= aKind < 1.5 ? 1.0 : aKind < 2.5 ? 0.45 : aKind < 3.5 ? 0.6 : 1.0;
   gl_PointSize = uPR * clamp(1600.0 / max(d, 1.0), 2.5, 14.0);
 }`;
 
@@ -51,6 +53,7 @@ void main() {
 export class Beacons {
   readonly points: Points;
   private readonly pr = { value: 1 };
+  private readonly pos: BufferAttribute;
 
   constructor(lights: readonly Beacon[]) {
     const pos = new Float32Array(lights.length * 3);
@@ -60,7 +63,8 @@ export class Beacons {
       kind[i] = l.kind;
     });
     const g = new BufferGeometry();
-    g.setAttribute('position', new BufferAttribute(pos, 3));
+    this.pos = new BufferAttribute(pos, 3);
+    g.setAttribute('position', this.pos);
     g.setAttribute('aKind', new BufferAttribute(kind, 1));
     g.computeBoundingSphere();
     this.points = new Points(
@@ -81,5 +85,14 @@ export class Beacons {
 
   setPixelRatio(pr: number): void {
     this.pr.value = pr;
+  }
+
+  /** Moves light `i` (in the order given); call `commit` once the frame's moves are done. */
+  move(i: number, x: number, y: number, z: number): void {
+    this.pos.setXYZ(i, x, y, z);
+  }
+
+  commit(): void {
+    this.pos.needsUpdate = true;
   }
 }

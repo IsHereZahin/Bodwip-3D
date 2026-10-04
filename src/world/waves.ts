@@ -362,6 +362,19 @@ ${sets((v) => `sin(${phaseOf(v)})`, 'h', true)}
 }`;
 }
 
+/**
+ * waveSlope as a pixel sees it: each wave faded out where the pixel's footprint on the water (`spacing`, m)
+ * is too coarse to show it, or the short ones alias into rings round the eye far off.
+ */
+export function waveSlopeLodGlsl(): string {
+  return /* glsl */ `
+vec2 waveSlopeLod(vec2 p, float spacing) {
+  vec2 s = vec2(0.0);
+${sets((v) => `vec2(${f(v.dx)}, ${f(v.dz)}) * (${f(v.k)} * cos(${phaseOf(v)}))`, 's', true)}
+  return s;
+}`;
+}
+
 /** GLSL twin of waveSlope (without the shelter), using uTime and uWaveA/B/C/Dir. */
 export function waveSlopeGlsl(): string {
   return /* glsl */ `

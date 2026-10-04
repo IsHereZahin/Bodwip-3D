@@ -1,4 +1,4 @@
-import { CELL, GRID_H, GRID_W, KIND, LAYERS, fcol, frow } from '../geo/data';
+import { CELL, GRID_H, GRID_W, KIND, LAYERS, LINES, cellCentre, fcol, frow } from '../geo/data';
 
 // How open each stretch of the sea's water is to the Bay's swell: 1 on the open sea and the coasts that face
 // it, falling away as the swell works its way into narrower water (round Sonadia, up the channel's mouth, into
@@ -6,7 +6,8 @@ import { CELL, GRID_H, GRID_W, KIND, LAYERS, fcol, frow } from '../geo/data';
 // open Bay is the sea at the map's west and south edges. Over open water a swell carries on undiminished; in
 // a narrow channel it dies within a few hundred metres. How open the water round a point is: the share of
 // the sea's cells within OPEN_RADIUS of it [মডেল: no wave model of the coast exists; the lengths are chosen so
-// the channel at Gorakghata is all but still].
+// the channel at Gorakghata is all but still]. The breakwaters (OSM) stand in its way: the swell reaches the
+// harbour behind them only through its entrance.
 
 /** The radius (world m) over which a point's water is judged open or narrow. */
 const OPEN_RADIUS = 800;
@@ -25,6 +26,32 @@ export const EXPOSURE: Float32Array = (() => {
     const k = LAYERS.kind[i] & 0x7f;
     sea[i] = k === KIND.sea || k === KIND.tidal || k === KIND.mangrove ? 1 : 0;
     deep[i] = k === KIND.sea ? 1 : 0;
+  }
+  // the breakwaters, two cells thick so no diagonal step slips through
+  for (const l of LINES) {
+    if (l.k !== 'structure' || l.t !== 'breakwater') continue;
+    const p = l.points;
+    for (let k = 2; k < p.length; k += 2) {
+      const ax = p[k - 2];
+      const az = p[k - 1];
+      const bx = p[k];
+      const bz = p[k + 1];
+      const steps = Math.ceil(Math.hypot(bx - ax, bz - az) / (CELL * 0.5));
+      for (let i = 0; i <= steps; i++) {
+        const c0 = Math.round(fcol(ax + ((bx - ax) * i) / steps));
+        const r0 = Math.round(frow(az + ((bz - az) * i) / steps));
+        for (let dr = -1; dr <= 1; dr++)
+          for (let dc = -1; dc <= 1; dc++) {
+            const c = c0 + dc;
+            const r = r0 + dr;
+            if (c < 0 || r < 0 || c >= W || r >= H) continue;
+            const q = cellCentre(c, r);
+            if (Math.hypot(q.x - (ax + ((bx - ax) * i) / steps), q.z - (az + ((bz - az) * i) / steps)) > CELL * 1.1) continue;
+            sea[r * W + c] = 0;
+            deep[r * W + c] = 0;
+          }
+      }
+    }
   }
   // the share of open water round each cell (the flats and mangroves the tide covers break the swell up, so
   // they do not count), from a summed-area table

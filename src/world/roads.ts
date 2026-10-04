@@ -8,6 +8,7 @@ import { MeshBuilder, rgb, scaleRgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { ROAD_SURFACES, roadAtlas } from '../render/textures';
 import { onPlant, plantGround, plantReserved } from './plantSite';
+import { portGround } from './portSite';
 
 // The roads OpenStreetMap draws (geo/vectors.bin): on the 1:3 map at their real width (GEOGRAPHY_PLAN.md
 // §5.1), each with a crest a little above the land (the coast's roads run on low embankments, the highways
@@ -72,7 +73,7 @@ function crests(p: Float32Array, raise: number): Float32Array {
   for (let i = 0; i < n; i++) {
     const x = p[i * 2];
     const z = p[i * 2 + 1];
-    land[i] = kindAt(x, z) === KIND.land ? plantGround(x, z, heightAt(x, z)) : Number.NaN;
+    land[i] = kindAt(x, z) === KIND.land ? portGround(x, z, plantGround(x, z, heightAt(x, z))) : Number.NaN;
   }
   // fill the points in water from the nearest land along the road (or a little above the high tides if none)
   for (let i = 0; i < n; i++) {

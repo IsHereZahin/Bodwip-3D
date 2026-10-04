@@ -23,8 +23,8 @@ import { G, LAYER_WATER } from '../core/globals';
 import { periodicNoise } from '../core/noise';
 import { GLSL_COMMON } from '../render/glsl';
 import { HERO_HULL, HERO_SINK, hullWaterlineGlsl } from './hull';
-import { wakeGlsl } from './wake';
-import { OPEN_SEA, SHELTERED, swellGlsl, waveHeightLodGlsl, waveSlopeGlsl } from './waves';
+import { shipWakeGlsl, wakeGlsl } from './wake';
+import { OPEN_SEA, SHELTERED, swellGlsl, waveHeightLodGlsl, waveSlopeLodGlsl } from './waves';
 import { EXPOSURE } from './exposure';
 import { GRID_H, GRID_W, KIND, LAYERS, WORLD } from '../geo/data';
 import { BIL, WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, downstream, eachWaterwayPoint, edgeHalfWidth, halfWidth, inlandWaterAt, riverX, seaWaterAt, streamSpeed, terrainHeight, waterLevelAt } from './geography';
@@ -322,6 +322,25 @@ function waterGrid(): BufferGeometry {
   return g;
 }
 
+/** The three nearest moving ships (world/ships.ts): x, z, heading, speed; and their waterline's half-length and half-beam. */
+const SHIP_UNIFORMS = /* glsl */ `
+uniform vec4 uShip0;
+uniform vec4 uShip1;
+uniform vec4 uShip2;
+uniform vec4 uShipSize0;
+uniform vec4 uShipSize1;
+uniform vec4 uShipSize2;`;
+
+/** A ship's waves at a point of the water, in her frame (needs shipWake, wake.ts). */
+const SHIP_WAVES = /* glsl */ `
+float shipWaves(vec2 p, vec4 ship, vec4 size, float spacing) {
+  if (ship.w < 0.05) return 0.0;
+  vec2 d = p - ship.xy;
+  if (abs(d.x) + abs(d.y) > 1800.0) return 0.0;
+  vec2 q = vec2(dot(d, vec2(cos(ship.z), -sin(ship.z))), dot(d, vec2(sin(ship.z), cos(ship.z))));
+  return shipWake(q, ship.w, size.xy, spacing);
+}`;
+
 const VERT = /* glsl */ `
 ${GLSL_COMMON}
 uniform sampler2D tField;
@@ -332,11 +351,14 @@ uniform vec4 uBoat;
 uniform vec4 uOar;
 uniform vec4 uBounds;
 uniform float uInland;
+${SHIP_UNIFORMS}
 varying vec3 vWorld;
 varying float vWave;
 ${FIELD_GLSL}
 ${waveHeightLodGlsl()}
 ${wakeGlsl()}
+${shipWakeGlsl()}
+${SHIP_WAVES}
 ${swellGlsl()}
 void main() {
   // the grid round the camera, laid on the world and kept to the water's extent
@@ -356,7 +378,9 @@ void main() {
   if (uInland < 0.5) {
     float open = seaExposure(xz);
     h *= 1.0 + ${OPEN_SEA.toFixed(2)} * open;
-    h += swellHeight(xz) * swellFactor(open, depth);
+    // the swell lifts the grid only where its vertices lie close enough to draw it (its shortest wave is ≈90 m;
+    // farther off, sampled too coarsely, it would ring round the camera): its slopes shade the water beyond
+    h += swellHeight(xz) * swellFactor(open, depth) * smoothstep(40.0, 18.0, spacing);
   }
   vWave = h;
   // the water the boat pushes aside
@@ -365,6 +389,8 @@ void main() {
     vec2 q = vec2(dot(bd, vec2(cos(uBoat.z), -sin(uBoat.z))), dot(bd, vec2(sin(uBoat.z), cos(uBoat.z))));
     h += boatWake(q, uBoat.w, uOar, spacing) * shoal;
   }
+  // the big ships' own waves (world/ships.ts: the three nearest moving hulls)
+  if (uInland < 0.5) h += (shipWaves(xz, uShip0, uShipSize0, spacing) + shipWaves(xz, uShip1, uShipSize1, spacing) + shipWaves(xz, uShip2, uShipSize2, spacing)) * shoal;
   vWorld = vec3(xz.x, level + h, xz.y);
   gl_Position = projectionMatrix * viewMatrix * vec4(vWorld, 1.0);
 }
@@ -382,6 +408,7 @@ uniform vec4 uFieldWide;
 uniform vec4 uBoat;      // x, z, heading, speed through the water
 uniform vec4 uOar;       // the paddle's blade in the boat's frame (x across, z along), how hard it pulls, how deep it is (0..1)
 uniform vec4 uSwirl;     // where the blade last came out (world x, z), seconds since, how hard it had pulled
+${SHIP_UNIFORMS}
 uniform vec4 uNetA0;     // the lift net nearest the camera: its square's middle (x, z), half its side, its yaw
 uniform vec4 uNetB0;     // ... how hard its rim is cutting the surface, how much water is running out of it
 uniform vec4 uNetA1;     // the next nearest
@@ -393,9 +420,36 @@ varying float vWave;
 
 ${FIELD_GLSL}
 ${hullWaterlineGlsl(HERO_HULL, HERO_SINK)}
-${waveSlopeGlsl()}
+${waveSlopeLodGlsl()}
 ${wakeGlsl()}
+${shipWakeGlsl()}
+${SHIP_WAVES}
 ${swellGlsl()}
+
+// a big ship: the slopes of her waves for the shading, white water breaking at her stem and along her sides
+// when she has way on, and the wash of her screw astern (separate uniforms rather than an array: ANGLE)
+void shipShade(vec2 p, vec4 ship, vec4 size, float shoal, inout vec2 slope, inout float foam) {
+  if (ship.w < 0.05) return;
+  vec2 d = p - ship.xy;
+  if (abs(d.x) + abs(d.y) > 1500.0) return;
+  vec2 rt = vec2(cos(ship.z), -sin(ship.z));
+  vec2 fw = vec2(sin(ship.z), cos(ship.z));
+  vec2 q = vec2(dot(d, rt), dot(d, fw));
+  float e = 0.5;
+  float hc = shipWake(q, ship.w, size.xy, 0.0);
+  vec2 g = vec2(shipWake(q + vec2(e, 0.0), ship.w, size.xy, 0.0) - hc, shipWake(q + vec2(0.0, e), ship.w, size.xy, 0.0) - hc) / e;
+  slope += (rt * g.x + fw * g.y) * shoal;
+  float hl = size.x;
+  float beam = size.y;
+  float way = smoothstep(1.0, 3.5, ship.w);
+  float sy = (q.y - hl * 1.04) / (0.05 * hl);
+  float stem = exp(-sy * sy) * smoothstep(beam * 1.3, beam * 0.5, abs(q.x));
+  float sides = smoothstep(beam * 1.25, beam * 1.02, abs(q.x)) * step(abs(q.y), hl * 1.05);
+  float aft = -hl - q.y;
+  float wash = aft > 0.0 ? smoothstep(beam * (1.0 + aft * 0.003), beam * 0.15, abs(q.x)) * exp(-aft / (5.0 * hl)) : 0.0;
+  float n = vnoise(q * 0.3 + vec2(0.0, uTime * 0.5));
+  foam += (stem * 0.9 + sides * 0.3) * way * smoothstep(0.3, 0.7, n) + wash * smoothstep(0.35, 0.8, n) * 0.55 * smoothstep(0.3, 1.5, ship.w);
+}
 
 vec2 ripple(vec2 uv) { return texture2D(tNormal, uv).xy * 2.0 - 1.0; }
 
@@ -506,7 +560,8 @@ void main() {
   // damped where the water is sheltered and dying out on the shallows; under a gust front the ripples
   // darken and roughen the water (cat's paws)
   float shoal = smoothstep(0.0, 0.6, depth);
-  slope += waveSlope(wp.xz) * mix(${SHELTERED.toFixed(2)}, 1.0, running) * shoal;
+  float footprint = max(length(dFdx(wp.xz)), length(dFdy(wp.xz)));
+  slope += waveSlopeLod(wp.xz, footprint) * mix(${SHELTERED.toFixed(2)}, 1.0, running) * shoal;
   // toward the open Bay: the wind's waves higher, the swell, and where it breaks over the shallows the surf
   float open = uInland > 0.5 ? 0.0 : seaExposure(wp.xz);
   float surf = 0.0;
@@ -563,6 +618,11 @@ void main() {
     }
   }
 
+  if (uInland < 0.5) {
+    shipShade(wp.xz, uShip0, uShipSize0, shoal, slope, foam);
+    shipShade(wp.xz, uShip1, uShipSize1, shoal, slope, foam);
+    shipShade(wp.xz, uShip2, uShipSize2, shoal, slope, foam);
+  }
   // the paddle: white water where the blade bites, and the eddies it leaves where it came out
   float rb = length(q - uOar.xy);
   foam += uOar.w * smoothstep(0.6, 0.0, rb) * (0.25 + 0.12 * min(uOar.z, 4.0)) * smoothstep(0.3, 0.75, vnoise(q * 7.0 + uTime * 3.0));
@@ -651,6 +711,9 @@ export interface Water {
   swirl: Vector4;
   /** The rings of the two lift nets nearest the camera. */
   nets: NetRipples;
+  /** The three nearest moving ships (x, z, heading, speed) and their (half-length, half-beam), world/ships.ts. */
+  ships: Vector4[];
+  shipSizes: Vector4[];
   color: Color;
   ambient: Color;
 }
@@ -666,6 +729,8 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
   const oar = new Vector4();
   const swirl = new Vector4(0, 0, 99, 0);
   const nets: NetRipples = { a: [new Vector4(), new Vector4()], b: [new Vector4(), new Vector4()] };
+  const ships = [new Vector4(), new Vector4(), new Vector4()];
+  const shipSizes = [new Vector4(), new Vector4(), new Vector4()];
   const color = new Color();
   const ambient = new Color();
   const uniforms = {
@@ -684,6 +749,12 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
     uNetB0: { value: nets.b[0] },
     uNetA1: { value: nets.a[1] },
     uNetB1: { value: nets.b[1] },
+    uShip0: { value: ships[0] },
+    uShip1: { value: ships[1] },
+    uShip2: { value: ships[2] },
+    uShipSize0: { value: shipSizes[0] },
+    uShipSize1: { value: shipSizes[1] },
+    uShipSize2: { value: shipSizes[2] },
     uAmb: { value: ambient },
     uBounds: { value: WATER_BOUNDS },
   };
@@ -719,6 +790,8 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
     oar,
     swirl,
     nets,
+    ships,
+    shipSizes,
     color,
     ambient,
   };
