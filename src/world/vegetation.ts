@@ -39,6 +39,7 @@ import {
   routeGap,
   mangroveZone,
   onLandmark,
+  onRoad,
   onTempleHill,
   saltPan,
   sandCover,
@@ -420,7 +421,7 @@ function onDryLand(x: number, z: number, minInland: number): boolean {
   if (saltPan(x, z) > 0.2) return false;
   if (sandCover(x, z) > 0.4) return false;
   const h = terrainHeight(x, z);
-  if (h < 0.3 || mangroveZone(x, z, h) > 0.3 || onLandmark(x, z, 3) || onTempleHill(x, z)) return false;
+  if (h < 0.3 || mangroveZone(x, z, h) > 0.3 || onLandmark(x, z, 3) || onTempleHill(x, z) || onRoad(x, z, 1.5)) return false;
   return !nearBackwater(x, z, 3);
 }
 
@@ -686,7 +687,7 @@ export function buildVegetation(
       const f = forestCover(xx, zz);
       if (f < 0.25) continue;
       const shore = bankInfo(xx, zz).inland;
-      if (rng.next() > f * (shore < 450 ? 0.9 : 0.45) || villageDistance(xx, zz) < 1.2 || onLandmark(xx, zz, 4) || onTempleHill(xx, zz) || !occ.free(xx, zz, 2)) continue;
+      if (rng.next() > f * (shore < 450 ? 0.9 : 0.45) || villageDistance(xx, zz) < 1.2 || onLandmark(xx, zz, 4) || onTempleHill(xx, zz) || onRoad(xx, zz, 2) || !occ.free(xx, zz, 2)) continue;
       const r = rng.next();
       put(shore < 200 && r < 0.08 ? (r < 0.04 ? B.rain : B.mango) : B.hill, at(xx, zz, rng, rng.range(1.0, 1.5), 0.3));
     }
@@ -708,7 +709,7 @@ export function buildVegetation(
     const h = terrainHeight(x, z);
     const m = mangroveZone(x, z, h);
     // in stands along the shore, not an even hedge
-    if (m < 0.2 || rng.next() > m || fbm(x * 0.012, z * 0.012, 2, 119) < 0.47 || !occ.free(x, z, 2.4)) continue;
+    if (m < 0.2 || rng.next() > m || fbm(x * 0.012, z * 0.012, 2, 119) < 0.47 || onRoad(x, z, 1.5) || !occ.free(x, z, 2.4)) continue;
     occ.add(x, z, 2.4);
     put(h < 0.35 ? B.baen : rng.next() < 0.5 ? B.keora : B.baen, { x, y: h - 0.1, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.8, 1.2) });
     placed++;
@@ -718,7 +719,7 @@ export function buildVegetation(
   // Sonadia and the Cox's Bazar shore), cell by cell where the map has sand
   const jhauAt = (x: number, z: number) => {
     const h = terrainHeight(x, z);
-    if (h < 2.2 || saltPan(x, z) > 0.2 || onLandmark(x, z, 3) || !occ.free(x, z, 2.2)) return;
+    if (h < 2.2 || saltPan(x, z) > 0.2 || onLandmark(x, z, 3) || onRoad(x, z, 1.5) || !occ.free(x, z, 2.2)) return;
     occ.add(x, z, 2.2);
     put(B.jhau, { x, y: h - 0.15, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.85, 1.2) });
   };

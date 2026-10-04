@@ -6,6 +6,7 @@ import { mixRgb, rgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import type { GroundSet } from '../render/surfaces';
 import { WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, bilMarsh, bridgePath, riverX, seaWaterAt, terrainHeight, villageDistance, waterLevelAt } from './geography';
+import { roadCover } from './roads';
 
 // The ground: the baked map's heights (geography.ts terrainHeight) and covers (geo/data.ts), drawn as a
 // quadtree of square patches round the camera, fine near it (≈2 m between vertices) and coarse far off. Each
@@ -142,13 +143,16 @@ function cover(x: number, z: number, h: number): Cover {
   const wetBand = smoothstep(level + 0.9, level + 0.05, h) * (1 - marsh) * (1 - look.sand);
   ground = mixRgb(ground, mixRgb(COLORS.wetMud, COLORS.dryMud, smoothstep(level, level + 0.9, h)), wetBand);
   if (look.sand > 0) ground = mixRgb(ground, mixRgb(COLORS.sandWet, COLORS.sand, smoothstep(level + 0.1, level + 1.2, h)), look.sand);
-  const dirt = Math.min(1, look.dirt + yard * 0.9 + path + dry * 0.35 * look.grass);
+  // the roads' shoulders: trodden earth down the embankment (the surface itself is world/roads.ts's)
+  const road = roadCover(x, z);
+  ground = mixRgb(ground, COLORS.dust, road * 0.4);
+  const dirt = Math.min(1, look.dirt + yard * 0.9 + path + dry * 0.35 * look.grass + road);
   const top = 1 - wetBand;
   return {
     color: ground,
-    // paddy plots and salt pans only on their own ground above the water
-    zone: look.zone * top,
-    grass: Math.max(0, look.grass * top * (1 - dirt) + marsh * 0.8),
+    // paddy plots and salt pans only on their own ground above the water, and off the roads
+    zone: look.zone * top * (1 - road),
+    grass: Math.max(0, look.grass * top * (1 - dirt) * (1 - road) + marsh * 0.8),
     dirt: dirt * top * (1 - look.sand),
     sand: look.sand,
     pebbles: 0,

@@ -1205,3 +1205,136 @@ export function needleTexture(seed: number): DataTexture {
   });
   return toTexture(ctx, { bleed: true });
 }
+
+/** The roads' surfaces, side by side in one texture (world/roads.ts draws a cell of roads in one call). */
+export const ROAD_SURFACES = ['asphalt', 'brick', 'earth'] as const;
+
+/**
+ * The roads' surfaces side by side, each across its road's width (a third of u: one edge to the other) and
+ * 3 m along it (v): bitumen with worn wheel tracks and crumbling edges; herringbone brick (HBB, the village
+ * roads) in dusty mortar with a brick-on-edge border; bare earth with ruts and grass along the sides.
+ */
+export function roadAtlas(): DataTexture {
+  const W = 128;
+  const H = 256;
+  const ctx = paint(W * ROAD_SURFACES.length, H, (c) => {
+    ROAD_SURFACES.forEach((surface, i) => {
+      c.save();
+      c.translate(i * W, 0);
+      c.beginPath();
+      c.rect(0, 0, W, H);
+      c.clip();
+      paintRoad(c, surface, W, H);
+      c.restore();
+    });
+  });
+  return toTexture(ctx, { repeat: true });
+}
+
+function paintRoad(c: Ctx, surface: (typeof ROAD_SURFACES)[number], W: number, H: number): void {
+  const rng = new Rng(surface === 'asphalt' ? 71 : surface === 'brick' ? 72 : 73);
+  {
+    if (surface === 'asphalt') {
+      c.fillStyle = 'rgb(74,73,71)';
+      c.fillRect(0, 0, W, H);
+      // aggregate: fine light and dark speckle
+      for (let i = 0; i < 2600; i++) {
+        const v = rng.int(50, 120);
+        c.fillStyle = `rgba(${v},${v},${v - 4},0.55)`;
+        c.fillRect(rng.range(0, W), rng.range(0, H), rng.range(0.6, 1.8), rng.range(0.6, 1.8));
+      }
+      // the wheels have polished two lighter tracks each way
+      for (const x of [0.22, 0.38, 0.62, 0.78]) {
+        const g = c.createLinearGradient((x - 0.07) * W, 0, (x + 0.07) * W, 0);
+        g.addColorStop(0, 'rgba(120,118,112,0)');
+        g.addColorStop(0.5, 'rgba(120,118,112,0.28)');
+        g.addColorStop(1, 'rgba(120,118,112,0)');
+        c.fillStyle = g;
+        c.fillRect((x - 0.07) * W, 0, 0.14 * W, H);
+      }
+      // patches and cracks
+      for (let i = 0; i < 6; i++) {
+        c.fillStyle = `rgba(${rng.int(40, 60)},${rng.int(40, 58)},${rng.int(38, 55)},0.6)`;
+        c.fillRect(rng.range(0.1, 0.7) * W, rng.range(0, H), rng.range(8, 30), rng.range(10, 40));
+      }
+      c.strokeStyle = 'rgba(30,30,28,0.5)';
+      for (let i = 0; i < 10; i++) {
+        c.beginPath();
+        let x = rng.range(0, W);
+        let y = rng.range(0, H);
+        c.moveTo(x, y);
+        for (let k = 0; k < 5; k++) c.lineTo((x += rng.range(-8, 8)), (y += rng.range(-10, 10)));
+        c.stroke();
+      }
+      // crumbling edges going to dust
+      for (const [x0, dir] of [
+        [0, 1],
+        [W, -1],
+      ] as const) {
+        for (let y = 0; y < H; y += 2) {
+          const w = rng.range(2, 9);
+          c.fillStyle = `rgba(${rng.int(120, 150)},${rng.int(108, 128)},${rng.int(84, 100)},0.85)`;
+          c.fillRect(dir > 0 ? x0 : x0 - w, y, w, 2);
+        }
+      }
+    } else if (surface === 'brick') {
+      c.fillStyle = 'rgb(150,124,96)';
+      c.fillRect(0, 0, W, H);
+      // herringbone: bricks 8 × 4 texels at ±45°, in mortar
+      const B = 9;
+      for (let y = -2 * B; y < H + 2 * B; y += B) {
+        for (let x = -2 * B; x < W + 2 * B; x += B * 2) {
+          for (const flip of [0, 1]) {
+            const r = rng.int(140, 186);
+            const g = rng.int(62, 86);
+            const b = rng.int(40, 58);
+            c.save();
+            c.translate(x + flip * B, y + (flip ? B / 2 : 0));
+            c.rotate(flip ? -Math.PI / 4 : Math.PI / 4);
+            c.fillStyle = `rgb(${r},${g},${b})`;
+            c.fillRect(-B * 0.62, -B * 0.24, B * 1.24, B * 0.48);
+            c.restore();
+          }
+        }
+      }
+      // dust and wear down the middle
+      const g = c.createLinearGradient(0, 0, W, 0);
+      g.addColorStop(0, 'rgba(170,150,120,0)');
+      g.addColorStop(0.5, 'rgba(170,150,120,0.25)');
+      g.addColorStop(1, 'rgba(170,150,120,0)');
+      c.fillStyle = g;
+      c.fillRect(0, 0, W, H);
+      // the border: bricks laid on edge along both sides
+      for (const x0 of [0, W - 10]) {
+        for (let y = 0; y < H; y += 5) {
+          c.fillStyle = `rgb(${rng.int(130, 170)},${rng.int(60, 80)},${rng.int(40, 55)})`;
+          c.fillRect(x0 + 1, y + 1, 8, 3.5);
+        }
+      }
+    } else {
+      c.fillStyle = 'rgb(128,104,76)';
+      c.fillRect(0, 0, W, H);
+      for (let i = 0; i < 1800; i++) {
+        const v = rng.int(-24, 24);
+        c.fillStyle = `rgba(${128 + v},${104 + v},${76 + v},0.6)`;
+        c.fillRect(rng.range(0, W), rng.range(0, H), rng.range(1, 4), rng.range(1, 4));
+      }
+      // two ruts worn by cartwheels and feet
+      for (const x of [0.3, 0.7]) {
+        const g = c.createLinearGradient((x - 0.1) * W, 0, (x + 0.1) * W, 0);
+        g.addColorStop(0, 'rgba(90,70,50,0)');
+        g.addColorStop(0.5, 'rgba(90,70,50,0.45)');
+        g.addColorStop(1, 'rgba(90,70,50,0)');
+        c.fillStyle = g;
+        c.fillRect((x - 0.1) * W, 0, 0.2 * W, H);
+      }
+      // grass along both sides, and a strip down the middle
+      for (let i = 0; i < 900; i++) {
+        const side = rng.next();
+        const x = side < 0.4 ? rng.range(0, 0.14) * W : side < 0.8 ? rng.range(0.86, 1) * W : rng.range(0.46, 0.54) * W;
+        c.fillStyle = `rgba(${rng.int(60, 90)},${rng.int(90, 120)},${rng.int(40, 60)},0.8)`;
+        c.fillRect(x, rng.range(0, H), 1.2, rng.range(2, 5));
+      }
+    }
+  }
+}

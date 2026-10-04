@@ -27,6 +27,7 @@ import {
   hillHeight,
   nearBackwater,
   onLandmark,
+  onRoad,
   riverX,
   terrainHeight,
 } from './geography';
@@ -66,7 +67,7 @@ export function planHuts(): HutPlan[] {
       const x = c.x + Math.cos(a) * d;
       const z = c.z + Math.sin(a) * d;
       // not out in the backwaters, up the island's hills, or where the town's landmarks stand
-      if (bankInfo(x, z).inland < 14 || nearBackwater(x, z, 8) || hillHeight(x, z) > 0.8 || onLandmark(x, z, 5)) continue;
+      if (bankInfo(x, z).inland < 14 || nearBackwater(x, z, 8) || hillHeight(x, z) > 0.8 || onLandmark(x, z, 5) || onRoad(x, z, 6)) continue;
       if (out.some((h) => Math.hypot(h.x - x, h.z - z) < 12)) continue;
       const l = rng.range(5.2, 7.5);
       const w = rng.range(3.4, 4.4);

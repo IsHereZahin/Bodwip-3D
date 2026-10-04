@@ -1,8 +1,10 @@
 import { G } from '../core/globals';
+import { SegmentIndex } from '../core/segmentIndex';
 import { clamp, smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
 import { CHANNEL_POINTS, COVER, KIND, LINES, WORLD, canopyAt, coverAt, heightAt, inlandSurfaceAt, kindAt, place, type GeoLine } from '../geo/data';
 import { MAP_SCALE } from '../geo/project';
+import { onRoad, roadGround } from './roads';
 
 // Where land and water are. The terrain mesh, the water and every placement read these, so the boat, the
 // trees and the beds always agree.
@@ -349,49 +351,21 @@ const REACHES: readonly Reach[] = LINES.flatMap((l) => {
   return out;
 });
 
-/** The reaches by 32 m cells (the ground is asked about the khals at every vertex and every placement). */
-const REACH_CELL = 32;
-const reachKey = (i: number, j: number) => (i + 32768) * 65536 + (j + 32768);
-const REACH_GRID = (() => {
-  const grid = new Map<number, number[]>();
-  REACHES.forEach((r, n) => {
-    const pad = r.half + BANKS;
-    const i0 = Math.floor((Math.min(r.ax, r.bx) - pad) / REACH_CELL);
-    const i1 = Math.floor((Math.max(r.ax, r.bx) + pad) / REACH_CELL);
-    const j0 = Math.floor((Math.min(r.az, r.bz) - pad) / REACH_CELL);
-    const j1 = Math.floor((Math.max(r.az, r.bz) + pad) / REACH_CELL);
-    for (let i = i0; i <= i1; i++) {
-      for (let j = j0; j <= j1; j++) {
-        const key = reachKey(i, j);
-        let list = grid.get(key);
-        if (!list) grid.set(key, (list = []));
-        list.push(n);
-      }
-    }
-  });
-  return grid;
-})();
+/** The reaches filed by 32 m cells (the ground is asked about the khals at every vertex and every placement). */
+const REACH_INDEX = new SegmentIndex(32);
+for (const r of REACHES) REACH_INDEX.add(r.ax, r.az, r.bx, r.bz, r.half, BANKS);
 
 /** The khal nearest (x, z), measured against its width: how far from its middle, its half-width, depth and water's level. */
 const reachHit = { d: 0, half: 0, depth: 0, level: 0 };
 function waterwayAt(x: number, z: number): typeof reachHit | null {
-  const list = REACH_GRID.get(reachKey(Math.floor(x / REACH_CELL), Math.floor(z / REACH_CELL)));
-  if (!list) return null;
-  let best = Infinity;
-  for (const n of list) {
-    const r = REACHES[n];
-    const sx = r.bx - r.ax;
-    const sz = r.bz - r.az;
-    const t = clamp(((x - r.ax) * sx + (z - r.az) * sz) / (sx * sx + sz * sz || 1), 0, 1);
-    const d = Math.hypot(x - r.ax - sx * t, z - r.az - sz * t);
-    if (d - r.half >= best || d > r.half + BANKS) continue;
-    best = d - r.half;
-    reachHit.d = d;
-    reachHit.half = r.half;
-    reachHit.depth = r.depth;
-    reachHit.level = r.la + (r.lb - r.la) * t;
-  }
-  return best < Infinity ? reachHit : null;
+  const hit = REACH_INDEX.nearest(x, z);
+  if (!hit) return null;
+  const r = REACHES[hit.index];
+  reachHit.d = hit.d;
+  reachHit.half = r.half;
+  reachHit.depth = r.depth;
+  reachHit.level = r.la + (r.lb - r.la) * hit.t;
+  return reachHit;
 }
 
 /**
@@ -475,13 +449,17 @@ const TEMPLE = (() => {
   return { x: p.world.x, z: p.world.z, r: 9, y: heightAt(p.world.x, p.world.z) };
 })();
 
-/** Height of the ground at (x, z): the baked map, with the bil's bowl, the khals and the temple's terrace. */
+/** Height of the ground at (x, z): the baked map, with the temple's terrace, the roads' embankments, the bil's bowl and the khals. */
 export function terrainHeight(x: number, z: number): number {
   let h = heightAt(x, z);
   const t = Math.hypot(x - TEMPLE.x, z - TEMPLE.z);
   if (t < TEMPLE.r * 2.2) h += (TEMPLE.y - h) * smoothstep(TEMPLE.r * 2.2, TEMPLE.r, t);
+  h = roadGround(x, z, h);
   return Math.min(h, carved(x, z, h));
 }
+
+/** True within `margin` m of a road's carriageway (world/roads.ts): huts, trees and crops keep off them. */
+export { onRoad };
 
 /** The ground of the fields and village mounds at (x, z): the same ground (the map has no separate floodplain). */
 export function landLevel(x: number, z: number): number {

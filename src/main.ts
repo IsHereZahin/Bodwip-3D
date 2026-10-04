@@ -35,6 +35,7 @@ import { Crops } from './world/crops';
 import { Meadow } from './world/meadow';
 import { buildPondLife } from './world/ponds';
 import { buildRain } from './world/rain';
+import { buildRoads } from './world/roads';
 import { BRIDGE_CLEARING, bridgeTrees, buildBridge } from './world/bridge';
 import { Girl } from './world/girl';
 import { buildMoheshkhali } from './world/moheshkhali';
@@ -135,6 +136,10 @@ async function main(hud: Hud): Promise<void> {
   const vegetation = buildVegetation(huts, surfaces.bark, [...fishingClearings(), BRIDGE_CLEARING], bridgeTrees());
   scene.add(vegetation);
   cullBeyond(vegetation, 1900);
+  // the roads, in 1 km cells: the far ones are left undrawn
+  const roads = buildRoads();
+  scene.add(roads);
+  cullBeyond(roads, 2600);
   scene.add(buildBridge());
   const girl = new Girl();
   scene.add(girl.group);
