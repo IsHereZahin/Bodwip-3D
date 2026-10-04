@@ -1,7 +1,8 @@
 import { G } from '../core/globals';
 import { clamp, smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
-import { CHANNEL_POINTS, COVER, KIND, LINES, WORLD, canopyAt, coverAt, heightAt, inlandSurfaceAt, kindAt, place } from '../geo/data';
+import { CHANNEL_POINTS, COVER, KIND, LINES, WORLD, canopyAt, coverAt, heightAt, inlandSurfaceAt, kindAt, place, type GeoLine } from '../geo/data';
+import { MAP_SCALE } from '../geo/project';
 
 // Where land and water are. The terrain mesh, the water and every placement read these, so the boat, the
 // trees and the beds always agree.
@@ -208,16 +209,17 @@ export function routeGap(_x: number, _z: number): number {
 
 /**
  * The old bridge (world/bridge.ts, D3): a humped brick arch carrying a village path over a real khal, where
- * OpenStreetMap has a small road bridge over a canal at Bara Moheshkhali. Its frame: x along the bridge,
- * across the khal; z along the khal; `angle` turns that frame into the world's (as a rotation about y).
- * Heights in the frame are above the khal's water (`water`, a world height): world/bridge.ts sets the bridge
- * there.
+ * OpenStreetMap has a small road bridge over the canal that winds through Bara Moheshkhali to the channel by
+ * Gorakghata. Its frame: x along the bridge, across the khal; z along the khal; `angle` turns that frame into
+ * the world's (as a rotation about y). Heights in the frame are above the khal's water (`water`, a world
+ * height): world/bridge.ts sets the bridge there.
  */
 export const BRIDGE = (() => {
   const p = place('arch-bridge');
   // the canal OSM draws there: its direction at the crossing
   let best = Infinity;
   let dir = { x: 0, z: 1 };
+  let line: GeoLine | null = null;
   for (const l of LINES) {
     if (l.k !== 'waterway') continue;
     const pts = l.points;
@@ -225,6 +227,7 @@ export const BRIDGE = (() => {
       const d = Math.hypot(pts[k] - p.world.x, pts[k + 1] - p.world.z);
       if (d < best) {
         best = d;
+        line = l;
         const len = Math.hypot(pts[k + 2] - pts[k], pts[k + 3] - pts[k + 1]) || 1;
         dir = { x: (pts[k + 2] - pts[k]) / len, z: (pts[k + 3] - pts[k + 1]) / len };
       }
@@ -235,6 +238,8 @@ export const BRIDGE = (() => {
     x: p.world.x,
     z: p.world.z,
     angle: Math.atan2(dir.x, dir.z),
+    /** OSM's line of the khal it crosses. */
+    line,
     /** Clear span of the arch and the height it springs from (above the khal's water); its rise; the arch ring's depth. */
     span: 16,
     springing: 0.3,
@@ -249,13 +254,10 @@ export const BRIDGE = (() => {
     crown: 4.5,
     /** The bank's height where the ramps come down. */
     bank: 0.6,
-    /** The khal's water (world height): 0.6 m below the fields either side. */
+    /** The khal's water (world height): as every khal's, a little below the fields either side. */
     water: ground - 0.6,
   };
 })();
-
-/** The khal under the bridge: its half-width, depth, and how far it runs each way along the bridge's frame. */
-const KHAL = { half: 9, depth: 1.6, reach: 180, banks: 6 };
 
 /** (x, z) in the bridge's frame: `x` along it, `z` along the khal. */
 export function bridgeFrame(x: number, z: number): { x: number; z: number } {
@@ -302,15 +304,150 @@ export function bridgePath(x: number, z: number): number {
   return smoothstep(1.3, 0.6, Math.abs(off)) * smoothstep(BRIDGE.half + 60, BRIDGE.half + 35, ax);
 }
 
-/** Distance from (x, z) to the khal's centre line under the bridge, and how far along it (or +∞ off its reach). */
-function khalGap(x: number, z: number): number {
-  const f = bridgeFrame(x, z);
-  if (Math.abs(f.z) > KHAL.reach) return Infinity;
-  // it fades out at its ends into the fields, where the real canal runs on under the crops
-  return Math.abs(f.x) + smoothstep(KHAL.reach - 60, KHAL.reach, Math.abs(f.z)) * 30;
+// ---------- the khals, streams and drains ----------
+
+/**
+ * OSM's waterways too narrow for the DEM and the satellites (most khals, the hill streams, the drains) are cut
+ * into the ground at 1:3 of a typical width for their kind (OSM has no widths: [মডেল]), each with its water a
+ * little below the land either side. Where the map already has water (the sea's, a pond's) nothing is cut:
+ * they run into it.
+ */
+const WATERWAY_KINDS: Readonly<Record<string, { width: number; depth: number }>> = {
+  river: { width: 30, depth: 2 },
+  canal: { width: 15, depth: 1.5 },
+  stream: { width: 8, depth: 0.8 },
+  drain: { width: 4, depth: 0.6 },
+  ditch: { width: 3, depth: 0.5 },
+};
+/** The khal under the old bridge, the canal through the town, ≈27 m across on the ground (its width is not mapped: [মডেল]). */
+const BRIDGE_KHAL_HALF = 4.5;
+/** A khal's water stands this far below the land along it (m); its banks slope up to the fields over this many metres. */
+const FREEBOARD = 0.6;
+const BANKS = 3;
+
+/** One straight piece of a waterway: its ends, half-width and depth, and its water's level at each end. */
+interface Reach {
+  ax: number;
+  az: number;
+  bx: number;
+  bz: number;
+  half: number;
+  depth: number;
+  la: number;
+  lb: number;
 }
 
-/** The ground the bil's and the khal's carving leaves at (x, z), or +∞ where they do not reach. */
+const REACHES: readonly Reach[] = LINES.flatMap((l) => {
+  const kind = l.k === 'waterway' && l.t !== undefined ? WATERWAY_KINDS[l.t] : undefined;
+  if (!kind) return [];
+  const half = l === BRIDGE.line ? BRIDGE_KHAL_HALF : Math.max(1, kind.width / MAP_SCALE / 2);
+  const p = l.points;
+  const out: Reach[] = [];
+  for (let k = 0; k + 3 < p.length; k += 2) {
+    out.push({ ax: p[k], az: p[k + 1], bx: p[k + 2], bz: p[k + 3], half, depth: kind.depth, la: heightAt(p[k], p[k + 1]) - FREEBOARD, lb: heightAt(p[k + 2], p[k + 3]) - FREEBOARD });
+  }
+  return out;
+});
+
+/** The reaches by 32 m cells (the ground is asked about the khals at every vertex and every placement). */
+const REACH_CELL = 32;
+const reachKey = (i: number, j: number) => (i + 32768) * 65536 + (j + 32768);
+const REACH_GRID = (() => {
+  const grid = new Map<number, number[]>();
+  REACHES.forEach((r, n) => {
+    const pad = r.half + BANKS;
+    const i0 = Math.floor((Math.min(r.ax, r.bx) - pad) / REACH_CELL);
+    const i1 = Math.floor((Math.max(r.ax, r.bx) + pad) / REACH_CELL);
+    const j0 = Math.floor((Math.min(r.az, r.bz) - pad) / REACH_CELL);
+    const j1 = Math.floor((Math.max(r.az, r.bz) + pad) / REACH_CELL);
+    for (let i = i0; i <= i1; i++) {
+      for (let j = j0; j <= j1; j++) {
+        const key = reachKey(i, j);
+        let list = grid.get(key);
+        if (!list) grid.set(key, (list = []));
+        list.push(n);
+      }
+    }
+  });
+  return grid;
+})();
+
+/** The khal nearest (x, z), measured against its width: how far from its middle, its half-width, depth and water's level. */
+const reachHit = { d: 0, half: 0, depth: 0, level: 0 };
+function waterwayAt(x: number, z: number): typeof reachHit | null {
+  const list = REACH_GRID.get(reachKey(Math.floor(x / REACH_CELL), Math.floor(z / REACH_CELL)));
+  if (!list) return null;
+  let best = Infinity;
+  for (const n of list) {
+    const r = REACHES[n];
+    const sx = r.bx - r.ax;
+    const sz = r.bz - r.az;
+    const t = clamp(((x - r.ax) * sx + (z - r.az) * sz) / (sx * sx + sz * sz || 1), 0, 1);
+    const d = Math.hypot(x - r.ax - sx * t, z - r.az - sz * t);
+    if (d - r.half >= best || d > r.half + BANKS) continue;
+    best = d - r.half;
+    reachHit.d = d;
+    reachHit.half = r.half;
+    reachHit.depth = r.depth;
+    reachHit.level = r.la + (r.lb - r.la) * t;
+  }
+  return best < Infinity ? reachHit : null;
+}
+
+/**
+ * Calls `mark` with every point (≈3 m apart) of every khal's water where it is cut into dry ground, and its
+ * level there: world/water.ts paints them into its map of which water stands where.
+ */
+export function eachWaterwayPoint(mark: (x: number, z: number, level: number) => void): void {
+  for (const r of REACHES) {
+    const len = Math.hypot(r.bx - r.ax, r.bz - r.az);
+    if (len < 1e-3) continue;
+    const ux = (r.bx - r.ax) / len;
+    const uz = (r.bz - r.az) / len;
+    const steps = Math.ceil(len / 3);
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      for (let a = -r.half; a <= r.half + 1e-6; a += Math.max(1, r.half)) {
+        const x = r.ax + (r.bx - r.ax) * t - uz * a;
+        const z = r.az + (r.bz - r.az) * t + ux * a;
+        if (kindAt(x, z) === KIND.land) mark(x, z, r.la + (r.lb - r.la) * t);
+      }
+    }
+  }
+}
+
+/** A point on the bridge's khal `d` m along it from the bridge (either way), and the khal's heading there. */
+export function khalPoint(d: number): { x: number; z: number; heading: number } {
+  const p = BRIDGE.line?.points;
+  if (!p) return { ...bridgeToWorld(0, d), heading: BRIDGE.angle };
+  // the bridge's place along the line, then walk from it
+  let at = 0;
+  let best = Infinity;
+  let run = 0;
+  for (let k = 0; k + 3 < p.length; k += 2) {
+    const sx = p[k + 2] - p[k];
+    const sz = p[k + 3] - p[k + 1];
+    const len = Math.hypot(sx, sz);
+    const t = clamp(((BRIDGE.x - p[k]) * sx + (BRIDGE.z - p[k + 1]) * sz) / (len * len || 1), 0, 1);
+    const e = Math.hypot(BRIDGE.x - p[k] - sx * t, BRIDGE.z - p[k + 1] - sz * t);
+    if (e < best) (best = e), (at = run + t * len);
+    run += len;
+  }
+  let want = clamp(at + d, 0, run);
+  for (let k = 0; k + 3 < p.length; k += 2) {
+    const sx = p[k + 2] - p[k];
+    const sz = p[k + 3] - p[k + 1];
+    const len = Math.hypot(sx, sz);
+    if (want <= len || k + 5 >= p.length) {
+      const t = len > 0 ? Math.min(1, want / len) : 0;
+      return { x: p[k] + sx * t, z: p[k + 1] + sz * t, heading: Math.atan2(sx, sz) };
+    }
+    want -= len;
+  }
+  return { x: BRIDGE.x, z: BRIDGE.z, heading: BRIDGE.angle };
+}
+
+/** The ground the bil's and the khals' carving leaves at (x, z), or +∞ where they do not reach. */
 function carved(x: number, z: number, ground: number): number {
   let h = Infinity;
   const u = x - riverX(z);
@@ -320,11 +457,12 @@ function carved(x: number, z: number, ground: number): number {
     if (e < 1) h = BIL.level - bilDepth(z, u);
     else if (e < 1.45) h = Math.min(ground, BIL.level - 0.04 + (ground - BIL.level + 0.04) * smoothstep(1, 1.45, e));
   }
-  const d = khalGap(x, z);
-  if (d < KHAL.half + KHAL.banks) {
-    const bed = BRIDGE.water - KHAL.depth;
-    if (d < KHAL.half) h = Math.min(h, bed + (BRIDGE.water - 0.2 - bed) * smoothstep(0.4, 1, d / KHAL.half));
-    else h = Math.min(h, BRIDGE.water - 0.2 + (ground - BRIDGE.water + 0.2) * (1 - (1 - (d - KHAL.half) / KHAL.banks) ** 2));
+  const w = waterwayAt(x, z);
+  if (w && kindAt(x, z) === KIND.land) {
+    // a bed shoaling to the sides, then banks rising to the fields
+    const bed = w.level - w.depth;
+    if (w.d < w.half) h = Math.min(h, bed + (w.level - 0.2 - bed) * smoothstep(0.4, 1, w.d / w.half));
+    else h = Math.min(h, w.level - 0.2 + (ground - w.level + 0.2) * (1 - (1 - (w.d - w.half) / BANKS) ** 2));
   }
   return h;
 }
@@ -337,7 +475,7 @@ const TEMPLE = (() => {
   return { x: p.world.x, z: p.world.z, r: 9, y: heightAt(p.world.x, p.world.z) };
 })();
 
-/** Height of the ground at (x, z): the baked map, with the bil's bowl, the khal and the temple's terrace. */
+/** Height of the ground at (x, z): the baked map, with the bil's bowl, the khals and the temple's terrace. */
 export function terrainHeight(x: number, z: number): number {
   let h = heightAt(x, z);
   const t = Math.hypot(x - TEMPLE.x, z - TEMPLE.z);
@@ -358,7 +496,8 @@ export function landLevel(x: number, z: number): number {
 export function waterLevelAt(x: number, z: number): number {
   const u = x - riverX(z);
   if (nearBil(z, u) && bilReach(z, u) < 1.05) return BIL.level;
-  if (khalGap(x, z) < KHAL.half + 1) return BRIDGE.water;
+  const w = waterwayAt(x, z);
+  if (w && w.d < w.half + 1 && kindAt(x, z) === KIND.land) return w.level;
   const inland = inlandSurfaceAt(x, z);
   if (inland !== null) return inland;
   return seaWaterAt(x, z) ? G.uWaterLevel.value : -Infinity;
@@ -370,12 +509,14 @@ export function seaWaterAt(x: number, z: number): boolean {
   return k === KIND.sea || k === KIND.tidal || k === KIND.mangrove;
 }
 
-/** Whether (x, z) holds inland water: a pond, a pan, a tank, the bil or the khal. */
+/** Whether (x, z) holds inland water: a pond, a gher, a tank, the bil or a khal. */
 export function inlandWaterAt(x: number, z: number): boolean {
   const u = x - riverX(z);
   if (nearBil(z, u) && bilReach(z, u) < 1) return true;
-  if (khalGap(x, z) < KHAL.half) return true;
-  return kindAt(x, z) === KIND.inland;
+  const k = kindAt(x, z);
+  if (k === KIND.inland) return true;
+  const w = waterwayAt(x, z);
+  return w !== null && w.d < w.half && k === KIND.land;
 }
 
 /** How much of (x, z) is hill forest (0..1): trees on ground well above the plain. */

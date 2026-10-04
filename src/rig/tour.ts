@@ -11,8 +11,8 @@ import {
   JOURNEY_Z1,
   PONDS,
   VILLAGES,
-  bridgeToWorld,
   edgeHalfWidth,
+  khalPoint,
   riverX,
   saltPan,
   terrainHeight,
@@ -37,6 +37,12 @@ const UP = new Vector3(0, 1, 0);
 const journeyAt = (z: number) => (z - JOURNEY_Z0) / (JOURNEY_Z1 - JOURNEY_Z0);
 /** Height above the water as it stands now. */
 const onWater = (h: number) => G.uWaterLevel.value + h;
+/** A point over the bridge's khal `d` m along it from the bridge, `side` m to its right, `up` m above its water. */
+function onKhal(d: number, up: number, side: number, out: Vector3): Vector3 {
+  const k = khalPoint(d);
+  const level = waterLevelAt(k.x, k.z);
+  return out.set(k.x + Math.cos(k.heading) * side, (Number.isFinite(level) ? level : BRIDGE.water) + up, k.z - Math.sin(k.heading) * side);
+}
 /** A point across the river at z: `u` from the centre line. */
 const across = (z: number, u: number, y: number, out: Vector3) => out.set(riverX(z) + u, y, z);
 
@@ -193,10 +199,8 @@ export function tourScenes(): Scene[] {
       world: { day: 110, hour: 10.5, weather: 'clear', wind: 0.6 },
       // high over the khal by Bara Moheshkhali winding through the fields, drifting along it toward the old bridge
       pose: (u, _s, pos, look) => {
-        const p = bridgeToWorld(22, lerp(-150, -90, u));
-        const q = bridgeToWorld(0, lerp(-60, 0, u));
-        pos.set(p.x, BRIDGE.water + lerp(34, 24, u), p.z);
-        look.set(q.x, BRIDGE.water, q.z);
+        onKhal(lerp(-150, -90, u), lerp(34, 24, u), 22, pos);
+        onKhal(lerp(-60, 0, u), 0, 0, look);
       },
     },
     {
@@ -242,10 +246,8 @@ export function tourScenes(): Scene[] {
       world: { day: 150, hour: 17.5, weather: 'clear', wind: 0.3 },
       // gliding up the khal between its banks, the old bridge ahead
       pose: (u, _s, pos, look) => {
-        const p = bridgeToWorld(0, lerp(110, 70, u));
-        const q = bridgeToWorld(0, lerp(40, 0, u));
-        pos.set(p.x, BRIDGE.water + 1.7, p.z);
-        look.set(q.x, BRIDGE.water + 1.3, q.z);
+        onKhal(lerp(110, 70, u), 1.7, 0, pos);
+        onKhal(lerp(40, 0, u), 1.3, 0, look);
       },
     },
     {
@@ -284,10 +286,8 @@ export function tourScenes(): Scene[] {
       // low on the khal, gliding up to the old bridge and under it, the girl with her umbrella above, the
       // evening sun over the camera's shoulder
       pose: (u, _s, pos, look) => {
-        const p = bridgeToWorld(lerp(1.6, 0.6, u), lerp(-26, -4, u));
-        const q = bridgeToWorld(0, lerp(4, 20, u));
-        pos.set(p.x, BRIDGE.water + lerp(2.2, 1.5, u), p.z);
-        look.set(q.x, BRIDGE.water + lerp(3.6, 2.4, u), q.z);
+        onKhal(lerp(-26, -4, u), lerp(2.2, 1.5, u), lerp(1.6, 0.6, u), pos);
+        onKhal(lerp(4, 20, u), lerp(3.6, 2.4, u), 0, look);
       },
     },
     {

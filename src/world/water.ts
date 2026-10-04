@@ -26,7 +26,7 @@ import { HERO_HULL, HERO_SINK, hullWaterlineGlsl } from './hull';
 import { wakeGlsl } from './wake';
 import { SHELTERED, waveHeightLodGlsl, waveSlopeGlsl } from './waves';
 import { GRID_H, GRID_W, KIND, LAYERS, WORLD } from '../geo/data';
-import { BIL, BRIDGE, WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, downstream, edgeHalfWidth, halfWidth, inlandWaterAt, riverX, seaWaterAt, streamSpeed, terrainHeight, waterLevelAt } from './geography';
+import { BIL, WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, downstream, eachWaterwayPoint, edgeHalfWidth, halfWidth, inlandWaterAt, riverX, seaWaterAt, streamSpeed, terrainHeight, waterLevelAt } from './geography';
 
 /** A field's rectangle in the world (x0, z0 its corner with the least x and z; sx, sz its extent) and its texels. */
 interface FieldRect {
@@ -192,25 +192,23 @@ function levelTexture(): { texture: DataTexture; map: Vector4 } {
     inland[i] = k === KIND.inland ? 1 : 0;
     surface[i] = inland[i] ? level[i] / 10 : terrain[i] / 10 - 20;
   }
-  // the inland waters the scene adds: the bil and the khal under the old bridge
+  // the inland waters the scene adds: the bil, and the khals cut into the ground (geography.ts)
   const cell = (WORLD.x1 - WORLD.x0) / GRID_W;
+  const mark = (x: number, z: number, level: number) => {
+    const c = Math.floor((WORLD.x1 - x) / cell);
+    const r = Math.floor((WORLD.z1 - z) / cell);
+    if (c < 0 || r < 0 || c >= GRID_W || r >= GRID_H) return;
+    const i = r * GRID_W + c;
+    surface[i] = level;
+    inland[i] = 1;
+    sea[i] = 0;
+  };
   const paint = (x0: number, x1: number, z0: number, z1: number) => {
-    for (let z = z0; z <= z1; z += cell / 2) {
-      for (let x = x0; x <= x1; x += cell / 2) {
-        if (!inlandWaterAt(x, z)) continue;
-        const c = Math.floor((WORLD.x1 - x) / cell);
-        const r = Math.floor((WORLD.z1 - z) / cell);
-        if (c < 0 || r < 0 || c >= GRID_W || r >= GRID_H) continue;
-        const i = r * GRID_W + c;
-        surface[i] = waterLevelAt(x, z);
-        inland[i] = 1;
-        sea[i] = 0;
-      }
-    }
+    for (let z = z0; z <= z1; z += cell / 2) for (let x = x0; x <= x1; x += cell / 2) if (inlandWaterAt(x, z)) mark(x, z, waterLevelAt(x, z));
   };
   const bx = riverX(BIL.z) + BIL.u;
   paint(bx - BIL.halfWid * 1.7, bx + BIL.halfWid * 1.7, BIL.z - BIL.halfLen * 1.7, BIL.z + BIL.halfLen * 1.7);
-  paint(BRIDGE.x - 200, BRIDGE.x + 200, BRIDGE.z - 200, BRIDGE.z + 200);
+  eachWaterwayPoint(mark);
   // carry each inland water's level outward, ring by ring (the nearest water's, as a breadth-first search)
   const reached = new Uint8Array(n);
   let ring: number[] = [];
@@ -464,7 +462,9 @@ void main() {
   // each water only where it belongs: the sea's where the ground is joined to the sea (not over the ponds
   // and pans, nor the polders' fields below its level); inland water only where it stands above its bed
   vec3 lv = waterLevels(wp.xz);
-  if (uInland > 0.5 ? (lv.b < 0.5 || lv.r < fld.r + 0.03) : lv.g < 0.5) discard;
+  // (a khal narrower than the field's texels: its bed there reads half bank, so only ground well above the
+  // level is taken as dry; the depth test hides the rest under the banks)
+  if (uInland > 0.5 ? (lv.b < 0.5 || lv.r < fld.r - 0.3) : lv.g < 0.5) discard;
   float level = uInland > 0.5 ? lv.r : uWaterLevel;
   float depth = max(level - fld.r, 0.0);
   // the season sets the river's pace: fast and full in the rains, slack in the dry months
