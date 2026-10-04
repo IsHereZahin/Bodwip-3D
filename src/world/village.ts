@@ -24,13 +24,12 @@ import {
   downstream,
   edgeHalfWidth,
   landLevel,
-  hillHeight,
   nearBackwater,
-  onLandmark,
-  onRoad,
   riverX,
   terrainHeight,
 } from './geography';
+import { BUILDING } from '../geo/data';
+import type { BuildingPlan } from './buildings';
 import { buildHull, type HullShape } from './hull';
 import { SHELTERED, waveHeightGlsl, waveSlopeGlsl } from './waves';
 
@@ -51,42 +50,23 @@ export const GHATS: readonly { z: number; side: 1 | -1 }[] = VILLAGES.map((v) =>
 
 const WALLS: RGB[] = [rgb('#a88458'), rgb('#b8946a'), rgb('#9a7a4a'), rgb('#c4b69a')];
 
-/** Huts for every village; vegetation keeps clear of them. Deterministic. */
-export function planHuts(): HutPlan[] {
+/**
+ * The map's houses by the villages along the channel, to be built here as huts in detail (seen close from the
+ * boat); the rest of the buildings are world/buildings.ts's. Deterministic.
+ */
+export function planHuts(buildings: readonly BuildingPlan[]): { huts: HutPlan[]; rest: BuildingPlan[] } {
   const rng = new Rng(21);
-  const out: HutPlan[] = [];
-  VILLAGES.forEach((v, i) => {
-    const c = VILLAGE_CENTERS[i];
-    // long side parallel to the river, facing it
-    const [dx, dz] = downstream(v.z);
-    const along = Math.atan2(-dz, dx);
-    const n = rng.int(4, 7);
-    for (let k = 0, tries = 0; k < n && tries < 80; tries++) {
-      const a = rng.range(0, Math.PI * 2);
-      const d = v.radius * Math.sqrt(rng.range(0, 0.5));
-      const x = c.x + Math.cos(a) * d;
-      const z = c.z + Math.sin(a) * d;
-      // not out in the backwaters, up the island's hills, or where the town's landmarks stand
-      if (bankInfo(x, z).inland < 14 || nearBackwater(x, z, 8) || hillHeight(x, z) > 0.8 || onLandmark(x, z, 5) || onRoad(x, z, 6)) continue;
-      if (out.some((h) => Math.hypot(h.x - x, h.z - z) < 12)) continue;
-      const l = rng.range(5.2, 7.5);
-      const w = rng.range(3.4, 4.4);
-      let y = Infinity;
-      for (const [ox, oz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) y = Math.min(y, terrainHeight(x + ox * l * 0.5, z + oz * w * 0.5));
-      out.push({
-        x,
-        y,
-        z,
-        ry: along + rng.range(-0.3, 0.3) + (rng.next() < 0.2 ? Math.PI / 2 : 0),
-        l,
-        w,
-        roof: rng.next() < 0.55 ? 'thatch' : 'tin',
-        wall: rng.pick(WALLS),
-      });
-      k++;
+  const huts: HutPlan[] = [];
+  const rest: BuildingPlan[] = [];
+  for (const b of buildings) {
+    const byVillage = b.kind === BUILDING.house && VILLAGE_CENTERS.some((c, i) => Math.hypot(b.x - c.x, b.z - c.z) < VILLAGES[i].radius * 1.4);
+    if (!byVillage) {
+      rest.push(b);
+      continue;
     }
-  });
-  return out;
+    huts.push({ x: b.x, y: b.base + 0.2, z: b.z, ry: b.ry, l: b.l, w: b.w, roof: rng.next() < 0.55 ? 'thatch' : 'tin', wall: rng.pick(WALLS) });
+  }
+  return { huts, rest };
 }
 
 // ---------- parts ----------

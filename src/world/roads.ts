@@ -38,6 +38,8 @@ const ROAD_KINDS: Readonly<Record<string, { width: number; raise: number; surfac
 };
 /** How far the embankment's sides reach out from the carriageway's edge (m). */
 const SHOULDER = 2.5;
+/** How far beyond its shoulders a road is still found (m): a building's corner may reach that far. */
+const NEAR = 6;
 /** The surface drawn this far above the levelled ground (m), against z-fighting. */
 const LIFT = 0.05;
 
@@ -105,7 +107,7 @@ for (const l of LINES) {
 }
 
 const INDEX = new SegmentIndex(32);
-for (const r of REACHES) INDEX.add(r.ax, r.az, r.bx, r.bz, r.half, 0.3 + SHOULDER);
+for (const r of REACHES) INDEX.add(r.ax, r.az, r.bx, r.bz, r.half, 0.3 + SHOULDER + NEAR);
 
 /**
  * The ground the roads leave at (x, z): a road's crest across its carriageway, its embankment's sides (or a
@@ -133,6 +135,31 @@ export function roadCover(x: number, z: number): number {
 export function onRoad(x: number, z: number, margin = 0): boolean {
   const hit = INDEX.nearest(x, z);
   return hit !== null && hit.d < REACHES[hit.index].half + margin;
+}
+
+/**
+ * (x, z) moved clear of the roads by `r` (a building's reach from its middle) and a little more: pushed straight
+ * out from the nearest road's middle line, a few times over where roads meet. On the 1:3 map the houses that
+ * line a road stand a third as far from it as they do, so most of them need it.
+ */
+export function clearOfRoads(x: number, z: number, r: number): { x: number; z: number } {
+  for (let k = 0; k < 4; k++) {
+    const hit = INDEX.nearest(x, z);
+    if (!hit) break;
+    const road = REACHES[hit.index];
+    const need = road.half + r + 0.6;
+    if (hit.d >= need) break;
+    const px = road.ax + (road.bx - road.ax) * hit.t;
+    const pz = road.az + (road.bz - road.az) * hit.t;
+    // off the line to its side (or, if right on it, to its right)
+    let dx = x - px;
+    let dz = z - pz;
+    if (Math.hypot(dx, dz) < 1e-3) (dx = road.bz - road.az), (dz = -(road.bx - road.ax));
+    const len = Math.hypot(dx, dz) || 1;
+    x = px + (dx / len) * need;
+    z = pz + (dz / len) * need;
+  }
+  return { x, z };
 }
 
 // ---------- the meshes ----------

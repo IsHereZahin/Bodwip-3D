@@ -563,6 +563,165 @@ async function coverPreview(g, cover, canopy) {
   await writeFile(`${VIEW}cover.png`, encodePng(rgb, W, H, 3));
 }
 
+// ---------- buildings ----------
+
+/** What a building is (buildings.bin), for how the scene builds it. */
+const BUILDING = { house: 0, pucca: 1, mosque: 2, temple: 3, pagoda: 4, school: 5, civic: 6, commercial: 7, industrial: 8 };
+/** How many of the real buildings stand on the 1:3 map: a ninth, as the land is (GEOGRAPHY_PLAN.md §5.1). */
+const BUILDING_SHARE = 9;
+
+/** A building's kind from its OSM tags (none for Microsoft's footprints: a house, or pucca if big). */
+function buildingKind(tags, area) {
+  const t = tags ?? {};
+  const b = t.building ?? '';
+  if (t.religion === 'muslim' || b === 'mosque') return BUILDING.mosque;
+  if (t.religion === 'hindu' || b === 'temple') return BUILDING.temple;
+  if (t.religion === 'buddhist' || b === 'pagoda') return BUILDING.pagoda;
+  if (/^(school|college|university|kindergarten)$/.test(b) || /^(school|college|university|madrasa)$/.test(t.amenity ?? '')) return BUILDING.school;
+  if (/^(hospital|civic|public|government|government_office|office)$/.test(b) || /^(hospital|clinic|police|bank|post_office|townhall|courthouse)$/.test(t.amenity ?? '')) return BUILDING.civic;
+  if (/^(hotel|apartments|commercial|retail|kiosk|supermarket)$/.test(b) || t.shop || t.tourism === 'hotel' || /^(marketplace|restaurant|cafe)$/.test(t.amenity ?? '')) return BUILDING.commercial;
+  if (/^(industrial|warehouse|factory|hangar)$/.test(b)) return BUILDING.industrial;
+  return area >= 150 ? BUILDING.pucca : BUILDING.house;
+}
+
+/** The smallest rectangle round a ring of ground points (one side along one of its edges): centre, length ≥ width, yaw of the length (world). */
+function footprint(ring) {
+  let best = null;
+  const n = ring.length;
+  for (let i = 0; i < n; i++) {
+    const [ax, ay] = ring[i];
+    const [bx, by] = ring[(i + 1) % n];
+    const len = Math.hypot(bx - ax, by - ay);
+    if (len < 0.5) continue;
+    const ux = (bx - ax) / len;
+    const uy = (by - ay) / len;
+    let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    for (const [x, y] of ring) {
+      const u = x * ux + y * uy;
+      const v = -x * uy + y * ux;
+      u0 = Math.min(u0, u); u1 = Math.max(u1, u); v0 = Math.min(v0, v); v1 = Math.max(v1, v);
+    }
+    const area = (u1 - u0) * (v1 - v0);
+    if (!best || area < best.area) {
+      const cu = (u0 + u1) / 2;
+      const cv = (v0 + v1) / 2;
+      best = { area, east: cu * ux - cv * uy, north: cu * uy + cv * ux, a: u1 - u0, b: v1 - v0, ux, uy };
+    }
+  }
+  if (!best) return null;
+  // the long side's direction, east and north, as the world's yaw (x is west, z north: a rotation about y)
+  const [l, w, dx, dy] = best.a >= best.b ? [best.a, best.b, best.ux, best.uy] : [best.b, best.a, -best.uy, best.ux];
+  return { east: best.east, north: best.north, l, w, yaw: Math.atan2(-dy, -dx) };
+}
+
+/** The shoelace area of a ring (m²). */
+const ringArea = (ring) => Math.abs(ring.reduce((s, [x, y], i) => s + x * ring[(i + 1) % ring.length][1] - ring[(i + 1) % ring.length][0] * y, 0)) / 2;
+
+/**
+ * The buildings: OSM's footprints (with their kinds and names) and Microsoft's where OSM has none; a ninth of
+ * the ordinary ones (by a hash of their id), every one OSM names or tags as more than a house; at their 1:3
+ * places but real size, kept clear of each other (the important first) and off the water (buildings.bin).
+ */
+async function bakeBuildings(g, kind) {
+  const east1 = g.east0 + g.width * SPACING;
+  const north0 = g.north1 - g.height * SPACING;
+  const kindAtGround = (e, n) => {
+    const c = Math.floor((e - g.east0) / SPACING);
+    const r = Math.floor((g.north1 - n) / SPACING);
+    return c < 0 || r < 0 || c >= g.width || r >= g.height ? -1 : kind[r * g.width + c] & 0x7f;
+  };
+  const all = [];
+  const seen = new Set();
+  const take = (id, ring, tags) => {
+    if (ring.length < 4) return;
+    const area = ringArea(ring);
+    if (area < 12 || area > 8000) return;
+    const f = footprint(ring.slice(0, -1));
+    if (!f || f.east < g.east0 || f.east > east1 || f.north < north0 || f.north > g.north1) return;
+    if (kindAtGround(f.east, f.north) !== KIND.land) return;
+    const k = buildingKind(tags, area);
+    const named = !!(tags?.name || tags?.['name:en'] || tags?.['name:bn']);
+    const important = named || k !== BUILDING.house && k !== BUILDING.pucca;
+    // a fixed ninth of the ordinary ones, whatever order they come in
+    const h = Math.imul(id ^ (id >>> 16), 0x45d9f3b) >>> 0;
+    if (!important && h % BUILDING_SHARE !== 0) return;
+    const levels = Math.min(20, Math.max(0, Math.round(parseFloat(tags?.['building:levels'] ?? '0')) || 0));
+    all.push({ ...f, area, kind: k, levels, important, name: tags?.name ?? tags?.['name:bn'] ?? tags?.['name:en'] ?? null });
+  };
+  const osm = JSON.parse(await readFile(at('osm-buildings.json'), 'utf8')).elements;
+  const cellKey = (e, n) => `${Math.round(e / 12)}:${Math.round(n / 12)}`;
+  for (const e of osm) {
+    if (e.type !== 'way' || !e.geometry) continue;
+    const ring = e.geometry.map((p) => {
+      const q = toGround(p.lat, p.lon);
+      return [q.east, q.north];
+    });
+    const f = ring.reduce((s, [x, y]) => [s[0] + x / ring.length, s[1] + y / ring.length], [0, 0]);
+    seen.add(cellKey(f[0], f[1]));
+    take(e.id, ring, e.tags);
+  }
+  // Microsoft's, where no OSM building stands within a few metres
+  const ms = (await import('node:zlib')).gunzipSync(await readFile(at('ms-buildings.gz'))).toString().split('\n');
+  let msId = 1 << 30;
+  for (const line of ms) {
+    if (!line) continue;
+    const c = JSON.parse(line).geometry.coordinates[0];
+    const ring = c.map(([lon, lat]) => {
+      const q = toGround(lat, lon);
+      return [q.east, q.north];
+    });
+    const f = ring.reduce((s, [x, y]) => [s[0] + x / ring.length, s[1] + y / ring.length], [0, 0]);
+    msId++;
+    if (seen.has(cellKey(f[0], f[1]))) continue;
+    take(msId, ring, null);
+  }
+  // the important first, then the big; each kept only clear of those already kept (on the 1:3 map, real size)
+  all.sort((a, b) => Number(b.important) - Number(a.important) || b.area - a.area);
+  const kept = [];
+  const grid = new Map();
+  const CELL = 16;
+  for (const b of all) {
+    const x = -b.east / MAP_SCALE;
+    const z = b.north / MAP_SCALE;
+    const r = 0.5 * Math.hypot(b.l, b.w) * 0.8;
+    const ci = Math.floor(x / CELL);
+    const cj = Math.floor(z / CELL);
+    let clear = true;
+    for (let i = ci - 2; i <= ci + 2 && clear; i++) {
+      for (let j = cj - 2; j <= cj + 2 && clear; j++) {
+        for (const o of grid.get(`${i}:${j}`) ?? []) if (Math.hypot(o.x - x, o.z - z) < o.r + r + 1) clear = false;
+      }
+    }
+    if (!clear) continue;
+    const key = `${ci}:${cj}`;
+    if (!grid.has(key)) grid.set(key, []);
+    grid.get(key).push({ x, z, r });
+    kept.push({ ...b, x, z });
+  }
+  // x, z (world, float32); length, width (dm, uint16); yaw (centiradians, int16); kind, levels, important (uint8)
+  const n = kept.length;
+  const buf = Buffer.alloc(n * 17);
+  kept.forEach((b, i) => {
+    const o = i * 17;
+    buf.writeFloatLE(b.x, o);
+    buf.writeFloatLE(b.z, o + 4);
+    buf.writeUInt16LE(Math.min(65535, Math.round(b.l * 10)), o + 8);
+    buf.writeUInt16LE(Math.min(65535, Math.round(b.w * 10)), o + 10);
+    buf.writeInt16LE(Math.round(b.yaw * 100), o + 12);
+    buf.writeUInt8(b.kind, o + 14);
+    buf.writeUInt8(b.levels, o + 15);
+    buf.writeUInt8(b.important ? 1 : 0, o + 16);
+  });
+  await writeFile(`${OUT}buildings.bin`, deflateRawSync(buf));
+  const names = kept.flatMap((b, i) => (b.name ? [{ i, name: b.name, kind: Object.keys(BUILDING).find((k) => BUILDING[k] === b.kind) }] : []));
+  const count = {};
+  for (const b of kept) {
+    const name = Object.keys(BUILDING).find((k) => BUILDING[k] === b.kind);
+    count[name] = (count[name] ?? 0) + 1;
+  }
+  return { count: n, candidates: all.length, kinds: count, names };
+}
+
 // ---------- the Moheshkhali channel's centre line ----------
 
 /** Where the channel meets the sea, between Sonadia and Cox's Bazar, and where it ends in the north by Badarkhali bridge. */
@@ -800,6 +959,8 @@ const terrain = await bakeTerrain();
 const coverage = await bakeCover(terrain.grid, terrain.kind);
 Object.assign(terrain, await writeGround(terrain, coverage.cover));
 const vectors = await bakeVectors(terrain.grid);
+const buildings = await bakeBuildings(terrain.grid, terrain.kind);
+await writeFile(`${OUT}buildings.json`, JSON.stringify({ names: buildings.names }, null, 1));
 const channel = await bakeChannel(terrain.grid, terrain.kind);
 const places = await bakePlaces(terrain.grid, terrain.height, terrain.kind, coverage.cover);
 const manifest = {
@@ -821,6 +982,16 @@ const manifest = {
     vectors: { file: 'vectors.bin', encoding: 'deflate-raw', type: 'JSON', counts: vectors, licence: 'ODbL (OpenStreetMap)' },
     channel: { file: 'channel.json', ...channel },
     places: { file: 'places.json', note: 'landmarks with sources (scripts/geo/places.mjs)' },
+    buildings: {
+      file: 'buildings.bin',
+      encoding: 'deflate-raw',
+      record: 'x, z (world m, float32); length, width (dm, uint16); yaw (centiradians, int16); kind, levels (0: not mapped), important (uint8)',
+      codes: BUILDING,
+      count: buildings.count,
+      names: 'buildings.json',
+      note: `a ninth of the ordinary buildings (by a hash of their id) and every one OSM names or tags as more than a house, kept clear of each other on the 1:3 map; OSM's footprints, and Microsoft's where OSM has none`,
+      licence: 'ODbL (OpenStreetMap; Microsoft Global ML Building Footprints)',
+    },
     canopy: { file: 'canopy.bin', encoding: 'deflate-raw', type: 'uint8 × 2', fields: ['tree height, metres (90th percentile of canopy pixels ≥ 3 m)', 'tree cover, 0..255'], licence: 'CC BY 4.0 (Meta/WRI)' },
   },
   coverKm2: coverage.km2,
@@ -844,9 +1015,11 @@ const manifest = {
     "Tide: UHSLC research quality data, Cox's Bazar (h136a)",
     'High Resolution Canopy Height Maps by WRI and Meta (2023), CC BY 4.0',
     '© OpenStreetMap contributors, ODbL',
+    'Microsoft Global ML Building Footprints, ODbL',
     'Contains modified Copernicus Sentinel data 2026',
   ],
 };
 await writeFile(`${OUT}manifest.json`, JSON.stringify(manifest, null, 2));
 for (const p of places) console.log(p.id.padEnd(26), String(p.ground).padStart(6), (p.kind ?? '-').padEnd(9), p.cover ?? '-');
+console.log(JSON.stringify({ buildings: { count: buildings.count, candidates: buildings.candidates, kinds: buildings.kinds } }));
 console.log(JSON.stringify({ grid: terrain.grid, km2: terrain.km2, cover: coverage.km2, vectors, channel, lowWater: terrain.lowWater, highest: terrain.highest, deepest: terrain.deepest }, null, 1));

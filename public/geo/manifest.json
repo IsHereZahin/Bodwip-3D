@@ -93,6 +93,26 @@
       "file": "places.json",
       "note": "landmarks with sources (scripts/geo/places.mjs)"
     },
+    "buildings": {
+      "file": "buildings.bin",
+      "encoding": "deflate-raw",
+      "record": "x, z (world m, float32); length, width (dm, uint16); yaw (centiradians, int16); kind, levels (0: not mapped), important (uint8)",
+      "codes": {
+        "house": 0,
+        "pucca": 1,
+        "mosque": 2,
+        "temple": 3,
+        "pagoda": 4,
+        "school": 5,
+        "civic": 6,
+        "commercial": 7,
+        "industrial": 8
+      },
+      "count": 11145,
+      "names": "buildings.json",
+      "note": "a ninth of the ordinary buildings (by a hash of their id) and every one OSM names or tags as more than a house, kept clear of each other on the 1:3 map; OSM's footprints, and Microsoft's where OSM has none",
+      "licence": "ODbL (OpenStreetMap; Microsoft Global ML Building Footprints)"
+    },
     "canopy": {
       "file": "canopy.bin",
       "encoding": "deflate-raw",
@@ -205,6 +225,7 @@
     "Tide: UHSLC research quality data, Cox's Bazar (h136a)",
     "High Resolution Canopy Height Maps by WRI and Meta (2023), CC BY 4.0",
     "© OpenStreetMap contributors, ODbL",
+    "Microsoft Global ML Building Footprints, ODbL",
     "Contains modified Copernicus Sentinel data 2026"
   ]
 }

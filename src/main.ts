@@ -43,7 +43,8 @@ import { cullBeyond, updateCulling } from './render/cull';
 import { buildSky } from './world/sky';
 import { Terrain } from './world/terrain';
 import { buildVegetation } from './world/vegetation';
-import { buildVillages, planHuts } from './world/village';
+import { buildVillages, planHuts, type HutPlan } from './world/village';
+import { buildBuildings, planBuildings } from './world/buildings';
 import { buildWater } from './world/water';
 
 const BLACK = new Color(0, 0, 0);
@@ -121,8 +122,14 @@ async function main(hud: Hud): Promise<void> {
   scene.add(water.mesh, water.inland);
   hud.progress(0.42);
   await nextTask();
-  const huts = planHuts();
+  // the map's buildings: the houses by the villages on the channel as detailed huts, the rest in cells
+  const { huts, rest } = planHuts(planBuildings());
   scene.add(buildVillages(huts));
+  const buildings = buildBuildings(rest);
+  scene.add(buildings);
+  cullBeyond(buildings, 1800);
+  // everything standing, for the trees and the grass to keep clear of
+  const standing: HutPlan[] = [...huts, ...rest.map((b) => ({ x: b.x, y: b.y, z: b.z, ry: b.ry, l: b.l, w: b.w, roof: 'tin' as const, wall: [1, 1, 1] as [number, number, number] }))];
   // small things far off are left undrawn (render/cull.ts): the salt works' bunds and heaps, the betel
   // gardens and dry-fish yards, and the trees beyond the haze
   const saltWorks = buildSaltWorks();
@@ -133,7 +140,7 @@ async function main(hud: Hud): Promise<void> {
   cullBeyond(landmarks.near, 1500);
   hud.progress(0.52);
   await nextTask();
-  const vegetation = buildVegetation(huts, surfaces.bark, [...fishingClearings(), BRIDGE_CLEARING], bridgeTrees());
+  const vegetation = buildVegetation(standing, surfaces.bark, [...fishingClearings(), BRIDGE_CLEARING], bridgeTrees());
   scene.add(vegetation);
   cullBeyond(vegetation, 1900);
   // the roads, in 1 km cells: the far ones are left undrawn
@@ -146,7 +153,7 @@ async function main(hud: Hud): Promise<void> {
   scene.add(buildPondLife());
   const bil = new Bil();
   scene.add(bil.group);
-  const meadow = new Meadow(huts);
+  const meadow = new Meadow(standing);
   scene.add(meadow.group);
   const crops = new Crops();
   scene.add(crops.group);

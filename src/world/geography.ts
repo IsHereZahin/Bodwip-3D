@@ -651,8 +651,8 @@ export const ADINATH = { z: TEMPLE.z, u: TEMPLE.x - riverX(TEMPLE.z), top: TEMPL
 
 /**
  * Gorakghata's landmarks (world/moheshkhali.ts): the jetty from its landward end out over the mangrove flat to
- * its head on the channel (OSM way 43107027), the bank road's buildings by it, the stair up to the temple from
- * the Adinath jetty's landward end, and the pagoda (its place is not known: D3, kept behind the town).
+ * its head on the channel (OSM way 43107027), the stair up to the temple from the Adinath jetty's landward end,
+ * and the pagoda (its place is not known: D3, kept behind the town). The town's buildings are the map's own.
  */
 export const GORAKGHATA = (() => {
   const land = place('gorakghata-jetty-land').world;
@@ -663,20 +663,9 @@ export const GORAKGHATA = (() => {
   const townInland = bankInfo(town.x, town.z).inland;
   return {
     jetty: { x: land.x, z: land.z, toX: head.x, toZ: head.z, length: Math.hypot(head.x - land.x, head.z - land.z), width: 6 },
-    town: { z0: town.z - 40, z1: town.z + 30, inland0: townInland - 30, inland1: townInland + 10 },
     stair: { from: { x: adinathLand.x, z: adinathLand.z }, to: { x: TEMPLE.x, z: TEMPLE.z - TEMPLE.r * 0.8 } },
     pagoda: { ...at(town.z - 80, townInland + 70), r: 10 },
   };
-})();
-
-/** Cox's Bazar across the channel's mouth: its built-up ground, z from–to, u from–to (east of the channel). */
-export const COXS_BAZAR = (() => {
-  const station = place('coxs-bazar-station').world;
-  const ghat = place('kastura-ghat').world;
-  const z0 = Math.max(ghat.z, station.z) + 60;
-  const z1 = Math.min(ghat.z, station.z) - 250;
-  const u0 = Math.max(ghat.x - riverX(ghat.z), station.x - riverX(station.z)) - 40;
-  return { z0, z1, u0, u1: u0 - 900 };
 })();
 
 /** The dry-fish yards: Nazirartek at Cox's Bazar (OSM's shutki market). */
@@ -693,9 +682,6 @@ export function onTempleHill(x: number, z: number): boolean {
 /** Ground the landmarks stand on (with `margin` m round it): no huts, trees or tall grass there. */
 export function onLandmark(x: number, z: number, margin = 0): boolean {
   const g = GORAKGHATA;
-  const u = x - riverX(z);
-  const inland = u - edgeHalfWidth(z, 1);
-  if (z < g.town.z1 + margin && z > g.town.z0 - margin && inland > g.town.inland0 - 4 - margin && inland < g.town.inland1 + margin) return true;
   if (Math.hypot(x - g.pagoda.x, z - g.pagoda.z) < g.pagoda.r + margin) return true;
   for (const y of SHUTKI_YARDS) if (Math.hypot(x - y.x, z - y.z) < 14 + margin) return true;
   if (Math.hypot(x - TEMPLE.x, z - TEMPLE.z) < TEMPLE.r + 3 + margin) return true;

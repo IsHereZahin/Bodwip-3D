@@ -14,6 +14,9 @@ export type Kind = (typeof KIND)[keyof typeof KIND];
 /** What covers it (bake.mjs COVER). */
 export const COVER = { none: 0, tree: 1, shrub: 2, grass: 3, crop: 4, built: 5, bare: 6, sand: 7, mud: 8, marsh: 9, mangrove: 10, saltpan: 11, pond: 12, water: 13 } as const;
 export type Cover = (typeof COVER)[keyof typeof COVER];
+/** What a building is (bake.mjs BUILDING). */
+export const BUILDING = { house: 0, pucca: 1, mosque: 2, temple: 3, pagoda: 4, school: 5, civic: 6, commercial: 7, industrial: 8 } as const;
+export type BuildingKind = (typeof BUILDING)[keyof typeof BUILDING];
 const MODELLED = 0x80;
 
 interface Manifest {
@@ -65,11 +68,12 @@ async function load() {
   for (const [name, codes] of [
     ['kind', KIND],
     ['cover', COVER],
+    ['buildings', BUILDING],
   ] as const) {
     const baked = manifest.layers[name].codes ?? {};
     for (const [k, v] of Object.entries(codes)) if (baked[k] !== v) throw new Error(`geo/manifest.json: ${name} code ${k} is ${baked[k]}, the scene expects ${v}`);
   }
-  const [terrain, kind, level, cover, canopy, vectors, channel, places] = await Promise.all([
+  const [terrain, kind, level, cover, canopy, vectors, channel, places, buildings] = await Promise.all([
     inflated(manifest.layers.terrain.file),
     inflated(manifest.layers.kind.file),
     inflated(manifest.layers.level.file),
@@ -78,6 +82,7 @@ async function load() {
     inflated(manifest.layers.vectors.file),
     json<{ points: [number, number, number, number][] }>(manifest.layers.channel.file),
     json<(Omit<Place, 'world'> & { world: { x: number; z: number } })[]>(manifest.layers.places.file),
+    inflated(manifest.layers.buildings.file),
   ]);
   return {
     manifest,
@@ -89,6 +94,7 @@ async function load() {
     vectors: JSON.parse(new TextDecoder().decode(vectors)) as { lines: { k: GeoLine['k']; t?: string; n?: string; bridge?: 1; v?: number; p: number[] }[]; towers: number[] },
     channel: channel.points,
     places,
+    buildings: new DataView(buildings),
   };
 }
 
@@ -226,3 +232,26 @@ export const TOWERS: Float32Array = Float32Array.from(data.vectors.towers, (v, k
 
 /** The data sources to credit (manifest.attribution). */
 export const ATTRIBUTION: readonly string[] = data.manifest.attribution;
+
+/**
+ * The buildings on the map (bake.mjs bakeBuildings: a ninth of the real ones, every important one), at their
+ * 1:3 places and real size: centre, length along `yaw` (a rotation about y: the long side's direction is
+ * (cos yaw, −sin yaw)), width, kind, mapped storeys (0: not mapped), and whether OSM names or tags it.
+ */
+export const BUILDINGS = (() => {
+  const v = data.buildings;
+  const n = v.byteLength / 17;
+  const out = { count: n, x: new Float32Array(n), z: new Float32Array(n), l: new Float32Array(n), w: new Float32Array(n), yaw: new Float32Array(n), kind: new Uint8Array(n), levels: new Uint8Array(n), important: new Uint8Array(n) };
+  for (let i = 0; i < n; i++) {
+    const o = i * 17;
+    out.x[i] = v.getFloat32(o, true);
+    out.z[i] = v.getFloat32(o + 4, true);
+    out.l[i] = v.getUint16(o + 8, true) / 10;
+    out.w[i] = v.getUint16(o + 10, true) / 10;
+    out.yaw[i] = v.getInt16(o + 12, true) / 100;
+    out.kind[i] = v.getUint8(o + 14);
+    out.levels[i] = v.getUint8(o + 15);
+    out.important[i] = v.getUint8(o + 16);
+  }
+  return out;
+})();

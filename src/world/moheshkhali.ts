@@ -1,11 +1,10 @@
 import { CylinderGeometry, DoubleSide, Group, LatheGeometry, Matrix4, Mesh, MeshStandardMaterial, Quaternion, SphereGeometry, Vector2, Vector3 } from 'three';
 import { Rng } from '../core/rng';
-import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
+import { MeshBuilder, rgb, scaleRgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { plasterTexture, strawTexture, tinTexture } from '../render/textures';
 import {
   ADINATH,
-  COXS_BAZAR,
   GORAKGHATA,
   SHUTKI_YARDS,
   edgeHalfWidth,
@@ -23,13 +22,12 @@ import {
 //   shikhara spire, a pillared porch facing the channel, two small shrines, a low wall round its terrace and
 //   saffron flags, and the long stair that climbs to it from the edge of the town;
 // - Gorakghata's jetty reaching out over the mud into the channel on concrete piles, railed, lamp-posted,
-//   with a tin-roofed shed at its head where the boats come in; the brick buildings of the bank road by it,
-//   shops below and flat roofs above, and the town's mosque;
+//   with a tin-roofed shed at its head where the boats come in (the town's buildings are the map's own:
+//   world/buildings.ts);
 // - the Rakhine pagoda behind the town, white and gold on its terraces;
 // - betel-leaf gardens (pan baroj) on the lower slopes of the hills: long low enclosures of straw on bamboo
 //   frames, the island's famous pan growing in their shade;
-// - dry-fish yards (shutki) by the fishing villages at the channel's mouth: rows of bamboo racks hung with fish;
-// - and across the mouth on the mainland, the buildings of Cox's Bazar.
+// - dry-fish yards (shutki) by the fishing villages at the channel's mouth: rows of bamboo racks hung with fish.
 // All of it is static: it casts and takes shadows, shows in the water's mirror, and wets in the rain.
 
 const UP = new Vector3(0, 1, 0);
@@ -284,57 +282,6 @@ function jetty(s: Sets): void {
   for (let k = 0; k < 9; k++) box(s.concrete, end + 6.6, deckY - 0.3 - k * 0.32, -3, 0.9, 0.3, 2.4, rgb('#a8a49a'), 1);
 }
 
-/** The bank road's brick buildings by the jetty: shops below, flat roofs and parapets above, faded paint; and the mosque. */
-function townBuildings(s: Sets, rng: Rng): void {
-  const t = GORAKGHATA.town;
-  const paints = ['#e8d9a8', '#cfe0c4', '#e6c4b8', '#f0ece0', '#c8d8e0', '#e8cf9e'].map((c) => rgb(c));
-  let z = t.z1 - 2;
-  while (z > t.z0 + 4) {
-    const w = rng.range(5.5, 8.5);
-    const zc = z - w / 2;
-    const inland = t.inland0 + 4 + rng.range(0, 3);
-    const depth = rng.range(7, 10);
-    const x = riverX(zc) + edgeHalfWidth(zc, 1) + inland + depth / 2;
-    const y = terrainHeight(x, zc);
-    const floors = rng.int(2, 3);
-    const c = rng.pick(paints);
-    const H = floors * 3;
-    // the building: walls, then a parapet round the roof; its face toward the channel (−x)
-    slab(s.paint, x, y + H / 2 - 0.3, zc, depth, H + 0.6, w, 0, c, 3);
-    slab(s.paint, x, y + H + 0.45, zc, depth + 0.1, 0.5, w + 0.1, 0, scaleRgb(c, 0.92), 3);
-    for (let f = 0; f < floors; f++) {
-      const fy = y + f * 3;
-      if (f === 0) {
-        // shop shutters, and an awning of tin over them
-        slab(s.tin, x - depth / 2 - 0.03, fy + 1.3, zc, 0.06, 2.4, w * 0.8, 0, rgb('#8a8e94'), 2);
-        slab(s.tin, x - depth / 2 - 0.9, fy + 2.75, zc, 1.8, 0.06, w * 0.9, 0, rgb('#7d8a8e'), 2);
-        // a signboard, its colours only
-        slab(s.paint, x - depth / 2 - 0.08, fy + 3.25, zc, 0.06, 0.6, w * 0.7, 0, rng.pick([rgb('#c43c2c'), rgb('#2a6a3e'), rgb('#2c4a8a'), rgb('#d8a020')]), 1);
-      } else {
-        for (let k = 0; k < Math.floor(w / 2.2); k++) {
-          const wz = zc - w / 2 + 1.1 + k * 2.2;
-          slab(s.paint, x - depth / 2 - 0.03, fy + 1.6, wz, 0.06, 1.3, 1.0, 0, rgb('#2c2a28'), 1);
-          slab(s.paint, x - depth / 2 - 0.1, fy + 0.85, wz, 0.2, 0.1, 1.2, 0, scaleRgb(c, 0.85), 1);
-        }
-      }
-    }
-    // a water tank on some roofs
-    if (rng.next() < 0.5) part(s.paint, new CylinderGeometry(0.6, 0.6, 1.1, 12), x + 1, y + H + 0.75, zc, 0, rgb('#2a2a2a'));
-    z -= w + rng.range(0.5, 2.5);
-  }
-  // the mosque at the road's end: a prayer hall, a white dome, and a slender minaret
-  const mz = t.z0 + 8;
-  const mx = riverX(mz) + edgeHalfWidth(mz, 1) + t.inland1 - 8;
-  const my = terrainHeight(mx, mz);
-  slab(s.white, mx, my + 2.2, mz, 10, 4.4, 9, 0, WHITE);
-  slab(s.paint, mx, my + 4.5, mz, 10.3, 0.3, 9.3, 0, rgb('#4a8a5a'));
-  part(s.white, new SphereGeometry(2.6, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2), mx, my + 4.6, mz, 0, WHITE);
-  part(s.gold, new CylinderGeometry(0.03, 0.05, 1.2, 6), mx, my + 7.8, mz, 0, [1, 1, 1]);
-  part(s.white, new CylinderGeometry(0.45, 0.55, 13, 10), mx - 3.5, my + 6.5, mz + 5.8, 0, WHITE);
-  part(s.paint, new CylinderGeometry(0.7, 0.7, 0.3, 12), mx - 3.5, my + 10.5, mz + 5.8, 0, rgb('#4a8a5a'));
-  part(s.white, new LatheGeometry([[0, 0], [0.55, 0], [0.5, 0.5], [0.2, 1.1], [0, 1.4]].map(([r, y]) => new Vector2(r, y)), 10), mx - 3.5, my + 13, mz + 5.8, 0, WHITE);
-}
-
 /** The Rakhine pagoda: three square terraces, a bell-shaped stupa, its spire of rings, a golden hti. */
 function pagoda(s: Sets): void {
   const p = GORAKGHATA.pagoda;
@@ -424,32 +371,6 @@ function shutkiYard(s: Sets, rng: Rng, x0: number, z0: number, ry: number, rows:
   }
 }
 
-// ---------- Cox's Bazar ----------
-
-/** The buildings of Cox's Bazar across the channel's mouth: blocks of four to eight storeys, pale paint, rows of windows. */
-function coxsBazar(s: Sets, rng: Rng): void {
-  const c = COXS_BAZAR;
-  const paints = ['#f2efe6', '#e8e0c8', '#d8e4ea', '#efe0cc', '#e0e8d8'].map((p) => rgb(p));
-  for (let k = 0; k < 40; k++) {
-    const z = rng.range(c.z1 + 20, c.z0 - 10);
-    const x = riverX(z) + rng.range(c.u1 + 40, c.u0 - 20);
-    const y = terrainHeight(x, z);
-    if (y < 0.5) continue;
-    const floors = rng.int(4, 8);
-    const H = floors * 3.1;
-    const w = rng.range(10, 18);
-    const d = rng.range(10, 16);
-    const col = rng.pick(paints);
-    slab(s.paint, x, y + H / 2, z, w, H, d, 0, col, 3);
-    // bands of dark window along each floor, facing the channel and the sea
-    for (let f = 0; f < floors; f++) {
-      slab(s.paint, x - w / 2 - 0.02, y + f * 3.1 + 1.7, z, 0.05, 1.1, d * 0.8, 0, mixRgb(col, rgb('#30363c'), 0.75), 3);
-      slab(s.paint, x, y + f * 3.1 + 1.7, z - d / 2 - 0.02, w * 0.8, 1.1, 0.05, 0, mixRgb(col, rgb('#30363c'), 0.75), 3);
-    }
-    slab(s.paint, x, y + H + 0.4, z, w + 0.2, 0.8, d + 0.2, 0, scaleRgb(col, 0.9), 3);
-  }
-}
-
 const newSets = (): Sets => ({
   white: new MeshBuilder(),
   paint: new MeshBuilder(),
@@ -461,7 +382,7 @@ const newSets = (): Sets => ({
 });
 
 /**
- * The landmarks, as groups: `seen` (Gorakghata's temple, jetty, town and pagoda, and Cox's Bazar, which show
+ * The landmarks, as groups: `seen` (Adinath temple and its stair, Gorakghata's jetty and the pagoda, which show
  * from afar), and `near` (the betel gardens and dry-fish yards, small things left undrawn far off; see cull.ts).
  */
 export function buildMoheshkhali(): { seen: Group; near: Group } {
@@ -474,10 +395,7 @@ export function buildMoheshkhali(): { seen: Group; near: Group } {
   temple(town, rng);
   stair(town);
   jetty(town);
-  townBuildings(town, rng);
   pagoda(town);
-  const coxs = newSets();
-  coxsBazar(coxs, rng);
   const gardens = new Map<number, Sets>();
   betelGardens(gardens, rng);
   const yards = SHUTKI_YARDS.map((y) => {
@@ -508,7 +426,6 @@ export function buildMoheshkhali(): { seen: Group; near: Group } {
     }
   };
   add(town, seen);
-  add(coxs, seen);
   for (const g of gardens.values()) add(g, near);
   for (const y of yards) add(y, near);
   return { seen, near };

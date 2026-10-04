@@ -1,0 +1,384 @@
+{
+ "names": [
+  {
+   "i": 0,
+   "name": "New Terminal",
+   "kind": "pucca"
+  },
+  {
+   "i": 1,
+   "name": "Cox's Bazar Sadar Hospital",
+   "kind": "civic"
+  },
+  {
+   "i": 2,
+   "name": "Radisson Blu",
+   "kind": "commercial"
+  },
+  {
+   "i": 3,
+   "name": "Kharulia High School",
+   "kind": "school"
+  },
+  {
+   "i": 4,
+   "name": "Hotel Ocean Paradise",
+   "kind": "commercial"
+  },
+  {
+   "i": 5,
+   "name": "BOQ",
+   "kind": "pucca"
+  },
+  {
+   "i": 6,
+   "name": "Long Beach",
+   "kind": "commercial"
+  },
+  {
+   "i": 7,
+   "name": "Hotel Sea Palace",
+   "kind": "commercial"
+  },
+  {
+   "i": 9,
+   "name": "Seagull",
+   "kind": "commercial"
+  },
+  {
+   "i": 11,
+   "name": "Hotel Kollol",
+   "kind": "commercial"
+  },
+  {
+   "i": 12,
+   "name": "BETAR Cox's Bazar",
+   "kind": "pucca"
+  },
+  {
+   "i": 13,
+   "name": "Jhinuk (Mussel) Market",
+   "kind": "pucca"
+  },
+  {
+   "i": 14,
+   "name": "Motel Upal",
+   "kind": "pucca"
+  },
+  {
+   "i": 16,
+   "name": "Sea Princess",
+   "kind": "commercial"
+  },
+  {
+   "i": 17,
+   "name": "Motel Probal",
+   "kind": "pucca"
+  },
+  {
+   "i": 18,
+   "name": "Cox's Bazar Cultural Center",
+   "kind": "pucca"
+  },
+  {
+   "i": 20,
+   "name": "Neeshorgo Hotel & Resort Limited নিসর্গ হোটেল এন্ড রিসোর্ট লিমিটেড",
+   "kind": "commercial"
+  },
+  {
+   "i": 21,
+   "name": "Submarine Cable Landing Station",
+   "kind": "pucca"
+  },
+  {
+   "i": 22,
+   "name": "Cox's Bazar Zilla Police lines",
+   "kind": "civic"
+  },
+  {
+   "i": 23,
+   "name": "EFC-A Live Fish Restaurant",
+   "kind": "commercial"
+  },
+  {
+   "i": 24,
+   "name": "Ocean Valley",
+   "kind": "commercial"
+  },
+  {
+   "i": 26,
+   "name": "Hotel Shaibal",
+   "kind": "commercial"
+  },
+  {
+   "i": 27,
+   "name": "রূপালী ব্যাংক",
+   "kind": "civic"
+  },
+  {
+   "i": 28,
+   "name": "Blink Customer Care",
+   "kind": "pucca"
+  },
+  {
+   "i": 29,
+   "name": "SK Tower",
+   "kind": "commercial"
+  },
+  {
+   "i": 30,
+   "name": "Jela Porishod (District Council)",
+   "kind": "pucca"
+  },
+  {
+   "i": 32,
+   "name": "Sea Crown",
+   "kind": "commercial"
+  },
+  {
+   "i": 34,
+   "name": "Pouroshova (City Authority)",
+   "kind": "civic"
+  },
+  {
+   "i": 35,
+   "name": "Suite Sadaf",
+   "kind": "commercial"
+  },
+  {
+   "i": 38,
+   "name": "Rohingya Refugee Repatriation Commissioner's Office",
+   "kind": "civic"
+  },
+  {
+   "i": 39,
+   "name": "National Hospital",
+   "kind": "civic"
+  },
+  {
+   "i": 40,
+   "name": "Water Development Board",
+   "kind": "civic"
+  },
+  {
+   "i": 41,
+   "name": "Marine Bird A Luxurious Cottages",
+   "kind": "commercial"
+  },
+  {
+   "i": 42,
+   "name": "পূর্বাণী ফিশারিজ",
+   "kind": "pucca"
+  },
+  {
+   "i": 43,
+   "name": "Hotel Sea Alif",
+   "kind": "commercial"
+  },
+  {
+   "i": 62,
+   "name": "Kolatoli Station Jame Masjid",
+   "kind": "mosque"
+  },
+  {
+   "i": 64,
+   "name": "maiz para masjid",
+   "kind": "mosque"
+  },
+  {
+   "i": 65,
+   "name": "Bilkis Mobile Market",
+   "kind": "civic"
+  },
+  {
+   "i": 68,
+   "name": "Cox's Bazar Main Post Office",
+   "kind": "civic"
+  },
+  {
+   "i": 69,
+   "name": "Circuit House",
+   "kind": "pucca"
+  },
+  {
+   "i": 70,
+   "name": "Samudra Soikat Post Office",
+   "kind": "civic"
+  },
+  {
+   "i": 72,
+   "name": "Islami Bank",
+   "kind": "civic"
+  },
+  {
+   "i": 73,
+   "name": "হোটেল হোয়াইট অর্কিড",
+   "kind": "commercial"
+  },
+  {
+   "i": 74,
+   "name": "BAF Mosque",
+   "kind": "mosque"
+  },
+  {
+   "i": 75,
+   "name": "Hotel Vista Bay",
+   "kind": "commercial"
+  },
+  {
+   "i": 76,
+   "name": "বায়তুল মা'মুর জামে মসজিদ",
+   "kind": "mosque"
+  },
+  {
+   "i": 78,
+   "name": "রিজভী ষ্টোর (বার্মিজ কালেকশন)",
+   "kind": "commercial"
+  },
+  {
+   "i": 79,
+   "name": "Shutki (Dry Fish) Market",
+   "kind": "commercial"
+  },
+  {
+   "i": 80,
+   "name": "Uttaor maiz para masjid",
+   "kind": "mosque"
+  },
+  {
+   "i": 81,
+   "name": "Primary Teachers' Institute (PTI)",
+   "kind": "civic"
+  },
+  {
+   "i": 82,
+   "name": "Eagle's Square",
+   "kind": "commercial"
+  },
+  {
+   "i": 83,
+   "name": "Hostel",
+   "kind": "pucca"
+  },
+  {
+   "i": 85,
+   "name": "Arif Market",
+   "kind": "commercial"
+  },
+  {
+   "i": 86,
+   "name": "Cox's Bazar Palli Bidyut Samiti(PBS)",
+   "kind": "pucca"
+  },
+  {
+   "i": 87,
+   "name": "Cox's Bazar Palli Bidyut Samiti",
+   "kind": "pucca"
+  },
+  {
+   "i": 88,
+   "name": "মহেশখালী উপজেলা",
+   "kind": "pucca"
+  },
+  {
+   "i": 89,
+   "name": "Agricultural Bank",
+   "kind": "civic"
+  },
+  {
+   "i": 90,
+   "name": "চাইন্দা কেন্দ্রীয় জামে মসজিদ",
+   "kind": "mosque"
+  },
+  {
+   "i": 91,
+   "name": "unknown",
+   "kind": "house"
+  },
+  {
+   "i": 92,
+   "name": "Jahan Mansion",
+   "kind": "house"
+  },
+  {
+   "i": 93,
+   "name": "National Bank",
+   "kind": "civic"
+  },
+  {
+   "i": 94,
+   "name": "আমিন ড্রাইভারের বাড়ি",
+   "kind": "house"
+  },
+  {
+   "i": 95,
+   "name": "South Kutubdia Para Baitus Sharaf Jami Mosque",
+   "kind": "mosque"
+  },
+  {
+   "i": 96,
+   "name": "Mag Darin Seafood Restaurant",
+   "kind": "commercial"
+  },
+  {
+   "i": 97,
+   "name": "labony pool center",
+   "kind": "house"
+  },
+  {
+   "i": 99,
+   "name": "Somiti Para Central Jame Mosque",
+   "kind": "mosque"
+  },
+  {
+   "i": 100,
+   "name": "Banoful & Co. বনফুল এন্ড কোং",
+   "kind": "house"
+  },
+  {
+   "i": 102,
+   "name": "Mohona Organic Shop",
+   "kind": "commercial"
+  },
+  {
+   "i": 103,
+   "name": "বাংলাবাজার কৃষি ব্যাংক",
+   "kind": "civic"
+  },
+  {
+   "i": 104,
+   "name": "ADB Hatchary Jame Masjid",
+   "kind": "mosque"
+  },
+  {
+   "i": 105,
+   "name": "Cox's Bazar Lighthouse",
+   "kind": "house"
+  },
+  {
+   "i": 106,
+   "name": "Bangla Bazar বাংলা বাজার",
+   "kind": "commercial"
+  },
+  {
+   "i": 107,
+   "name": "fish center",
+   "kind": "house"
+  },
+  {
+   "i": 109,
+   "name": "Dhaka Bank",
+   "kind": "civic"
+  },
+  {
+   "i": 110,
+   "name": "S.M. ENTERPRISE",
+   "kind": "commercial"
+  },
+  {
+   "i": 111,
+   "name": "Adinath Temple",
+   "kind": "temple"
+  }
+ ]
+}
