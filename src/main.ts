@@ -50,6 +50,7 @@ import { PowerPlant } from './world/powerPlant';
 import { buildPowerLines } from './world/powerLines';
 import { WindFarm } from './world/windFarm';
 import { Port } from './world/port';
+import { buildLightPools } from './world/lightPools';
 import { MapPanel, type MapActions } from './ui/mapPanel';
 import { setWalls } from './world/walkable';
 import { ambienceAt } from './world/ambience';
@@ -170,6 +171,10 @@ async function main(hud: Hud): Promise<void> {
   scene.add(ships.group);
   const beacons = new Beacons([...plant.lights, ...windFarm.lights, ...port.lights]);
   scene.add(beacons.points);
+  // the light the plant's and the port's lamps throw on their grounds at night
+  const lightPools = buildLightPools([...plant.lights, ...port.lights]);
+  scene.add(lightPools);
+  cullBeyond(lightPools, 4000);
   hud.progress(0.52);
   await nextTask();
   const vegetation = buildVegetation(standing, surfaces.bark, [...fishingClearings(), BRIDGE_CLEARING], bridgeTrees());
