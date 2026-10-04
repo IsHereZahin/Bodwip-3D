@@ -17,10 +17,11 @@ import {
   needleTexture,
   palmFrondTexture,
 } from '../render/textures';
-import { COVER, GRID_H, GRID_W, KIND, LAYERS, LINES, canopyAt, cellCentre, place } from '../geo/data';
+import { COVER, GRID_H, GRID_W, KIND, LAYERS, LINES, canopyAt, cellCentre, kindAt, place } from '../geo/data';
 import {
   BIL,
   CHANNEL_SPAN,
+  GORAKGHATA,
   PONDS,
   VILLAGES,
   VILLAGE_CENTERS,
@@ -731,29 +732,69 @@ export function buildVegetation(
 
   // the two ways up to Adinath temple (D9): the Dighi Road from the town, and the roads from the Adinath jetty;
   // trees close along both sides wherever the canopy map has trees beside them (the homestead's and the hills'
-  // kinds), so the way runs under them
+  // kinds), so the way runs under them. The jetties' own approaches (the long road up from the Adinath jetty
+  // toward Mainak hill, and the way into the town from Gorakghata's) are green on both sides all along: a
+  // roadside row each side, as Bangladesh's roads are planted, the canopy map's gaps or not.
   const temple = place('adinath-temple').world;
   const landing = place('adinath-jetty-land').world;
+  const gorakLanding = place('gorakghata-jetty-land').world;
+  const APPROACH = [
+    { at: landing, reach: 700 },
+    { at: gorakLanding, reach: 400 },
+  ];
   for (const l of LINES) {
     if (l.k !== 'road') continue;
     const p = l.points;
     let near = l.n === 'Dhighi Road';
-    for (let k = 0; k < p.length && !near; k += 2) near = Math.hypot(p[k] - temple.x, p[k + 1] - temple.z) < 70 || Math.hypot(p[k] - landing.x, p[k + 1] - landing.z) < 70;
+    for (let k = 0; k < p.length && !near; k += 2)
+      near = Math.hypot(p[k] - temple.x, p[k + 1] - temple.z) < 70 || APPROACH.some((a) => Math.hypot(p[k] - a.at.x, p[k + 1] - a.at.z) < 70);
     if (!near) continue;
     for (let k = 0; k + 3 < p.length; k += 2) {
       const len = Math.hypot(p[k + 2] - p[k], p[k + 3] - p[k + 1]);
+      if (len < 1e-3) continue;
       for (let d = 0; d < len; d += rng.range(5, 8)) {
         const t = d / len;
         const cx = p[k] + (p[k + 2] - p[k]) * t;
         const cz = p[k + 1] + (p[k + 3] - p[k + 1]) * t;
-        const side = rng.sign();
-        const off = rng.range(3.5, 6.5);
-        const x = cx + ((p[k + 3] - p[k + 1]) / len) * side * off;
-        const z = cz - ((p[k + 2] - p[k]) / len) * side * off;
-        if (canopyAt(x, z).cover < 0.05 || !onDryLand(x, z, 3) || !occ.free(x, z, 2.5)) continue;
-        occ.add(x, z, 2.5);
-        const r = rng.next();
-        put(r < 0.3 ? B.akashmoni : r < 0.55 ? B.mango : r < 0.7 ? B.coconut : r < 0.85 ? B.rain : r < 0.95 ? B.supari : B.date, at(x, z, rng, rng.range(0.9, 1.2)));
+        const approach = APPROACH.some((a) => Math.hypot(cx - a.at.x, cz - a.at.z) < a.reach);
+        for (const side of approach ? [-1, 1] : [rng.sign()]) {
+          const off = rng.range(3.5, 6.5);
+          const x = cx + ((p[k + 3] - p[k + 1]) / len) * side * off;
+          const z = cz - ((p[k + 2] - p[k]) / len) * side * off;
+          if ((!approach && canopyAt(x, z).cover < 0.05) || !onDryLand(x, z, 3) || !occ.free(x, z, 2.5)) continue;
+          occ.add(x, z, 2.5);
+          const r = rng.next();
+          put(r < 0.3 ? B.akashmoni : r < 0.55 ? B.mango : r < 0.7 ? B.coconut : r < 0.85 ? B.rain : r < 0.95 ? B.supari : B.date, at(x, z, rng, rng.range(0.9, 1.2)));
+        }
+      }
+    }
+  }
+
+  // the mangroves the jetties cross: keora and baen on the tidal mud both sides of Gorakghata's pair and of the
+  // Adinath jetty, from near the shore most of the way out; the last stretch to each head stays open water for
+  // the boats, and the jetties' own line stays clear (onLandmark)
+  const g = GORAKGHATA;
+  for (const j of [
+    { ...g.jetty, clear: g.jetty.width + g.newJetty.offset + g.newJetty.width / 2 + 3 },
+    { ...g.adinathJetty, clear: g.adinathJetty.width + 3 },
+  ]) {
+    const ux = (j.toX - j.x) / j.length;
+    const uz = (j.toZ - j.z) / j.length;
+    for (let d = j.length * 0.06; d < j.length * 0.82; d += rng.range(3.5, 5.5)) {
+      for (const side of [-1, 1]) {
+        for (let k = 0; k < 3; k++) {
+          const off = j.clear + rng.range(0, 48) * (k === 0 ? 0.35 : 1);
+          const x = j.x + ux * d - uz * side * off + rng.range(-1.5, 1.5);
+          const z = j.z + uz * d + ux * side * off + rng.range(-1.5, 1.5);
+          const h = terrainHeight(x, z);
+          // on the mud between mean sea level's reach and the spring tides' (≈ −1 m to +2.6 m), the sea's ground
+          const kind = kindAt(x, z);
+          if (h < -1 || h > 2.6 || (kind !== KIND.tidal && kind !== KIND.mangrove) || onLandmark(x, z, 2) || !occ.free(x, z, 2.2)) continue;
+          // in clumps, as they colonise the mud
+          if (fbm(x * 0.03, z * 0.03, 2, 77) < 0.38) continue;
+          occ.add(x, z, 2.2);
+          put(rng.next() < 0.65 ? B.keora : B.baen, { x, y: h - 0.1, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.8, 1.25) });
+        }
       }
     }
   }
