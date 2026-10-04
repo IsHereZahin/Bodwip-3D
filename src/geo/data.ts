@@ -6,6 +6,7 @@
 // in the world x points west and z north (src/geo/project.ts), so a column further east lies at smaller x.
 
 import { MAP_SCALE } from './project';
+import type { Constituent } from './tide';
 
 /** What a cell of ground is (bake.mjs KIND). */
 export const KIND = { land: 0, mangrove: 1, tidal: 2, sea: 3, inland: 4 } as const;
@@ -18,7 +19,7 @@ const MODELLED = 0x80;
 interface Manifest {
   grid: { spacing: number; east0: number; north1: number; width: number; height: number };
   layers: Record<string, { file: string; codes?: Record<string, number> }>;
-  tide: { amplitudeScale: number; lowWater: number };
+  tide: { amplitudeScale: number; lowWater: number; constituents: Record<string, Constituent> };
   attribution: string[];
 }
 
@@ -195,7 +196,7 @@ export function inlandSurfaceAt(x: number, z: number): number | null {
 /** The raw layers, for code that walks the grid itself (cell index = row · GRID_W + column). */
 export const LAYERS = { terrain, kind, level, cover, canopy } as const;
 
-/** Mean low water at the satellite's passes (m, about MSL), and how much the gauge's tide was scaled up. */
+/** Mean low water at the satellite's passes (m, about MSL), how much the gauge's tide was scaled up, and its harmonic constants. */
 export const TIDE_BAKE = data.manifest.tide;
 
 /** The Moheshkhali channel's middle, mouth to Badarkhali, every 20 m of the world: [x, z, west half-width, east half-width]. */

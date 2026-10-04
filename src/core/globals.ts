@@ -1,4 +1,5 @@
 import { Color, Vector2, Vector3, Vector4 } from 'three';
+import type { Texture } from 'three';
 
 /**
  * Uniforms every scene shader shares. Materials hold references to these objects, so a single
@@ -36,14 +37,22 @@ export const G = {
   uWaveDir: { value: new Vector4(0, 0, 1, 0) },
   /** The sea state: x its significant wave height (m), y the length of its main waves (m). */
   uSea: { value: new Vector2(0, 3) },
-  /** Height of the water's surface (m): high in the monsoon, low in the dry season (see env/season.ts). */
+  /** The sea's surface (m about mean sea level): the tide, with the season's mean sea level in it (env/tide.ts). */
   uWaterLevel: { value: 0 },
+  /** The last high water's level (m): the flats below it are still wet. */
+  uTideHigh: { value: 0 },
+  /**
+   * Which water stands where, over the map (world/water.ts levelTexture): r inland water's level, g the sea's
+   * cells, b inland water's; and where the map lies (`uLevelMap`: its west and north edges, 1 / its extent).
+   */
+  tLevel: { value: null as Texture | null },
+  uLevelMap: { value: new Vector4() },
   /**
    * The plane the mirror pass reflects about (m): the level of the water nearest the eye, the sea's or a
    * pond's, the bil's or the khal's (world/water.ts mirrorLevelAt); water at other levels shows the sky.
    */
   uMirrorLevel: { value: 0 },
-  /** How fast the river runs, against its autumn pace. */
+  /** The current, against a spring tide's strongest: positive ebbing toward the sea, negative flooding (main.ts). */
   uFlowScale: { value: 1 },
   /** The season on the land: x leafiness, y dryness, z share of trees in flower, w kash in plume. */
   uSeasonA: { value: new Vector4(0.95, 0.1, 0, 1) },

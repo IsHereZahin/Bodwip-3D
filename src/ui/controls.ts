@@ -215,8 +215,8 @@ export class Controls {
     request.catch((err: unknown) => console.warn('fullscreen:', err));
   }
 
-  /** Mirrors the scene's state; touches the page only where something changed. */
-  update(clock: Clock, camera: CameraChoice, sound: boolean): void {
+  /** Mirrors the scene's state; touches the page only where something changed. `tide`: the tide in words. */
+  update(clock: Clock, camera: CameraChoice, sound: boolean, tide: string): void {
     const l = this.last;
     const minute = Math.floor(clock.hour * 60);
     if (minute !== l.minute) {
@@ -256,7 +256,7 @@ export class Controls {
     const day = clock.dayOfYear;
     const s = seasonIndex(day);
     const d = banglaDate(day);
-    const date = `${bn(d.date)} ${d.month} · ${SEASON_NAMES[s]}`;
+    const date = `${bn(d.date)} ${d.month} · ${SEASON_NAMES[s]} · ${tide}`;
     if (date !== l.date) {
       l.date = date;
       this.bdate.textContent = date;

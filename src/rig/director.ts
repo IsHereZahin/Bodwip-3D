@@ -1,9 +1,8 @@
 import { Vector3 } from 'three';
 import type { PerspectiveCamera } from 'three';
-import { G } from '../core/globals';
 import { clamp, damp, lerp, smoothstep } from '../core/mathx';
 import type { WeatherChoice } from '../env/weather';
-import { terrainHeight } from '../world/geography';
+import { terrainHeight, waterLevelAt } from '../world/geography';
 
 // The film tour's engine: it plays a list of scenes (rig/tour.ts), each a camera move in its own place,
 // season, hour and weather, joined by dissolves. Before a cut the last frame is held; the next scene's
@@ -212,7 +211,7 @@ export class Director {
     scene.pose(e, this.stage, this.pos, this.look);
     this.pos.x += Math.sin(t * 0.37) * 0.05;
     this.pos.y += Math.sin(t * 0.53) * 0.035;
-    this.pos.y = Math.max(this.pos.y, Math.max(terrainHeight(this.pos.x, this.pos.z), G.uWaterLevel.value) + 0.6);
+    this.pos.y = Math.max(this.pos.y, Math.max(terrainHeight(this.pos.x, this.pos.z), waterLevelAt(this.pos.x, this.pos.z)) + 0.6);
     camera.position.copy(this.pos);
     camera.lookAt(this.look);
     camera.updateMatrixWorld();

@@ -16,6 +16,7 @@ import {
   riverX,
   saltPan,
   terrainHeight,
+  waterLevelAt,
 } from '../world/geography';
 import { groundAt } from '../world/terrain';
 import { GHATS } from '../world/village';
@@ -103,7 +104,7 @@ function glide(run: { from: Vector3; to: Vector3 }, side: 1 | -1, height: number
   const from = back ? run.to : run.from;
   const to = back ? run.from : run.to;
   pos.lerpVectors(from, to, u);
-  pos.y = Math.max(terrainHeight(pos.x, pos.z), G.uWaterLevel.value) + height;
+  pos.y = Math.max(terrainHeight(pos.x, pos.z), waterLevelAt(pos.x, pos.z)) + height;
   const dir = tmpA.subVectors(to, from).normalize();
   look.copy(pos).addScaledVector(dir, 45).addScaledVector(tmpB.set(-side, 0, 0), 14);
   look.y = pos.y - height * 0.7;
@@ -322,7 +323,7 @@ export function tourScenes(): Scene[] {
       pose: (u, s, pos, look) => {
         const z = s.boatPos.z - 60 - lerp(0, 6, u);
         const off = edgeHalfWidth(z, 1) + 5;
-        across(z, off, Math.max(terrainHeight(riverX(z) + off, z), G.uWaterLevel.value) + 1.7, pos);
+        across(z, off, Math.max(terrainHeight(riverX(z) + off, z), waterLevelAt(riverX(z) + off, z)) + 1.7, pos);
         look.lerpVectors(across(z + 90, off, onWater(1.4), a), rel(s, 0, 0, 1.2, b), 0.85);
       },
     },
@@ -351,7 +352,7 @@ export function tourScenes(): Scene[] {
       // a crane down over the salt pans: brine, black sheets, white crust, the heaps along the bunds
       pose: (u, _s, pos, look) => {
         pos.lerpVectors(SALT.from, SALT.to, u * 0.5);
-        pos.y = Math.max(terrainHeight(pos.x, pos.z), G.uWaterLevel.value) + lerp(18, 9, u);
+        pos.y = Math.max(terrainHeight(pos.x, pos.z), waterLevelAt(pos.x, pos.z)) + lerp(18, 9, u);
         const dir = tmpA.subVectors(SALT.to, SALT.from).normalize();
         look.copy(pos).addScaledVector(dir, 70);
         look.y = terrainHeight(look.x, look.z);

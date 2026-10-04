@@ -238,7 +238,8 @@ float cropFade = 1.0 - smoothstep(${CROP_REACH.fade.toFixed(1)}, ${CROP_REACH.ed
 /** The rice: its height for the stage (seedling, growing, ripe, stubble), and none where the plot is in mustard or under a deep flood. */
 const RICE = /* glsl */ `
 float cropTall = cropSh.x * 0.28 + cropSh.y * mix(0.55, 0.95, cropGrown) + cropSh.z + cropStubble * 0.17;
-float cropHere = (1.0 - cropSh.w) * cropFade * smoothstep(uWaterLevel - 0.9, uWaterLevel - 0.5, cropRoot.y);
+float cropWater = waterSurface(cropRoot.xz);
+float cropHere = (1.0 - cropSh.w) * cropFade * smoothstep(cropWater - 0.9, cropWater - 0.5, cropRoot.y);
 // leaves: the seedlings' fresh yellow-green, deepening as the crop grows, gold as it ripens, straw once reaped
 vec3 leafC = (cropSh.x * vec3(0.2, 0.36, 0.07) + cropSh.y * mix(vec3(0.11, 0.25, 0.045), vec3(0.06, 0.15, 0.025), cropGrown)
   + cropSh.z * vec3(0.45, 0.32, 0.07) + cropStubble * vec3(0.32, 0.24, 0.11)) / max(1.0 - cropSh.w, 1e-3);

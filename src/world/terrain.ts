@@ -1,11 +1,11 @@
 import { BufferAttribute, BufferGeometry, Group, Mesh, MeshStandardMaterial, type Vector3 } from 'three';
 import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
-import { COVER, GRID_H, GRID_W, LAYERS, fcol, frow } from '../geo/data';
+import { COVER, GRID_H, GRID_W, LAYERS, TIDE_BAKE, fcol, frow } from '../geo/data';
 import { mixRgb, rgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import type { GroundSet } from '../render/surfaces';
-import { WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, bilMarsh, bridgePath, riverX, terrainHeight, villageDistance, waterLevelAt } from './geography';
+import { WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, bilMarsh, bridgePath, riverX, seaWaterAt, terrainHeight, villageDistance, waterLevelAt } from './geography';
 
 // The ground: the baked map's heights (geography.ts terrainHeight) and covers (geo/data.ts), drawn as a
 // quadtree of square patches round the camera, fine near it (≈2 m between vertices) and coarse far off. Each
@@ -113,8 +113,11 @@ function blendedLook(x: number, z: number): ClassLook {
 
 function cover(x: number, z: number, h: number): Cover {
   const look = blendedLook(x, z);
-  const level = waterLevelAt(x, z);
-  // under water (the sea's or a pond's): the bed, darker with depth
+  // under water (the sea's below its low water, whatever the tide; a pond's below its level): the bed, darker
+  // with depth (the flats between the tides keep their mud and sand)
+  const water = seaWaterAt(x, z) ? TIDE_BAKE.lowWater : waterLevelAt(x, z);
+  // (dry ground has none: far below, so the wet band and wet sand below stay off)
+  const level = Number.isFinite(water) ? water : -1e4;
   if (h < level - 0.15) {
     const color = mixRgb(COLORS.bedDeep, COLORS.wetMud, smoothstep(-4, -0.15, h - level));
     return { color, zone: 0, grass: 0, dirt: 0, sand: look.sand, pebbles: 0 };

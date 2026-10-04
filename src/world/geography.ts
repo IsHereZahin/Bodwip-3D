@@ -116,14 +116,36 @@ export function bankInfo(x: number, z: number): BankInfo {
   return { u, side, inland: Math.abs(u) - edgeHalfWidth(z, side) - 3 };
 }
 
+/** Bed deep enough for the boats at the lowest spring tides (m about MSL): ≈1.8 m below MSL, and a draught and a metre more. */
+const LANE_BED = -3.1;
+
 /**
- * The lane small boats keep (and the hero's): off the island's shore, a third of the way out from its
- * low-water line (at least 25 m, at most 110 m), where the water is deep enough at any tide and the
- * island's shore, villages and hills pass close by.
+ * The lane small boats keep (and the hero's), as an offset from the channel's middle at each of its points:
+ * in from the island's low-water line to the first water deep enough at any tide (and a little beyond), so
+ * the island's shore, villages and hills pass close by; where the channel is nowhere that deep, over its
+ * deepest. Smoothed along the channel so the lane bends gently.
  */
+const LANE = (() => {
+  const raw = CH.map(([x, z, west, east]) => {
+    let deepest = 0;
+    let deepestH = Infinity;
+    for (let u = west - 20; u > -east + 20; u -= 4) {
+      const h = heightAt(x + u, z);
+      if (h <= LANE_BED) return Math.max(-east + 20, u - 15);
+      if (h < deepestH) (deepestH = h), (deepest = u);
+    }
+    return deepest;
+  });
+  return Float64Array.from(raw, (_, i) => {
+    let s = 0;
+    let n = 0;
+    for (let j = Math.max(0, i - 6); j <= Math.min(raw.length - 1, i + 6); j++) (s += raw[j]), n++;
+    return s / n;
+  });
+})();
+
 export function riverLane(z: number): number {
-  const west = edgeHalfWidth(z, 1);
-  return west - clamp(west * 0.35, 25, 110);
+  return along(LANE, z);
 }
 
 export function boatLane(z: number): number {
@@ -329,14 +351,17 @@ export function landLevel(x: number, z: number): number {
 }
 
 /**
- * The surface water at (x, z) would stand at: the sea's (and the tide's) level where the water is joined to
- * the Bay, an inland water's own level in a pond, a pan, the bil or the khal. Where neither, the sea's.
+ * The surface of the water standing at (x, z): the sea's (the tide's) where the ground is the sea's (its
+ * water, flats and mangroves), an inland water's own level in a pond, a gher, the bil or the khal; −∞ on dry
+ * ground (a field below high water behind its bund stays dry).
  */
 export function waterLevelAt(x: number, z: number): number {
   const u = x - riverX(z);
   if (nearBil(z, u) && bilReach(z, u) < 1.05) return BIL.level;
   if (khalGap(x, z) < KHAL.half + 1) return BRIDGE.water;
-  return inlandSurfaceAt(x, z) ?? G.uWaterLevel.value;
+  const inland = inlandSurfaceAt(x, z);
+  if (inland !== null) return inland;
+  return seaWaterAt(x, z) ? G.uWaterLevel.value : -Infinity;
 }
 
 /** Whether (x, z) belongs to the sea's water (or the flats and mangroves it floods), rather than inland water or dry land. */

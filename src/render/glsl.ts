@@ -31,6 +31,9 @@ uniform vec4 uWaveC;
 uniform vec4 uWaveDir;
 uniform vec2 uSea;
 uniform float uWaterLevel;
+uniform float uTideHigh;
+uniform sampler2D tLevel;
+uniform vec4 uLevelMap;
 uniform float uMirrorLevel;
 uniform float uFlowScale;
 uniform vec4 uSeasonA;
@@ -123,11 +126,26 @@ vec3 hazeColor(vec3 rd) {
   return uFogColor + uGlow * (0.3 * pow(az, 3.0) + 0.55 * pow(az, 14.0)) + uSunColor * 0.04 * pow(mu, 24.0);
 }
 
-// Seen from above the river, anything under the surface fades into the silty water body with the
+// Which water stands over p (world xz): r inland water's level, g the sea's cells, b inland water's
+// (world/water.ts levelTexture)
+vec3 waterLevels(vec2 p) {
+  return texture2D(tLevel, (uLevelMap.xy - p) * uLevelMap.zw).rgb;
+}
+
+// The surface of the water over p (m): the sea's (the tide) over its cells, an inland water's own over
+// its, and far below the ground where there is none (a field below high water behind its bund stays dry)
+float waterSurface(vec2 p) {
+  vec3 lv = waterLevels(p);
+  return lv.g > 0.5 ? uWaterLevel : lv.b > 0.5 ? lv.r : -1e4;
+}
+
+// Seen from above the water, anything under its surface fades into the silty water body with the
 // length of water the eye looks through it; the surface itself adds only reflection, glitter and foam
 vec3 underwater(vec3 col, vec3 wpos) {
-  if (wpos.y >= uWaterLevel || uReflPass > 0.5 || uCamPos.y <= uWaterLevel) return col;
-  float path = length(wpos - uCamPos) * (uWaterLevel - wpos.y) / (uCamPos.y - wpos.y);
+  if (uReflPass > 0.5) return col;
+  float level = waterSurface(wpos.xz);
+  if (wpos.y >= level || uCamPos.y <= level) return col;
+  float path = length(wpos - uCamPos) * (level - wpos.y) / (uCamPos.y - wpos.y);
   return mix(uWaterBody, col * vec3(0.78, 0.86, 0.72), exp(-path * 2.8));
 }
 

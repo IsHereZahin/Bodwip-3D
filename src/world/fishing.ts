@@ -96,8 +96,8 @@ const SHORE_SOAK = 1.0;
 const SHORE_CLEAR = 2.6;
 const BOAT_SOAK = 0.9;
 const BOAT_CLEAR = 1.5;
-/** The highest the river comes (the monsoon's level); the machans stand clear of it. */
-const HIGH_WATER = 0.6;
+/** The highest the tide comes (a spring high water on the monsoon's mean sea level: env/tide.ts, ≈2.7 m); the machans stand clear of it. */
+const HIGH_WATER = 2.7;
 /** The rope's butt end is at about head height (above the deck) when the net is up. */
 const BUTT_UP = 1.8;
 /** Below this depth of water under it, a bank net is not worth setting. */
@@ -130,6 +130,8 @@ const BOAT_PIVOT = new Vector3(0, 1.15, FISH_HULL.len / 2 - 0.75);
 /** Rode from her stern to the anchor (m); her swing round it (Hz, damping); pitch and roll stiffness (N·m/rad). */
 const RODE = 9;
 const SWING = { f: 0.03, zeta: 0.5 };
+/** How fast a moored boat swings round to lie the other way when the tide turns (rad/s). */
+const TURN_RATE = 0.12;
 const PITCH_STIFF = 228000;
 const ROLL_STIFF = 4000;
 const HEAVE = { f: 1.3, zeta: 0.35 };
@@ -587,19 +589,24 @@ class Mooring {
   private vSwing = 0;
   private heave = 0;
   private vHeave = 0;
+  /** The sea's level at her last update: she rises and falls with the tide as it is. */
+  private level: number;
+  /** Which way she lies from her anchor: 0 down the channel (the ebb carries her), π up it (the flood). */
+  private lie: number;
   private vPitch = 0;
   private vRoll = 0;
   private readonly waves: HullWaves = { heave: 0, along: 0, across: 0 };
 
   constructor(anchor: { x: number; z: number }) {
     this.anchor = anchor;
+    this.lie = G.uFlowScale.value < 0 ? Math.PI : 0;
     this.place(0);
-    this.heave = G.uWaterLevel.value;
+    this.heave = this.level = G.uWaterLevel.value;
   }
 
   private place(t: number): void {
     const [dx, dz] = downstream(this.anchor.z);
-    const a = this.swing + 0.05 * Math.sin(t * 0.047 + this.anchor.z);
+    const a = this.lie + this.swing + 0.05 * Math.sin(t * 0.047 + this.anchor.z);
     const c = Math.cos(a);
     const s = Math.sin(a);
     const ox = dx * c + dz * s;
@@ -619,9 +626,14 @@ class Mooring {
     const w = SWING.f * Math.PI * 2;
     this.vSwing += (-w * w * this.swing - 2 * SWING.zeta * w * this.vSwing + 0.0018 * across) * h;
     this.swing += this.vSwing * h;
+    // the current carries her to lie downstream of her anchor, so she swings round as the tide turns
+    const want = G.uFlowScale.value < 0 ? Math.PI : 0;
+    this.lie += clamp(want - this.lie, -TURN_RATE * h, TURN_RATE * h);
     this.place(t);
     // she floats on the waves as her waterline feels them (see hullWaves)
     const under = hullWaves(this.pos.x, this.pos.z, this.heading, FISH_HULL.len * 0.8, FISH_HULL.beam * 1.7, t, 1, this.waves);
+    this.heave += G.uWaterLevel.value - this.level;
+    this.level = G.uWaterLevel.value;
     const level = G.uWaterLevel.value + under.heave;
     const pitch = -under.along + pitchMoment / PITCH_STIFF;
     const roll = under.across + rollMoment / ROLL_STIFF;
@@ -745,10 +757,10 @@ class NetBoat {
     this.boat.add(this.mount);
     group.add(this.boat);
     this.placeBoat();
-    // the net reaches out ahead of her bow, downstream of the anchor
-    const [dx, dz] = downstream(anchor.z);
+    // the net reaches out ahead of her bow, down the current from the anchor: down the channel on the ebb, up
+    // it on the flood, so the bed is sampled all round the anchor
     const reach = RODE + FISH_HULL.len + BOAT_NET.tip;
-    const bed = bedSampler(anchor.x + dx * reach * 0.6, anchor.z + dz * reach * 0.6, reach * 0.6 + 10);
+    const bed = bedSampler(anchor.x, anchor.z, reach + 10);
     this.net = new LiftNet(BOAT_NET, this.mount, materials, bed, seed);
     this.net.theta = angleFor(BOAT_NET, G.uWaterLevel.value + BOAT_PIVOT.y, -BOAT_SOAK);
     group.add(this.net.group);

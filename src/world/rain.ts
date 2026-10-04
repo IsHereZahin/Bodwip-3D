@@ -38,7 +38,7 @@ void main() {
   float near = length(at - uCamPos);
   // about a pixel wide wherever it is, so near drops are not blots
   vec3 p = at + axis * position.y * 0.42 + side * position.x * 0.0016 * near;
-  vAlpha = uRain * smoothstep(2.0, 4.5, near) * (1.0 - smoothstep(12.0, 22.0, near)) * step(uWaterLevel, y);
+  vAlpha = uRain * smoothstep(2.0, 4.5, near) * (1.0 - smoothstep(12.0, 22.0, near)) * step(waterSurface(at.xz), y);
   // none under an umbrella (the girl's on the bridge): the drops that would fall there have hit it
   vec2 under = at.xz - uShelter.xz + drift * (y - uShelter.y);
   if (y < uShelter.y && dot(under, under) < uShelter.w * uShelter.w) vAlpha = 0.0;

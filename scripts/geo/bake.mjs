@@ -824,7 +824,13 @@ const manifest = {
     canopy: { file: 'canopy.bin', encoding: 'deflate-raw', type: 'uint8 × 2', fields: ['tree height, metres (90th percentile of canopy pixels ≥ 3 m)', 'tree cover, 0..255'], licence: 'CC BY 4.0 (Meta/WRI)' },
   },
   coverKm2: coverage.km2,
-  tide: { source: "Cox's Bazar gauge fit (tide-coxs-bazar.json)", amplitudeScale: TIDE_SCALE, lowWater: terrain.lowWater },
+  tide: {
+    source: "Cox's Bazar gauge fit (tide-coxs-bazar.json), UHSLC h136a",
+    amplitudeScale: TIDE_SCALE,
+    lowWater: terrain.lowWater,
+    // the harmonic constants the scene predicts the tide from (src/env/tide.ts): amplitude m, Greenwich phase lag degrees
+    constituents: JSON.parse(await readFile(at('tide-coxs-bazar.json'), 'utf8')).constituents,
+  },
   areaKm2: terrain.km2,
   licence: 'each layer its own: terrain and kind CC BY-NC-SA 4.0 (from FABDEM V1-2), cover ODbL, canopy CC BY 4.0',
   attribution: [

@@ -259,7 +259,7 @@ function mirrorLevelAt(x: number, z: number): number {
   return G.uWaterLevel.value;
 }
 
-/** GLSL: the water field at p, from the fine one round the camera or the wide one beyond it; and the levels. */
+/** GLSL: the water field at p, from the fine one round the camera or the wide one beyond it (the levels are GLSL_COMMON's waterLevels). */
 const FIELD_GLSL = /* glsl */ `
 vec4 waterField(vec2 p) {
   vec2 f = (p - uField.xy) * uField.zw;
@@ -267,10 +267,6 @@ vec4 waterField(vec2 p) {
   vec4 wide = texture2D(tFieldWide, (p - uFieldWide.xy) * uFieldWide.zw);
   vec2 edge = min(f, 1.0 - f);
   return min(edge.x, edge.y) > 0.01 ? fine : wide;
-}
-// inland water's level (r), the sea's reach (g) and inland water's (b) at p
-vec3 waterLevels(vec2 p) {
-  return texture2D(tLevel, (uLevelMap.xy - p) * uLevelMap.zw).rgb;
 }`;
 
 /** Angular segments of the water's grid; its vertices lie this share of their distance from the camera apart. */
@@ -335,8 +331,6 @@ uniform vec4 uFieldWide;
 uniform vec4 uBoat;
 uniform vec4 uOar;
 uniform vec4 uBounds;
-uniform sampler2D tLevel;
-uniform vec4 uLevelMap;
 uniform float uInland;
 varying vec3 vWorld;
 varying float vWave;
@@ -354,7 +348,7 @@ void main() {
   float depth = max(level - fld.r, 0.0);
   // still water carries a share of the open water's waves, and they die out on the shallows by the shore;
   // a pond's are only ripples
-  float running = max(smoothstep(0.0, 0.2, length(fld.gb) * uFlowScale), fld.a);
+  float running = max(smoothstep(0.0, 0.2, length(fld.gb) * abs(uFlowScale)), fld.a);
   float shoal = smoothstep(0.0, 0.6, depth);
   float h = waveHeightLod(xz, spacing) * mix(${SHELTERED.toFixed(2)}, 1.0, running) * shoal * (uInland > 0.5 ? 0.15 : 1.0);
   vWave = h;
@@ -386,8 +380,6 @@ uniform vec4 uNetB0;     // ... how hard its rim is cutting the surface, how muc
 uniform vec4 uNetA1;     // the next nearest
 uniform vec4 uNetB1;
 uniform vec3 uAmb;
-uniform sampler2D tLevel;
-uniform vec4 uLevelMap;
 uniform float uInland;
 varying vec3 vWorld;
 varying float vWave;
@@ -592,13 +584,6 @@ void main() {
   vec3 light = uAmb + uKeyColor * keyUp * 0.45;
   vec3 col = refl * F;
   float alpha = F;
-  // inland water shows its own murky body: the beds under it are not tinted by underwater(), which knows
-  // only the sea's level
-  if (uInland > 0.5) {
-    float body = (1.0 - exp(-depth * 1.6)) * (1.0 - F);
-    col += uWaterBody * light * 0.55 * body;
-    alpha += body * 0.92;
-  }
 
   // sun (or moon) glitter
   vec3 H = normalize(uKeyDir + V);
@@ -647,7 +632,10 @@ export interface Water {
 export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAnisotropy: number): Water {
   const field = new FineField(0, 0);
   const wide = fieldTexture(FIELD_WIDE);
+  // every shader that asks which water stands where (GLSL_COMMON's waterLevels) reads it through G
   const levels = levelTexture();
+  G.tLevel.value = levels.texture;
+  G.uLevelMap.value.copy(levels.map);
   const boat = new Vector4();
   const oar = new Vector4();
   const swirl = new Vector4(0, 0, 99, 0);
@@ -663,8 +651,6 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
     uField: { value: field.bounds },
     tFieldWide: { value: wide.texture },
     uFieldWide: { value: wide.bounds },
-    tLevel: { value: levels.texture },
-    uLevelMap: { value: levels.map },
     uBoat: { value: boat },
     uOar: { value: oar },
     uSwirl: { value: swirl },

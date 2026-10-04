@@ -1,8 +1,7 @@
 import { PerspectiveCamera, Quaternion, Vector3 } from 'three';
-import { G } from '../core/globals';
 import { angleDelta, clamp, damp, lerp, smoothstep } from '../core/mathx';
 import { BoatBody, type Crew } from '../world/boatPhysics';
-import { BRIDGE, JOURNEY_Z0, JOURNEY_Z1, boatLane, bridgeDeck, bridgeFrame, bridgeSoffit, riverX, terrainHeight } from '../world/geography';
+import { BRIDGE, JOURNEY_Z0, JOURNEY_Z1, boatLane, bridgeDeck, bridgeFrame, bridgeSoffit, riverX, terrainHeight, waterLevelAt } from '../world/geography';
 import { FlyCam } from './flycam';
 
 const laneX = (z: number) => riverX(z) + boatLane(z);
@@ -338,7 +337,7 @@ export class Rig {
     const cp = Math.cos(this.pitch) * this.dist;
     const cam = this.camera.position;
     cam.set(this.target.x + Math.sin(back) * cp, this.target.y + Math.sin(this.pitch) * this.dist, this.target.z + Math.cos(back) * cp);
-    const ground = Math.max(terrainHeight(cam.x, cam.z), G.uWaterLevel.value);
+    const ground = Math.max(terrainHeight(cam.x, cam.z), waterLevelAt(cam.x, cam.z));
     cam.y = Math.max(cam.y, ground + 1.2);
     keepClearOfBridge(cam);
     this.camera.lookAt(this.target);

@@ -335,9 +335,14 @@ ${SPLAT_COLOR}
   }
   // the photo layers' grain, less of it on the smooth pans
   diffuseColor.rgb *= mix(splatDetail, vec3(1.0), panW * 0.7);
-  // the bank darkens and shines where the river has just wet it, the plots where water stands, and
-  // everything after rain
-  atmWet = max(max(smoothstep(uWaterLevel + 0.6, uWaterLevel + 0.05, vAtmWorld.y), plotWater * 0.85), uWet * 0.55);
+  // the ground darkens and shines where the water has wet it: the flats the tide has uncovered since its
+  // last high water, a pond's rim; the plots where water stands; everything after rain
+  vec3 wetLv = waterLevels(vAtmWorld.xz);
+  float tideTop = max(uTideHigh, uWaterLevel);
+  float shore = wetLv.g > 0.5 ? smoothstep(tideTop + 0.35, tideTop - 0.05, vAtmWorld.y) : smoothstep(wetLv.r + 0.6, wetLv.r + 0.05, vAtmWorld.y);
+  atmWet = max(max(shore, plotWater * 0.85), uWet * 0.55);
+  // the mud the tide has just left keeps a film of water that mirrors the sky
+  if (wetLv.g > 0.5) atmBrine = max(atmBrine, shore * smoothstep(uWaterLevel + 0.02, uWaterLevel + 0.3, vAtmWorld.y) * 0.6);
   diffuseColor.rgb *= mix(1.0, 0.55, atmWet);
 }
 #endif
@@ -372,12 +377,13 @@ if (atmBrine > 0.01 && uReflPass < 0.5) {
   outgoingLight = mix(outgoingLight, hazeColor(reflect(-toEye, vec3(0.0, 1.0, 0.0))), clamp(fres * 0.9 + 0.08, 0.0, 1.0) * atmBrine);
 }
 // sunlight focused by the ripples into a moving net of caustics on the shallow bed
-if (vAtmWorld.y < uWaterLevel - 0.02 && uReflPass < 0.5) {
+float causticLevel = waterSurface(vAtmWorld.xz);
+if (vAtmWorld.y < causticLevel - 0.02 && uReflPass < 0.5) {
   vec2 q = vAtmWorld.xz * 0.85;
   float a = vnoise(q + vec2(uTime * 0.31, uTime * 0.17));
   float b = vnoise(q * 1.41 + vec2(-uTime * 0.23, uTime * 0.29) + 4.7);
   float caustic = pow(clamp(1.0 - abs(a - b) * 3.2, 0.0, 1.0), 5.0);
-  outgoingLight += diffuseColor.rgb * uKeyColor * max(uKeyDir.y, 0.0) * caustic * smoothstep(uWaterLevel - 2.2, uWaterLevel - 0.08, vAtmWorld.y) * 1.6;
+  outgoingLight += diffuseColor.rgb * uKeyColor * max(uKeyDir.y, 0.0) * caustic * smoothstep(causticLevel - 2.2, causticLevel - 0.08, vAtmWorld.y) * 1.6;
 }
 #endif
 `;

@@ -17,7 +17,7 @@ import { G, LAYER_NO_REFLECT } from '../core/globals';
 import { Rng } from '../core/rng';
 import { GLSL_COMMON } from '../render/glsl';
 import { patchMaterial } from '../render/patch';
-import { edgeHalfWidth, riverX, terrainHeight } from './geography';
+import { edgeHalfWidth, riverX, terrainHeight, waterLevelAt } from './geography';
 
 // ---------- birds ----------
 
@@ -289,7 +289,7 @@ export class Life {
       const side = this.ffSide[i];
       const x = riverX(z) + side * (edgeHalfWidth(z, side) + 3 + this.ffInland[i]);
       this.ffBase[k] = x;
-      this.ffBase[k + 1] = Math.max(terrainHeight(x, z), G.uWaterLevel.value) + this.ffHeight[i];
+      this.ffBase[k + 1] = Math.max(terrainHeight(x, z), waterLevelAt(x, z)) + this.ffHeight[i];
       this.ffBase[k + 2] = z;
       moved = true;
     }

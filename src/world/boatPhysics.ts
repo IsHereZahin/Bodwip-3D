@@ -116,6 +116,8 @@ export class BoatBody {
   /** Her speed through the water averaged over about a stroke, which is what he judges his pull by. */
   meanSpeed = CRUISE;
   private vHeave = 0;
+  /** The sea's level when she last moved: she rises and falls with the tide as it is, the spring only rides the waves. */
+  private level = Number.NaN;
   /** The wind's push across her now (N, + to starboard), for her heel. */
   private windSide = 0;
   private readonly waves: HullWaves = { heave: 0, along: 0, across: 0 };
@@ -125,6 +127,7 @@ export class BoatBody {
   /** Puts the boat at (x, z) heading along `heading`, already cruising, the water calm under it. */
   place(x: number, z: number, heading: number): void {
     this.pos.set(x, G.uWaterLevel.value, z);
+    this.level = G.uWaterLevel.value;
     this.heading = this.course = heading;
     currentAt(x, z, tmp);
     const cruise = CRUISE;
@@ -209,7 +212,10 @@ export class BoatBody {
     rollTarget += (-MAN_MASS * GRAVITY * crew.x - stroke.side * PUSH_HEIGHT - this.windSide * WINDAGE.height) / ROLL_STIFF;
     rollTarget = MAX_HEEL * Math.tanh(rollTarget / MAX_HEEL);
     pitchTarget += (MAN_MASS * GRAVITY * crew.z) / PITCH_STIFF - 0.003 * ur * ur;
-    // she floats on the season's water, riding the waves on it
+    // she floats on the tide's water, riding the waves on it (a jump of the level, as a film scene sets its
+    // hour, carries her with it rather than leaving her to fall or float up through it)
+    if (Number.isFinite(this.level)) this.pos.y += G.uWaterLevel.value - this.level;
+    this.level = G.uWaterLevel.value;
     [this.pos.y, this.vHeave] = spring(this.pos.y, this.vHeave, G.uWaterLevel.value + mean, HEAVE.f, HEAVE.zeta, dt);
     [this.rotX, this.vRotX] = spring(this.rotX, this.vRotX, pitchTarget, PITCH.f, PITCH.zeta, dt);
     [this.rotZ, this.vRotZ] = spring(this.rotZ, this.vRotZ, rollTarget, ROLL.f, ROLL.zeta, dt);

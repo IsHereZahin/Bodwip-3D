@@ -311,23 +311,27 @@ export function buildVillages(huts: readonly HutPlan[]): Group {
   add(thatchRoofs, thatchMat);
   add(tinRoofs, tinMat);
   add(wood, woodMat);
-  // moored boats rise and fall with the season's water and ride its waves, each rocking as one piece on
-  // the (sheltered) waves under its middle; when the water drops they settle on the mud by the bank
+  // moored boats rise and fall with the tide and ride its waves, each rocking as one piece on
+  // the (sheltered) waves under its middle; when it leaves them they settle on the mud by the bank
   const boats = afloat.build();
-  const middles = new Float32Array(boats.getAttribute('position').count * 2);
-  for (const m of moorings) for (let i = m.from; i < m.to; i++) middles.set([m.x, m.z], i * 2);
-  boats.setAttribute('aMoor', new BufferAttribute(middles, 2));
+  // each boat's middle, and the height she rests at on the mud when the tide leaves her (her keel on the bed)
+  const middles = new Float32Array(boats.getAttribute('position').count * 3);
+  for (const m of moorings) {
+    const rest = terrainHeight(m.x, m.z) + 0.15;
+    for (let i = m.from; i < m.to; i++) middles.set([m.x, m.z, rest], i * 3);
+  }
+  boats.setAttribute('aMoor', new BufferAttribute(middles, 3));
   const moored = new Mesh(
     boats,
     patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), {
       grime: 0.35,
       vertex: {
         key: 'moored',
-        pars: `attribute vec2 aMoor;\n${waveHeightGlsl()}\n${waveSlopeGlsl()}\n`,
+        pars: `attribute vec3 aMoor;\n${waveHeightGlsl()}\n${waveSlopeGlsl()}\n`,
         code: `{
-  float afloatK = step(-0.25, uWaterLevel);
-  vec2 tilt = waveSlope(aMoor) * ${SHELTERED.toFixed(2)};
-  transformed.y += max(uWaterLevel, -0.25) + afloatK * (waveHeight(aMoor) * ${SHELTERED.toFixed(2)} + dot(tilt, transformed.xz - aMoor));
+  float afloatK = step(aMoor.z, uWaterLevel);
+  vec2 tilt = waveSlope(aMoor.xy) * ${SHELTERED.toFixed(2)};
+  transformed.y += max(uWaterLevel, aMoor.z) + afloatK * (waveHeight(aMoor.xy) * ${SHELTERED.toFixed(2)} + dot(tilt, transformed.xz - aMoor.xy));
 }`,
       },
     }),

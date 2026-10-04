@@ -7,6 +7,7 @@ import type { SkyEvent, SkyEventKind } from './env/clock';
 import { Environment } from './env/environment';
 import { YEAR, applySeason, dayOfYear, makeSeasonState, moonAgeOn, seasonAt, seasonIndex, seasonMiddle } from './env/season';
 import { setSunDay } from './env/astro';
+import { Tide } from './env/tide';
 import { Weather, type WeatherChoice } from './env/weather';
 import { Wind } from './env/wind';
 import { Pipeline } from './render/pipeline';
@@ -16,7 +17,7 @@ import { Director, type Stage } from './rig/director';
 import { tourScenes } from './rig/tour';
 import { Rig, VIEWS } from './rig/rig';
 import type { ViewName } from './rig/rig';
-import { EVENT_NOW, clockLabel } from './ui/bangla';
+import { EVENT_NOW, clockLabel, tideLabel } from './ui/bangla';
 import { Controls } from './ui/controls';
 import { WEATHER_PICKS } from './ui/controls';
 import type { CameraChoice, WeatherPick } from './ui/controls';
@@ -52,8 +53,10 @@ const START_HOUR = 17.5;
 const OPENING_BEFORE_SUNSET = 0.7;
 /** The opening minutes stay clear whatever the season (s); then its weather comes. */
 const OPENING_CLEAR_SECONDS = 300;
-/** How fast the river rises or falls toward the season's level when the season is changed (m/s). */
-const LEVEL_RATE = 0.25;
+/** How fast the sea's level may move (m/s): a jump of the tide (a picked moon or season) eases in rather than popping. */
+const TIDE_EASE = 1;
+/** How much each unit of the season's runoff adds to the ebb, as a share of a spring tide's strongest current. */
+const RUNOFF = 0.15;
 /** A chosen season comes on as the year turns to it over this many seconds; a chosen moon waxes or wanes to its phase over this many. */
 const YEAR_TURN_SECONDS = 6;
 const MOON_TURN_SECONDS = 4;
@@ -164,6 +167,7 @@ async function main(hud: Hud): Promise<void> {
   // the moon as it really is: from the day's moon at the start, going on with the clock's days
   const naturalMoon = { age: clock.moonAge, time: clock.time };
   const season = makeSeasonState();
+  const tide = new Tide();
   const weather = new Weather();
   weather.clearUntil = OPENING_CLEAR_SECONDS;
   const wind = new Wind();
@@ -566,9 +570,12 @@ async function main(hud: Hud): Promise<void> {
     G.uWet.value = weather.wet;
     G.uRain.value = weather.rain;
     rain.visible = weather.rain > 0.003;
-    // the river rises and falls toward the season's level rather than jumping
+    // the sea's level and current from the tide, for the day and the moon shown
+    tide.update(shownDay(), shownMoon());
     const level = G.uWaterLevel.value;
-    G.uWaterLevel.value = settle ? season.water : level + clamp(season.water - level, -LEVEL_RATE * dt, LEVEL_RATE * dt);
+    G.uWaterLevel.value = settle ? tide.level : level + clamp(tide.level - level, -TIDE_EASE * dt, TIDE_EASE * dt);
+    G.uTideHigh.value = tide.high;
+    G.uFlowScale.value = tide.flow + RUNOFF * season.flow;
     water.mesh.position.y = G.uWaterLevel.value;
     // the clouds drift on the wind
     const w = G.uWind.value;
@@ -653,7 +660,7 @@ async function main(hud: Hud): Promise<void> {
       dissolve: director.dissolve,
     });
     hud.setCaption(director.caption, director.captionAlpha, pipeline.bar);
-    controls.update(clock, director.active ? 'film' : rig.mode, soundOn);
+    controls.update(clock, director.active ? 'film' : rig.mode, soundOn, tideLabel(tide.flow, tide.level));
 
     // adaptive resolution: hold ~45–60 fps by trading pixels, never below 60% scale
     perf.frames++;
@@ -829,6 +836,7 @@ async function main(hud: Hud): Promise<void> {
             moon: r(shownMoon()),
             crops: G.uCrops.value.toArray().map((v) => r(v)),
             level: r(G.uWaterLevel.value),
+            tide: { flow: r(tide.flow), high: r(tide.high), rising: tide.rate > 0, at: new Date(tide.instant(shownDay(), shownMoon())).toISOString() },
             rain: r(weather.rain),
             cloud: r(weather.cloud),
             wind: r(G.uWind.value.z),
