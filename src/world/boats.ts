@@ -142,15 +142,21 @@ export class RiverTraffic {
   }
 
   update(dt: number, t: number, heroZ: number): void {
+    // their lanes beside the river's own, squeezed in where the river narrows
+    const laneAt = (z: number, lane: number) => {
+      const room = halfWidth(z) - 14;
+      return riverX(z) + room * Math.tanh((riverLane(z) + lane) / room);
+    };
     for (const v of this.vessels) {
-      v.z += v.speed * dt;
+      // along the river, not down the map: where the compact map turns its bends across the map, a metre of
+      // way is less than a metre of z
+      const slope = (laneAt(v.z + 2, v.lane) - laneAt(v.z - 2, v.lane)) / 4;
+      v.z += (v.speed * dt) / Math.hypot(1, slope);
       // the camera looks downstream (−z): anything that slips behind it reappears far ahead in the haze
       if (v.z > heroZ + 240 || v.z < heroZ - 2200) v.z = heroZ - this.rng.range(900, 1700);
       const [dx, dz] = downstream(v.z);
       const heading = Math.atan2(dx, dz) + (v.speed > 0 ? Math.PI : 0);
-      // their lanes beside the river's own, squeezed in where the river narrows
-      const room = halfWidth(v.z) - 14;
-      const x = riverX(v.z) + room * Math.tanh((riverLane(v.z) + v.lane) / room);
+      const x = laneAt(v.z, v.lane);
       // afloat on the season's water, riding the shared waves as her waterline feels them (see hullWaves),
       // a beat behind them as a floating body is; the wind heels her over its gusts (a sail far more than a
       // dinghy)
