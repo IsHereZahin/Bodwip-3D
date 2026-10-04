@@ -1,5 +1,7 @@
 import { G } from '../core/globals';
 import { WIND_MS } from '../env/wind';
+import { exposureAt } from './exposure';
+import { terrainHeight } from './geography';
 
 // The river's surface, one definition for everything that floats on it (the boats' buoyancy, the plants'
 // bobbing, the nets) and, through the GLSL twins, for the water itself: its surface rises and falls with
@@ -19,8 +21,13 @@ import { WIND_MS } from '../env/wind';
 // Heights are in metres.
 
 const GRAVITY = 9.81;
-/** The fetch the wind has over the river to raise its waves (m): a long reach of a broad river. */
+/** The fetch the wind has over the channel to raise its waves (m): a long reach of a broad river. */
 const FETCH = 5000;
+/**
+ * How much higher the wind's waves stand out on the open Bay than in the channel (its fetch there is tens of
+ * kilometres: fetch-limited height grows as its square root) [মডেল: no fetch map yet].
+ */
+export const OPEN_SEA = 1.2;
 /** No wave's greatest slope (a·k) goes past this: they break first. */
 const STEEPEST = 0.15;
 /** The four quarters the sets run toward (rad, in the wind's own sense: x = sin, z = cos). */
@@ -136,14 +143,21 @@ export function updateSea(dt: number, wind: number, gusts: number, rain: number,
 /** Wave `v`'s amplitude now, in its set. */
 const ampNow = (v: Wave) => amps[v.shape] * quarters[v.set];
 
-/** Surface height above the still water line at (x, z), time t; `shelter` scales it for still water (see SHELTERED). */
+/**
+ * Surface height above the still water line at (x, z), time t; `shelter` scales the wind's waves for still
+ * water (see SHELTERED). Out toward the Bay the wind's waves are higher (its fetch is longer) and the swell
+ * comes in.
+ */
 export function waveHeight(x: number, z: number, t: number, shelter = 1): number {
   let h = 0;
   for (const v of WAVES) {
     const a = ampNow(v);
     if (a > 0) h += a * Math.sin(v.k * (v.dx * x + v.dz * z) - v.w * t + v.phase);
   }
-  return h * shelter;
+  const open = exposureAt(x, z);
+  h *= shelter * (1 + OPEN_SEA * open);
+  if (open > 0.002) h += swellRaw(x, z, t) * swellFactor(x, z);
+  return h;
 }
 
 /** Surface slope (dh/dx, dh/dz) at (x, z), time t, scaled as waveHeight. */
@@ -197,7 +211,107 @@ export function hullWaves(x: number, z: number, heading: number, len: number, be
     out.along += amp * a * Math.cos(phase) * slopeFit((a * len) / 2) * sb;
     out.across += amp * b * Math.cos(phase) * slopeFit((b * beam) / 2) * sa;
   }
+  // out toward the Bay: the wind's waves higher, and the swell (long enough to lift and tilt any hull whole)
+  const open = exposureAt(x, z);
+  if (open > 0.002) {
+    const k = 1 + OPEN_SEA * open;
+    out.heave *= k;
+    out.along *= k;
+    out.across *= k;
+    const s = swellFactor(x, z);
+    if (s > 0) {
+      out.heave += swellRaw(x, z, t) * s;
+      SWELL_WAVES.forEach((v, i) => {
+        const c = swellAmps[i] * s * v.k * Math.cos(v.k * (v.dx * x + v.dz * z) - v.w * t + v.phase);
+        out.along += c * (v.dx * fx + v.dz * fz);
+        out.across += c * (v.dx * fz - v.dz * fx);
+      });
+    }
+  }
   return out;
+}
+
+// ---------- the Bay's swell ----------
+//
+// Long waves raised by far-off weather over the Bay (GEOGRAPHY_PLAN.md §8.7: 64 % from the south, 14 % SSW,
+// 13 % SSE, mostly 7–10 s), as high as the season has them (season.ts `swell`). Each point of the sea's water
+// gets them as far as it is open to the Bay (world/exposure.ts); over the shallows they rise (Green's law,
+// H ∝ d^−¼) until they break, a wave being no higher than 0.78 of the depth, and the surf foams there.
+
+/** The three trains: the way each runs (rad, x = sin, z = cos: 0 toward the north), period (s), share of the height. */
+const SWELL: readonly (readonly [number, number, number])[] = [
+  [0, 8.5, 0.8],
+  [-0.39, 7.5, 0.4],
+  [0.39, 9.5, 0.4],
+];
+const SWELL_WAVES = SWELL.map(([toward, period], i) => {
+  const w = (Math.PI * 2) / period;
+  const k = (w * w) / GRAVITY;
+  return { dx: Math.sin(toward), dz: Math.cos(toward), k, w, phase: 1.3 + i * 2.1 };
+});
+const SWELL_NORM = Math.hypot(...SWELL.map(([, , share]) => share));
+/** Each train's amplitude now (m), and their sum. */
+const swellAmps = new Float32Array(3);
+
+/** Sets the swell's significant height (m) at the coast, outside the breakers. */
+export function setSwell(height: number): void {
+  let sum = 0;
+  SWELL.forEach(([, , share], i) => {
+    swellAmps[i] = (height / (2 * Math.SQRT2)) * (share / SWELL_NORM);
+    sum += swellAmps[i];
+  });
+  G.uSwell.value.set(swellAmps[0], swellAmps[1], swellAmps[2], sum);
+}
+
+/** Depth (m) the swell's growth over the shallows is reckoned from. */
+const SHOAL_REF = 10;
+
+/**
+ * How much of the swell stands at (x, z), as a share of the open Bay's: its exposure, raised over the
+ * shallows, and no more than the depth lets a wave stand before it breaks. 0 on inland water and dry ground.
+ */
+export function swellFactor(x: number, z: number): number {
+  const exposure = exposureAt(x, z);
+  if (exposure < 0.002 || G.uSwell.value.w <= 0) return 0;
+  const depth = G.uWaterLevel.value - terrainHeight(x, z);
+  if (depth <= 0.05) return 0;
+  const shoal = Math.min(1.6, Math.max(1, (SHOAL_REF / Math.max(depth, 0.5)) ** 0.25));
+  return Math.min(exposure * shoal, (0.39 * depth) / G.uSwell.value.w);
+}
+
+/** The swell's height at (x, z), time t, before its factor there. */
+function swellRaw(x: number, z: number, t: number): number {
+  let h = 0;
+  SWELL_WAVES.forEach((v, i) => (h += swellAmps[i] * Math.sin(v.k * (v.dx * x + v.dz * z) - v.w * t + v.phase)));
+  return h;
+}
+
+/** GLSL: the swell's height and slope at p (before its factor there: swellFactor), and that factor from the water's exposure and depth. */
+export function swellGlsl(): string {
+  const terms = (body: (v: (typeof SWELL_WAVES)[number], i: number) => string) => SWELL_WAVES.map(body).join('\n');
+  const phase = (v: (typeof SWELL_WAVES)[number]) => `${f(v.k)} * dot(p, vec2(${f(v.dx)}, ${f(v.dz)})) - ${f(v.w)} * uTime + ${f(v.phase)}`;
+  return /* glsl */ `
+float swellHeight(vec2 p) {
+  float h = 0.0;
+${terms((v, i) => `  h += uSwell.${'xyz'[i]} * sin(${phase(v)});`)}
+  return h;
+}
+vec2 swellSlope(vec2 p) {
+  vec2 s = vec2(0.0);
+${terms((v, i) => `  s += uSwell.${'xyz'[i]} * ${f(v.k)} * cos(${phase(v)}) * vec2(${f(v.dx)}, ${f(v.dz)});`)}
+  return s;
+}
+float swellFactor(float exposure, float depth) {
+  if (exposure < 0.002 || uSwell.w <= 0.0 || depth <= 0.05) return 0.0;
+  float shoal = clamp(pow(${SHOAL_REF.toFixed(1)} / max(depth, 0.5), 0.25), 1.0, 1.6);
+  return min(exposure * shoal, 0.39 * depth / uSwell.w);
+}
+// how hard the swell is breaking at a point (0..1): as near as its uncapped height comes to the depth's limit
+float swellBreaking(float exposure, float depth) {
+  if (exposure < 0.002 || uSwell.w <= 0.0) return 0.0;
+  float shoal = clamp(pow(${SHOAL_REF.toFixed(1)} / max(depth, 0.5), 0.25), 1.0, 1.6);
+  return smoothstep(0.6, 1.05, exposure * shoal * uSwell.w / max(0.39 * depth, 1e-3));
+}`;
 }
 
 /** Still water (khals, the bil, the slack by the banks) is sheltered: its waves are this share of the river's. */

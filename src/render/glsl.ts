@@ -30,6 +30,7 @@ uniform vec4 uWaveB;
 uniform vec4 uWaveC;
 uniform vec4 uWaveDir;
 uniform vec2 uSea;
+uniform vec4 uSwell;
 uniform float uWaterLevel;
 uniform float uTideHigh;
 uniform sampler2D tLevel;
@@ -130,6 +131,11 @@ vec3 hazeColor(vec3 rd) {
 // (world/water.ts levelTexture)
 vec3 waterLevels(vec2 p) {
   return texture2D(tLevel, (uLevelMap.xy - p) * uLevelMap.zw).rgb;
+}
+
+// How open the sea's water at p is to the Bay's swell (world/exposure.ts): 1 on the open sea, 0 up the creeks
+float seaExposure(vec2 p) {
+  return texture2D(tLevel, (uLevelMap.xy - p) * uLevelMap.zw).a;
 }
 
 // The surface of the water over p (m): the sea's (the tide) over its cells, an inland water's own over

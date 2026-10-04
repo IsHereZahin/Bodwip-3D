@@ -38,6 +38,8 @@ const PASS_UTC_HOUR = 4;
 const KIND = { land: 0, mangrove: 1, tidal: 2, sea: 3, inland: 4 };
 /** Open water that may be a river or creek of the sea, decided by the flood fill (never written out). */
 const CHANNEL = 5;
+/** Bare ground the tide reaches, its height measured (bakeTerrain 2b); baked as tidal. */
+const BARE_TIDAL = 6;
 const MODELLED = 0x80;
 /** Inland water on ground rising more than this (m) across the 3 × 3 cells round it is ground (bakeTerrain). */
 const INLAND_SLOPE = 3;
@@ -215,6 +217,8 @@ async function bakeTerrain() {
   const dem = new Float32Array(W * H);
   const occ = new Uint8Array(W * H);
   const deep = new Float32Array(W * H);
+  /** WorldCover's class under each cell. */
+  const cls = new Uint8Array(W * H);
   // 1. what each cell is, and its height where the DEMs measured it
   for (let r = 0; r < H; r++) {
     const north = g.north1 - (r + 0.5) * SPACING;
@@ -229,6 +233,7 @@ async function bakeTerrain() {
       occ[i] = o === null || o > 100 ? 0 : o;
       deep[i] = gebco(lat, lon) ?? 0;
       const wc = worldcover(lat, lon);
+      cls[i] = wc ?? 0;
       if (occ[i] >= 90) kind[i] = KIND.sea;
       else if (wc === 95 || gmw(lat, lon) === 1) kind[i] = KIND.mangrove;
       // Murray et al. map tidal wetland (flats, marsh) directly; JRC's wetness alone cannot tell a tidal flat
@@ -270,6 +275,24 @@ async function bakeTerrain() {
     if (kind[i] === CHANNEL) kind[i] = joined[i] ? KIND.sea : KIND.inland;
     else if (wet(i) && !joined[i]) kind[i] = KIND.inland;
   }
+  // 2b. the bare ground the tide reaches: a beach's lower sand, a bare flat Murray's map leaves out. From the
+  // sea's water and flats, through open ground (WorldCover's bare, water or wetland: not the fields, which lie
+  // behind their bunds) below the spring tides' high water, it is a tidal flat with the height the DEM measured.
+  const intertidal = (i) => kind[i] === KIND.land && dem[i] < highWaterSprings && (cls[i] === 60 || cls[i] === 80 || cls[i] === 90);
+  head = 0;
+  tail = 0;
+  for (let i = 0; i < W * H; i++) if (joined[i] && (kind[i] === KIND.sea || kind[i] === KIND.tidal || kind[i] === KIND.mangrove)) queue[tail++] = i;
+  const reached = new Uint8Array(W * H);
+  while (head < tail) {
+    const i = queue[head++];
+    const c = i % W;
+    for (const j of [i - W, i + W, c > 0 ? i - 1 : -1, c < W - 1 ? i + 1 : -1]) {
+      if (j < 0 || j >= W * H || reached[j] || !intertidal(j)) continue;
+      reached[j] = 1;
+      queue[tail++] = j;
+    }
+  }
+  for (let i = 0; i < W * H; i++) if (reached[i]) kind[i] = BARE_TIDAL;
   // 3. heights
   const seaCells = new Uint8Array(W * H);
   for (let i = 0; i < W * H; i++) seaCells[i] = kind[i] === KIND.sea ? 1 : 0;
@@ -277,6 +300,10 @@ async function bakeTerrain() {
   for (let i = 0; i < W * H; i++) {
     switch (kind[i]) {
       case KIND.land:
+        height[i] = dem[i];
+        break;
+      case BARE_TIDAL:
+        kind[i] = KIND.tidal;
         height[i] = dem[i];
         break;
       case KIND.mangrove:

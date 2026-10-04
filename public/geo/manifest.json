@@ -108,7 +108,7 @@
         "commercial": 7,
         "industrial": 8
       },
-      "count": 11145,
+      "count": 11123,
       "names": "buildings.json",
       "note": "a ninth of the ordinary buildings (by a hash of their id) and every one OSM names or tags as more than a house, kept clear of each other on the 1:3 map; OSM's footprints, and Microsoft's where OSM has none",
       "licence": "ODbL (OpenStreetMap; Microsoft Global ML Building Footprints)"
@@ -126,16 +126,16 @@
   },
   "coverKm2": {
     "water": 681.6,
-    "mud": 32.5,
-    "sand": 16.8,
-    "tree": 186.4,
-    "crop": 185.6,
-    "grass": 22.5,
-    "bare": 13.3,
+    "mud": 35.4,
+    "sand": 17,
+    "tree": 186.3,
+    "crop": 185.5,
+    "grass": 22.4,
+    "bare": 11.2,
     "pond": 88.3,
-    "saltpan": 124.4,
+    "saltpan": 124,
     "built": 11.8,
-    "marsh": 10,
+    "marsh": 9.4,
     "mangrove": 66.1,
     "shrub": 0
   },
@@ -208,8 +208,8 @@
   },
   "areaKm2": {
     "sea": 681.6,
-    "tidal": 35.9,
-    "land": 567.3,
+    "tidal": 42.8,
+    "land": 560.4,
     "inland": 88.3,
     "mangrove": 66
   },

@@ -35,6 +35,8 @@ export const G = {
   uWaveC: { value: new Vector4() },
   /** How much of each quarter's wave set is running (x toward +z, y +x, z −z, w −x): the waves run with the wind. */
   uWaveDir: { value: new Vector4(0, 0, 1, 0) },
+  /** The Bay's swell (world/waves.ts): its three trains' amplitudes (m), and w their sum (a crest's height). */
+  uSwell: { value: new Vector4() },
   /** The sea state: x its significant wave height (m), y the length of its main waves (m). */
   uSea: { value: new Vector2(0, 3) },
   /** The sea's surface (m about mean sea level): the tide, with the season's mean sea level in it (env/tide.ts). */

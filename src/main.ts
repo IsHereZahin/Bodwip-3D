@@ -28,7 +28,9 @@ import { buildSaltWorks } from './world/coast';
 import { RiverTraffic } from './world/boats';
 import { JOURNEY_Z0, JOURNEY_Z1, WETLANDS, terrainHeight } from './world/geography';
 import { Drift } from './world/drift';
-import { sea, updateSea } from './world/waves';
+import { sea, setSwell, swellFactor, updateSea } from './world/waves';
+import { exposureAt } from './world/exposure';
+import { coverAt, kindAt } from './geo/data';
 import { Fishing, fishingClearings } from './world/fishing';
 import { HeroBoat } from './world/hero';
 import { Life } from './world/life';
@@ -37,6 +39,7 @@ import { Meadow } from './world/meadow';
 import { buildPondLife } from './world/ponds';
 import { buildRain } from './world/rain';
 import { buildRoads } from './world/roads';
+import { Crabs } from './world/crabs';
 import { BRIDGE_CLEARING, bridgeTrees, buildBridge } from './world/bridge';
 import { Girl } from './world/girl';
 import { buildMoheshkhali } from './world/moheshkhali';
@@ -172,6 +175,8 @@ async function main(hud: Hud): Promise<void> {
   scene.add(traffic.group);
   const life = new Life();
   scene.add(life.group);
+  const crabs = new Crabs();
+  scene.add(crabs.group);
   const today = new Date();
   const clock = new Clock(START_HOUR, moonAgeOn(today), dayOfYear(today));
   // golden hour whatever the time of year: winter's sun is down well before half past five
@@ -580,6 +585,8 @@ async function main(hud: Hud): Promise<void> {
     });
     // the waves the wind and the rain raise: the boats, the floating plants and the water all ride them
     updateSea(ease, G.uWind.value.z, G.uWind.value.w, weather.rain, settle);
+    // the Bay's swell, as the season has it, a little higher under a strong wind
+    setSwell(season.swell * (0.8 + 0.2 * Math.min(2, G.uWind.value.z)));
     G.uWet.value = weather.wet;
     G.uRain.value = weather.rain;
     rain.visible = weather.rain > 0.003;
@@ -626,6 +633,8 @@ async function main(hud: Hud): Promise<void> {
     perf.fishMs += (performance.now() - fishStart - perf.fishMs) * 0.1;
     // birds and fireflies gather round whoever is being watched: the boat, or the free camera
     life.update(dt, t, director.active ? director.focus : rig.subject, director.active ? rig.boat.course : rig.subjectHeading, env.night, weather.rain);
+    // the beach's crabs round the camera (none away from the beaches); nobody else walks there yet
+    crabs.update(dt, camera.position, [], weather.rain);
     sky.mesh.position.copy(camera.position);
     terrain.update(camera.position);
     water.update(camera.position.x, camera.position.z);
@@ -845,6 +854,15 @@ async function main(hud: Hud): Promise<void> {
             e.tris += tris * n;
           });
           return Object.fromEntries(Object.entries(out).sort((a, b) => b[1].tris - a[1].tris).slice(0, 40));
+        },
+        /** The sea at (x, z): how open it is to the Bay, the ground and the depth now, the share of the swell standing there, the swell's crest (m), and the map's cover and kind. */
+        seaAt(x: number, z: number) {
+          const r = (v: number) => Math.round(v * 1000) / 1000;
+          return { exposure: r(exposureAt(x, z)), ground: r(terrainHeight(x, z)), depth: r(G.uWaterLevel.value - terrainHeight(x, z)), swell: r(swellFactor(x, z)), crest: r(G.uSwell.value.w), cover: coverAt(x, z), kind: kindAt(x, z) };
+        },
+        /** How many crab burrows and crabs are made round the camera, and how many crabs are out. */
+        crabs() {
+          return crabs.counts;
         },
         /** Hides every object with this name (debugging what draws where). */
         hide(name: string) {

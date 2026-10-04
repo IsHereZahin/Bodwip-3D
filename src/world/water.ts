@@ -24,7 +24,8 @@ import { periodicNoise } from '../core/noise';
 import { GLSL_COMMON } from '../render/glsl';
 import { HERO_HULL, HERO_SINK, hullWaterlineGlsl } from './hull';
 import { wakeGlsl } from './wake';
-import { SHELTERED, waveHeightLodGlsl, waveSlopeGlsl } from './waves';
+import { OPEN_SEA, SHELTERED, swellGlsl, waveHeightLodGlsl, waveSlopeGlsl } from './waves';
+import { EXPOSURE } from './exposure';
 import { GRID_H, GRID_W, KIND, LAYERS, WORLD } from '../geo/data';
 import { BIL, WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, downstream, eachWaterwayPoint, edgeHalfWidth, halfWidth, inlandWaterAt, riverX, seaWaterAt, streamSpeed, terrainHeight, waterLevelAt } from './geography';
 
@@ -176,7 +177,7 @@ const LEVEL_SPREAD = 6;
 /**
  * Inland water's level and where each water lies, over the map at its own 10 m cells: r the surface of a pond,
  * a pan, the bil or the khal; g 1 where the water is the sea's (the channel, the creeks, the flats and
- * mangroves it floods); b 1 where it is inland water. Round inland water r carries the nearest water's level
+ * mangroves it floods); b 1 where it is inland water; a how open the sea's water is to the Bay's swell (exposure.ts). Round inland water r carries the nearest water's level
  * on for LEVEL_SPREAD cells, so the water grid's vertices beside a pond stand at its level and the pond's
  * edge is cut by the ground, not by the grid; farther off r lies well under the ground.
  */
@@ -231,6 +232,7 @@ function levelTexture(): { texture: DataTexture; map: Vector4 } {
     data[i * 4] = DataUtils.toHalfFloat(surface[i]);
     data[i * 4 + 1] = DataUtils.toHalfFloat(sea[i]);
     data[i * 4 + 2] = DataUtils.toHalfFloat(inland[i]);
+    data[i * 4 + 3] = DataUtils.toHalfFloat(sea[i] ? EXPOSURE[i] : 0);
   }
   const texture = new DataTexture(data, GRID_W, GRID_H, RGBAFormat, HalfFloatType);
   texture.minFilter = texture.magFilter = LinearFilter;
@@ -335,6 +337,7 @@ varying float vWave;
 ${FIELD_GLSL}
 ${waveHeightLodGlsl()}
 ${wakeGlsl()}
+${swellGlsl()}
 void main() {
   // the grid round the camera, laid on the world and kept to the water's extent
   vec2 local = position.xz;
@@ -349,6 +352,12 @@ void main() {
   float running = max(smoothstep(0.0, 0.2, length(fld.gb) * abs(uFlowScale)), fld.a);
   float shoal = smoothstep(0.0, 0.6, depth);
   float h = waveHeightLod(xz, spacing) * mix(${SHELTERED.toFixed(2)}, 1.0, running) * shoal * (uInland > 0.5 ? 0.15 : 1.0);
+  // toward the open Bay the wind's waves stand higher, and the swell rolls in, rising over the shallows
+  if (uInland < 0.5) {
+    float open = seaExposure(xz);
+    h *= 1.0 + ${OPEN_SEA.toFixed(2)} * open;
+    h += swellHeight(xz) * swellFactor(open, depth);
+  }
   vWave = h;
   // the water the boat pushes aside
   vec2 bd = xz - uBoat.xy;
@@ -386,6 +395,7 @@ ${FIELD_GLSL}
 ${hullWaterlineGlsl(HERO_HULL, HERO_SINK)}
 ${waveSlopeGlsl()}
 ${wakeGlsl()}
+${swellGlsl()}
 
 vec2 ripple(vec2 uv) { return texture2D(tNormal, uv).xy * 2.0 - 1.0; }
 
@@ -497,6 +507,17 @@ void main() {
   // darken and roughen the water (cat's paws)
   float shoal = smoothstep(0.0, 0.6, depth);
   slope += waveSlope(wp.xz) * mix(${SHELTERED.toFixed(2)}, 1.0, running) * shoal;
+  // toward the open Bay: the wind's waves higher, the swell, and where it breaks over the shallows the surf
+  float open = uInland > 0.5 ? 0.0 : seaExposure(wp.xz);
+  float surf = 0.0;
+  if (open > 0.002) {
+    slope *= 1.0 + ${OPEN_SEA.toFixed(2)} * open;
+    float sf = swellFactor(open, depth);
+    slope += swellSlope(wp.xz) * sf;
+    // white water on the faces of the breaking crests, and a ragged band of it left behind them
+    float swellCrest = swellHeight(wp.xz) / max(uSwell.w, 1e-3);
+    surf = swellBreaking(open, depth) * (smoothstep(0.1, 0.7, swellCrest) * 0.9 + 0.35 * smoothstep(0.4, 0.75, vnoise(wp.xz * 0.6 + vec2(uTime * 0.3, -uTime * 0.2))));
+  }
   slope += nB * 0.1 * uWind.z * max(windGust(wp.xz) - 1.0, 0.0) * far;
   // rain: every drop rings the surface (the chop it raises comes with the waves above)
   if (uRain > 0.01) slope += rainRings(wp.xz) * uRain * far;
@@ -597,6 +618,11 @@ void main() {
   float fA = clamp(foam, 0.0, 1.0) * 0.55;
   col = col * (1.0 - fA) + foamCol * fA;
   alpha = alpha * (1.0 - fA) + fA;
+  // the surf's white water, clean and bright where the swell breaks (the river's foam above is silt-brown)
+  float sA = clamp(surf, 0.0, 1.0) * 0.82;
+  vec3 surfCol = vec3(0.92, 0.92, 0.9) * light * 0.5;
+  col = col * (1.0 - sA) + surfCol * sA;
+  alpha = alpha * (1.0 - sA) + sA;
 
   // fog the premultiplied colour as if it were opaque, then weight it back by its coverage
   col = applyAtmosphere(col / max(alpha, 1e-3), wp) * alpha;
