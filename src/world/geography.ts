@@ -167,12 +167,20 @@ const LANE = (() => {
     }
     return deepest;
   });
-  return Float64Array.from(raw, (_, i) => {
-    let s = 0;
-    let n = 0;
-    for (let j = Math.max(0, i - 6); j <= Math.min(raw.length - 1, i + 6); j++) (s += raw[j]), n++;
-    return s / n;
+  const smooth = (a: ArrayLike<number>, k: number) =>
+    Float64Array.from({ length: a.length }, (_, i) => {
+      let s = 0;
+      let n = 0;
+      for (let j = Math.max(0, i - k); j <= Math.min(a.length - 1, i + k); j++) (s += a[j]), n++;
+      return s / n;
+    });
+  // where the smoothing carried the lane out of the deep water (a narrow reach after a broad one, where the
+  // compact map draws the channel together), back over the deep water there, then smoothed a little again
+  const kept = Float64Array.from(smooth(raw, 6), (u, i) => {
+    const [x, z] = CH[i];
+    return heightAt(x + u, z) > Math.min(LANE_BED + 1.2, heightAt(x + raw[i], z) + 0.8) ? raw[i] : u;
   });
+  return smooth(kept, 2);
 })();
 
 export function riverLane(z: number): number {

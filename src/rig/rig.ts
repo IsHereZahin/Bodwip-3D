@@ -13,6 +13,45 @@ const headingAt = (z: number) => Math.atan2(laneX(z - 1) - laneX(z), -1);
 
 /** How far down the lane the boatman steers for, m. */
 const LOOK_AHEAD = 16;
+
+/**
+ * The journey's lane as a path: a point every PATH_STEP m of z from its start down to its end, and how far along
+ * the lane each one lies. The boatman steers for a point LOOK_AHEAD m further along it, not further down in z:
+ * where the compact map draws the channel together its bends run nearly across the map, and a point ahead in z
+ * there lies across the inner bank.
+ */
+const PATH_STEP = 5;
+const JOURNEY_PATH = (() => {
+  const n = Math.max(2, Math.ceil((JOURNEY_Z0 - JOURNEY_Z1) / PATH_STEP) + 1);
+  const x = new Float64Array(n);
+  const z = new Float64Array(n);
+  const s = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    z[i] = JOURNEY_Z0 - i * PATH_STEP;
+    x[i] = laneX(z[i]);
+    if (i > 0) s[i] = s[i - 1] + Math.hypot(x[i] - x[i - 1], z[i] - z[i - 1]);
+  }
+  return { x, z, s, n };
+})();
+
+/** The point `ahead` m further along the journey's lane from where it passes nearest (x, z). */
+function aheadOnJourney(x: number, z: number, ahead: number, out: { x: number; z: number }): { x: number; z: number } {
+  const P = JOURNEY_PATH;
+  // the nearest point, looked for among those within a stretch of z round her
+  const guess = Math.round((JOURNEY_Z0 - z) / PATH_STEP);
+  let best = Math.min(P.n - 1, Math.max(0, guess));
+  let bestD = Infinity;
+  for (let i = Math.max(0, guess - 60); i <= Math.min(P.n - 1, guess + 60); i++) {
+    const d = (P.x[i] - x) ** 2 + (P.z[i] - z) ** 2;
+    if (d < bestD) (bestD = d), (best = i);
+  }
+  const want = P.s[best] + ahead;
+  let i = best;
+  while (i < P.n - 1 && P.s[i + 1] < want) i++;
+  if (i >= P.n - 1) return Object.assign(out, { x: P.x[P.n - 1], z: P.z[P.n - 1] });
+  const t = (want - P.s[i]) / Math.max(1e-6, P.s[i + 1] - P.s[i]);
+  return Object.assign(out, { x: P.x[i] + (P.x[i + 1] - P.x[i]) * t, z: P.z[i] + (P.z[i + 1] - P.z[i]) * t });
+}
 const LOOP_FADE = 3;
 const IDLE_SECONDS = 7;
 const DIST_MIN = 6;
@@ -576,8 +615,7 @@ export class Rig {
     const k = this.keys;
     switch (this.voyage) {
       case 'journey':
-        this.steerTo.z = b.pos.z - LOOK_AHEAD;
-        this.steerTo.x = laneX(this.steerTo.z);
+        aheadOnJourney(b.pos.x, b.pos.z, LOOK_AHEAD, this.steerTo);
         break;
       case 'route': {
         const r = this.route;
