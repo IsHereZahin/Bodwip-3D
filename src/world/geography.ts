@@ -650,9 +650,11 @@ export function wetlandMarsh(x: number, z: number): number {
 export const ADINATH = { z: TEMPLE.z, u: TEMPLE.x - riverX(TEMPLE.z), top: TEMPLE.y, flat: TEMPLE.r, radius: 40 } as const;
 
 /**
- * Gorakghata's landmarks (world/moheshkhali.ts): the jetty from its landward end out over the mangrove flat to
- * its head on the channel (OSM way 43107027), the stair up to the temple from the Adinath jetty's landward end,
- * and the pagoda (its place is not known: D3, kept behind the town). The town's buildings are the map's own.
+ * Gorakghata's landmarks (world/moheshkhali.ts): the old jetty from its landward end out over the mangrove flat
+ * to its head on the channel (OSM way 43107027, 6 m wide) and the new one beside it (LGED's, 7.3 m wide; on
+ * which side is not mapped: [মডেল] its north), the Adinath jetty with its T-shaped head (OSM way 43106847), the
+ * stair up to the temple from the Adinath jetty's landward end, and the pagoda (its place is not known: D3,
+ * kept behind the town). The town's buildings are the map's own.
  */
 export const GORAKGHATA = (() => {
   const land = place('gorakghata-jetty-land').world;
@@ -663,6 +665,12 @@ export const GORAKGHATA = (() => {
   const townInland = bankInfo(town.x, town.z).inland;
   return {
     jetty: { x: land.x, z: land.z, toX: head.x, toZ: head.z, length: Math.hypot(head.x - land.x, head.z - land.z), width: 6 },
+    /** The new jetty: along the old one, this far to its north (m), its own width between. */
+    newJetty: { offset: 8.4, width: 7.3 },
+    adinathJetty: (() => {
+      const h = place('adinath-jetty-head').world;
+      return { x: adinathLand.x, z: adinathLand.z, toX: h.x, toZ: h.z, length: Math.hypot(h.x - adinathLand.x, h.z - adinathLand.z), width: 4.5 };
+    })(),
     stair: { from: { x: adinathLand.x, z: adinathLand.z }, to: { x: TEMPLE.x, z: TEMPLE.z - TEMPLE.r * 0.8 } },
     pagoda: { ...at(town.z - 80, townInland + 70), r: 10 },
   };
@@ -692,6 +700,7 @@ export function onLandmark(x: number, z: number, margin = 0): boolean {
     const t = Math.max(0, Math.min(1, ((x - a.x) * sx + (z - a.z) * sz) / (sx * sx + sz * sz)));
     return Math.hypot(x - a.x - sx * t, z - a.z - sz * t) < w + margin;
   };
-  if (nearSegment({ x: g.jetty.x, z: g.jetty.z }, { x: g.jetty.toX, z: g.jetty.toZ }, g.jetty.width)) return true;
+  if (nearSegment({ x: g.jetty.x, z: g.jetty.z }, { x: g.jetty.toX, z: g.jetty.toZ }, g.jetty.width + g.newJetty.offset + g.newJetty.width / 2)) return true;
+  if (nearSegment({ x: g.adinathJetty.x, z: g.adinathJetty.z }, { x: g.adinathJetty.toX, z: g.adinathJetty.toZ }, g.adinathJetty.width)) return true;
   return nearSegment(g.stair.from, g.stair.to, 2.6);
 }

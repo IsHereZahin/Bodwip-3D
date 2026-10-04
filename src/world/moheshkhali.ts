@@ -111,55 +111,63 @@ function temple(s: Sets, rng: Rng): void {
     const [wx, wz] = at(a, d);
     slab(s.white, wx, y0 + 0.45, wz, l, 0.8, w, ry, WHITE);
   }
-  // the sanctum, and its curving spire: tiers drawn in toward a ribbed amalaka, a kalash and a trident
-  const [sx, sz] = at(0, -2.5);
-  slab(s.white, sx, y0 + 1.7, sz, 4.6, 3.4, 4.6, ry, WHITE);
-  slab(s.white, sx, y0 + 3.5, sz, 5.0, 0.3, 5.0, ry, SAFFRON);
+  // the temple as Banglapedia gives it: 10.5 m long, 9.75 m wide, 6 m high. The sanctum (6 m square) at the
+  // back under its curving spire, tiers drawn in toward a ribbed amalaka, a kalash and a trident; the porch, as
+  // wide as the temple, in front of it (how the length is shared between them is [মডেল])
+  const SANCTUM = { d: -2.25, half: 3, wall: 2.8 };
+  const [sx, sz] = at(0, SANCTUM.d);
+  slab(s.white, sx, y0 + SANCTUM.wall / 2, sz, SANCTUM.half * 2, SANCTUM.wall, SANCTUM.half * 2, ry, WHITE);
+  slab(s.white, sx, y0 + SANCTUM.wall + 0.15, sz, SANCTUM.half * 2 + 0.4, 0.3, SANCTUM.half * 2 + 0.4, ry, SAFFRON);
   // the rekha spire: thin courses drawn in along a curve that rises straight and bends in toward the top,
-  // a rib down the middle of each face, a saffron band now and then
-  const tiers = 22;
-  const course = 0.33;
+  // a rib down the middle of each face, a saffron band now and then; it tops out at 6 m
+  const tiers = 9;
+  const course = 0.35;
   for (let i = 0; i < tiers; i++) {
     const t = i / tiers;
-    const half = 2.35 * Math.pow(Math.cos((t * Math.PI) / 2), 0.75) + 0.32;
-    const y = y0 + 3.65 + i * course + course / 2;
-    slab(s.white, sx, y, sz, half * 2, course, half * 2, ry, i % 7 === 6 ? scaleRgb(SAFFRON, 1.05) : WHITE);
+    const half = 2.6 * Math.pow(Math.cos((t * Math.PI) / 2), 0.75) + 0.3;
+    const y = y0 + SANCTUM.wall + 0.3 + i * course + course / 2;
+    slab(s.white, sx, y, sz, half * 2, course, half * 2, ry, i % 4 === 3 ? scaleRgb(SAFFRON, 1.05) : WHITE);
     for (const [a, d, w, l] of [
       [0, half + 0.08, 0.9 * half, 0.16],
       [0, -half - 0.08, 0.9 * half, 0.16],
       [half + 0.08, 0, 0.16, 0.9 * half],
       [-half - 0.08, 0, 0.16, 0.9 * half],
     ] as const) {
-      const [rx, rz] = at(a, -2.5 + d);
+      const [rx, rz] = at(a, SANCTUM.d + d);
       slab(s.white, rx, y, rz, w, course, l, ry, scaleRgb(WHITE, 0.96));
     }
   }
-  const top = y0 + 3.65 + tiers * course;
-  part(s.white, new LatheGeometry([[0, 0], [0.75, 0.05], [0.9, 0.2], [0.75, 0.38], [0, 0.42]].map(([r, y]) => new Vector2(r, y)), 16), sx, top, sz, 0, WHITE);
-  part(s.gold, new LatheGeometry([[0, 0], [0.32, 0.08], [0.38, 0.3], [0.2, 0.55], [0.08, 0.62], [0.12, 0.72], [0, 0.85]].map(([r, y]) => new Vector2(r, y)), 12), sx, top + 0.42, sz, 0, [1, 1, 1]);
-  part(s.gold, new CylinderGeometry(0.025, 0.025, 1.3, 6), sx, top + 1.9, sz, 0, [1, 1, 1]);
-  for (const a of [-0.18, 0, 0.18]) {
-    const [px, pz] = at(a, -2.5);
-    part(s.gold, new CylinderGeometry(0.02, 0.012, a === 0 ? 0.42 : 0.3, 5), px, top + 2.6, pz, 0, [1, 1, 1]);
+  const top = y0 + SANCTUM.wall + 0.3 + tiers * course;
+  part(s.white, new LatheGeometry([[0, 0], [0.6, 0.05], [0.72, 0.16], [0.6, 0.3], [0, 0.34]].map(([r, y]) => new Vector2(r, y)), 16), sx, top, sz, 0, WHITE);
+  part(s.gold, new LatheGeometry([[0, 0], [0.26, 0.06], [0.3, 0.24], [0.16, 0.44], [0.06, 0.5], [0.1, 0.58], [0, 0.68]].map(([r, y]) => new Vector2(r, y)), 12), sx, top + 0.34, sz, 0, [1, 1, 1]);
+  part(s.gold, new CylinderGeometry(0.02, 0.02, 1.0, 6), sx, top + 1.5, sz, 0, [1, 1, 1]);
+  for (const a of [-0.15, 0, 0.15]) {
+    const [px, pz] = at(a, SANCTUM.d);
+    part(s.gold, new CylinderGeometry(0.018, 0.01, a === 0 ? 0.36 : 0.26, 5), px, top + 2.1, pz, 0, [1, 1, 1]);
   }
   // the dark doorway, toward the porch
-  const [dx, dz] = at(0, -0.18);
-  slab(s.paint, dx, y0 + 1.15, dz, 1.1, 2.2, 0.06, ry, rgb('#2a1a12'));
-  // the porch: a floor, four pillars, a flat roof with a little parapet, a saffron band round its eaves
-  const [px, pz] = at(0, 2.4);
-  slab(s.white, px, y0 + 0.15, pz, 5.2, 0.3, 4.4, ry, WHITE);
+  const [dx, dz] = at(0, SANCTUM.d + SANCTUM.half + 0.02);
+  slab(s.paint, dx, y0 + 1.1, dz, 1.1, 2.1, 0.06, ry, rgb('#2a1a12'));
+  // the porch: as wide as the temple (9.75 m) and 4.5 m deep, a floor, pillars, a flat roof with a little
+  // parapet and a saffron band round its eaves
+  const PORCH = { d: SANCTUM.d + SANCTUM.half + 2.25, depth: 4.5, width: 9.75, roof: 3 };
+  const [px, pz] = at(0, PORCH.d);
+  slab(s.white, px, y0 + 0.15, pz, PORCH.width, 0.3, PORCH.depth, ry, WHITE);
   for (const [a, d] of [
-    [-2.2, 0.6],
-    [2.2, 0.6],
-    [-2.2, 4.2],
-    [2.2, 4.2],
+    [-4.5, 2.0],
+    [-1.6, 2.0],
+    [1.6, 2.0],
+    [4.5, 2.0],
+    [-4.5, -1.9],
+    [4.5, -1.9],
   ]) {
-    const [cx, cz] = at(a, d);
-    part(s.white, new CylinderGeometry(0.17, 0.2, 2.7, 10), cx, y0 + 1.65, cz, 0, WHITE);
+    const [cx, cz] = at(a, PORCH.d + d);
+    part(s.white, new CylinderGeometry(0.17, 0.2, PORCH.roof - 0.3, 10), cx, y0 + 0.3 + (PORCH.roof - 0.3) / 2, cz, 0, WHITE);
   }
-  slab(s.white, px, y0 + 3.15, pz, 5.4, 0.35, 4.6, ry, WHITE);
-  slab(s.paint, px, y0 + 2.92, pz, 5.45, 0.12, 4.65, ry, SAFFRON);
-  slab(s.white, px, y0 + 3.5, pz, 5.4, 0.35, 0.2, ry, WHITE);
+  slab(s.white, px, y0 + PORCH.roof + 0.15, pz, PORCH.width + 0.2, 0.35, PORCH.depth + 0.2, ry, WHITE);
+  slab(s.paint, px, y0 + PORCH.roof - 0.08, pz, PORCH.width + 0.25, 0.12, PORCH.depth + 0.25, ry, SAFFRON);
+  const [qx, qz] = at(0, PORCH.d + PORCH.depth / 2);
+  slab(s.white, qx, y0 + PORCH.roof + 0.5, qz, PORCH.width + 0.2, 0.35, 0.2, ry, WHITE);
   // two small shrines at the terrace's corners
   for (const a of [-7.5, 7.5]) {
     const [cx, cz] = at(a, -4.5);
@@ -225,17 +233,39 @@ function stair(s: Sets): void {
 
 // ---------- Gorakghata ----------
 
-/** The jetty: out from the bank on concrete piles into the channel, railed and lit, a shed at its head. */
-function jetty(s: Sets): void {
-  const j = GORAKGHATA.jetty;
-  const deckY = 2.45;
+/** The decks stand clear of the highest tide (≈2.7 m: env/tide.ts) [মডেল: their heights are not published]. */
+const DECK = 3.3;
+
+interface JettySpec {
+  /** Landward end and head (world), its length (m) between them, and its deck's width (m, real). */
+  x: number;
+  z: number;
+  toX: number;
+  toZ: number;
+  length: number;
+  width: number;
+  /** How far it is set to the side of that line (m; + to its left, north for Gorakghata's). */
+  offset: number;
+  /** A shed for those waiting at a broad head, or a T-shaped head across it. */
+  head: 'shed' | 'tee';
+}
+
+/** A jetty: out from the bank over the mud on concrete piles into the channel, railed and lit, with its head. */
+function jetty(s: Sets, j: JettySpec): void {
   // in the jetty's frame: `a` out from its landward end toward its head (OSM's line), `c` across it
   const ry = Math.atan2(j.toZ - j.z, -(j.toX - j.x));
   const at = frame(j.x, j.z, ry);
-  const A = (a: number, c: number) => at(-a, c);
+  const A = (a: number, c: number) => at(-a, c + j.offset);
   const box = (b: MeshBuilder, a: number, y: number, c: number, along: number, h: number, across: number, col: RGB, tile?: number) => {
     const [x, z] = A(a, c);
     slab(b, x, y, z, along, h, across, ry, col, tile);
+  };
+  /** A pile from the deck down into the mud at (a, c). */
+  const pile = (a: number, c: number, r: number) => {
+    const [x, z] = A(a, c);
+    const bed = Math.min(terrainHeight(x, z), DECK - 1);
+    const h = DECK - 0.36 - bed + 0.8;
+    part(s.concrete, new CylinderGeometry(r, r * 1.08, h, 8), x, bed - 0.8 + h / 2, z, ry, rgb('#9e9a90'));
   };
   const post = (b: MeshBuilder, g: CylinderGeometry, a: number, y: number, c: number, col: RGB) => {
     const [x, z] = A(a, c);
@@ -245,41 +275,45 @@ function jetty(s: Sets): void {
   const start = -14;
   const end = j.length;
   const mid = (start + end) / 2;
-  box(s.concrete, mid, deckY - 0.18, 0, end - start, 0.36, j.width, rgb('#b8b4aa'), 2);
+  const half = j.width / 2;
+  box(s.concrete, mid, DECK - 0.18, 0, end - start, 0.36, j.width, rgb('#b8b4aa'), 2);
   for (let a = start + 3; a < end; a += 5) {
-    for (const side of [-1, 1]) {
-      const [x, z] = A(a, side * 1.3);
-      const bed = Math.min(terrainHeight(x, z), deckY - 1);
-      const h = deckY - 0.36 - bed + 0.5;
-      post(s.concrete, new CylinderGeometry(0.22, 0.24, h, 8), a, bed - 0.5 + h / 2, side * 1.3, rgb('#9e9a90'));
-    }
+    for (const side of [-1, 1]) pile(a, side * (half - 1.7), 0.22);
     // a cross beam under the deck
-    box(s.concrete, a, deckY - 0.55, 0, 0.35, 0.4, j.width + 0.3, rgb('#a29e94'), 2);
+    box(s.concrete, a, DECK - 0.55, 0, 0.35, 0.4, j.width + 0.3, rgb('#a29e94'), 2);
   }
   // railings: posts and two rails a side; lamp posts every so often
   for (let a = start + 1; a < end - 1; a += 2) {
-    for (const side of [-1, 1]) box(s.paint, a, deckY + 0.5, side * (j.width / 2 - 0.06), 0.08, 1.0, 0.08, rgb('#d8d4c8'), 1);
+    for (const side of [-1, 1]) box(s.paint, a, DECK + 0.5, side * (half - 0.06), 0.08, 1.0, 0.08, rgb('#d8d4c8'), 1);
   }
   for (const side of [-1, 1]) {
-    for (const h of [0.55, 0.98]) box(s.paint, mid, deckY + h, side * (j.width / 2 - 0.06), end - start, 0.06, 0.07, rgb('#d8d4c8'), 1);
+    for (const h of [0.55, 0.98]) box(s.paint, mid, DECK + h, side * (half - 0.06), end - start, 0.06, 0.07, rgb('#d8d4c8'), 1);
   }
   for (let a = start + 6; a < end; a += 15) {
-    post(s.concrete, new CylinderGeometry(0.06, 0.08, 4.2, 6), a, deckY + 2.1, j.width / 2 + 0.15, rgb('#6a6a6a'));
-    box(s.paint, a, deckY + 4.25, j.width / 2 - 0.3, 0.3, 0.14, 0.9, rgb('#e8e2c8'), 1);
+    post(s.concrete, new CylinderGeometry(0.06, 0.08, 4.2, 6), a, DECK + 2.1, half + 0.15, rgb('#6a6a6a'));
+    box(s.paint, a, DECK + 4.25, half - 0.3, 0.3, 0.14, 0.9, rgb('#e8e2c8'), 1);
   }
-  // the head: a broader landing, a tin-roofed shed for those waiting for the boats, steps down to the water
-  box(s.concrete, end + 3, deckY - 0.18, 0, 6.5, 0.36, 9, rgb('#b8b4aa'), 2);
-  for (const [oa, oc] of [
-    [5.2, -3.6],
-    [0.8, -3.6],
-    [5.2, 3.6],
-    [0.8, 3.6],
-  ]) {
-    post(s.concrete, new CylinderGeometry(0.22, 0.24, 4, 8), end + oa, deckY - 2.2, oc, rgb('#9e9a90'));
-    box(s.paint, end + oa, deckY + 1.3, oc, 0.14, 2.6, 0.14, rgb('#3e5a6a'), 1);
+  if (j.head === 'shed') {
+    // a broader landing, a tin-roofed shed for those waiting for the boats, steps down toward the water
+    box(s.concrete, end + 3, DECK - 0.18, 0, 6.5, 0.36, 9, rgb('#b8b4aa'), 2);
+    for (const [oa, oc] of [
+      [5.2, -3.6],
+      [0.8, -3.6],
+      [5.2, 3.6],
+      [0.8, 3.6],
+    ]) {
+      pile(end + oa, oc, 0.22);
+      box(s.paint, end + oa, DECK + 1.3, oc, 0.14, 2.6, 0.14, rgb('#3e5a6a'), 1);
+    }
+    box(s.tin, end + 3, DECK + 2.68, 0, 5.6, 0.1, 8.4, rgb('#c8c2b8'), 2);
+  } else {
+    // a T: a landing across the head, piled, where the boats lie alongside
+    box(s.concrete, end + 2.5, DECK - 0.18, 0, 5, 0.36, 30, rgb('#b8b4aa'), 2);
+    for (let c = -14; c <= 14; c += 4) for (const oa of [0.6, 4.4]) pile(end + oa, c, 0.24);
+    for (const side of [-1, 1]) box(s.paint, end + 4.9, DECK + 0.55, side * 8, 0.07, 0.06, 13, rgb('#d8d4c8'), 1);
   }
-  box(s.tin, end + 3, deckY + 2.68, 0, 5.6, 0.1, 8.4, rgb('#c8c2b8'), 2);
-  for (let k = 0; k < 9; k++) box(s.concrete, end + 6.6, deckY - 0.3 - k * 0.32, -3, 0.9, 0.3, 2.4, rgb('#a8a49a'), 1);
+  // steps down the head toward the water: at low tide they end over the mud, and the boats wait out in the channel
+  for (let k = 0; k < 10; k++) box(s.concrete, end + 6.6, DECK - 0.3 - k * 0.32, -3, 0.9, 0.3, 2.4, rgb('#a8a49a'), 1);
 }
 
 /** The Rakhine pagoda: three square terraces, a bell-shaped stupa, its spire of rings, a golden hti. */
@@ -394,7 +428,11 @@ export function buildMoheshkhali(): { seen: Group; near: Group } {
   const town = newSets();
   temple(town, rng);
   stair(town);
-  jetty(town);
+  // Gorakghata's two jetties side by side, and the Adinath jetty below the temple
+  const g = GORAKGHATA;
+  jetty(town, { ...g.jetty, offset: 0, head: 'shed' });
+  jetty(town, { ...g.jetty, width: g.newJetty.width, offset: g.newJetty.offset, head: 'shed' });
+  jetty(town, { ...g.adinathJetty, offset: 0, head: 'tee' });
   pagoda(town);
   const gardens = new Map<number, Sets>();
   betelGardens(gardens, rng);

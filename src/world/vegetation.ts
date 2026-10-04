@@ -17,7 +17,7 @@ import {
   needleTexture,
   palmFrondTexture,
 } from '../render/textures';
-import { COVER, GRID_H, GRID_W, KIND, LAYERS, cellCentre } from '../geo/data';
+import { COVER, GRID_H, GRID_W, KIND, LAYERS, LINES, canopyAt, cellCentre, place } from '../geo/data';
 import {
   BIL,
   CHANNEL_SPAN,
@@ -461,6 +461,8 @@ export function buildVegetation(
     // the mangroves' small, leathery leaves, greyed with salt; the casuarina's needles
     mangrove: leafClusterTexture(20, ['#4a6338', '#566f42', '#62794a', '#6e8454', '#7b8f5e'], { count: 190, len: [0.05, 0.09], width: 0.45 }),
     needles: needleTexture(21),
+    // akashmoni's narrow, sickle-shaped phyllodes, a dull olive green
+    akashmoni: leafClusterTexture(22, ['#46552a', '#526131', '#5f6e38', '#6c7a40', '#7a8648'], { count: 170, len: [0.1, 0.17], width: 0.22 }),
   };
 
   const leafMat = (set: { map: Texture; normal?: Texture }, wind = 0.22, windHeight = 10, roughness = 0.78, seasonal: 'leaf' | 'tree' = 'leaf') =>
@@ -510,6 +512,7 @@ export function buildVegetation(
     grass: leafMat({ map: tex.grass }, 0.15, 0.8),
     mangrove: leafMat(tex.mangrove, 0.22, 5),
     needles: leafMat({ map: tex.needles }, 0.4, 14),
+    akashmoni: leafMat(tex.akashmoni, 0.3, 6, 0.8, 'tree'),
   };
 
   // a shape or two per species (each is a draw call in every slab it stands in); instances vary them by yaw and scale
@@ -536,6 +539,11 @@ export function buildVegetation(
     broadleaf(r, { height: r.range(1.2, 1.8), trunkR: 0.17, crown: r.range(2.3, 3.0), flat: 0.72, lobes: 5, cards: 62, cardSize: 0.95, tint: rgb('#c8d4b6'), bark: barkTint, simple: true }),
   );
   // casuarina (jhau), planted in belts behind the beaches: tall, its feathery crown a narrow spire
+  // akashmoni (Acacia auriculiformis), among the commonest trees of Moheshkhali's homesteads and planted over its
+  // hills (GEOGRAPHY_PLAN.md §8.1–8.2): an upright trunk, a dense rounded crown
+  const akashmoni = variants(2, (r) =>
+    broadleaf(r, { height: r.range(3.5, 5), trunkR: 0.24, crown: r.range(3.2, 4.2), flat: 1.0, lobes: 6, cards: 90, cardSize: 1.0, tint: rgb('#d4dcc0'), bark: barkTint }),
+  );
   const jhau = variants(1, (r) =>
     broadleaf(r, { height: r.range(6.5, 9), trunkR: 0.2, crown: r.range(1.9, 2.4), flat: 2.1, lobes: 6, cards: 72, cardSize: 1.3, tint: WHITE, bark: barkTint }),
   );
@@ -575,6 +583,7 @@ export function buildVegetation(
     keora: bucket(keora, mats.mangrove),
     baen: bucket(baen, mats.mangrove),
     jhau: bucket(jhau, mats.needles),
+    akashmoni: bucket(akashmoni, mats.akashmoni),
   };
   const put = (b: Bucket, p: Placement) => b.items[rng.int(0, b.items.length - 1)].push(p);
   for (const f of featured) put(B[f.kind], { x: f.x, y: terrainHeight(f.x, f.z) - 0.15, z: f.z, ry: f.ry, s: f.s });
@@ -648,6 +657,7 @@ export function buildVegetation(
     [B.date, 7],
     [B.banana, 3.5],
     [B.bamboo, 10],
+    [B.akashmoni, 10],
     [B.keora, 7],
     [B.baen, 3.5],
   ]);
@@ -676,7 +686,8 @@ export function buildVegetation(
       if (hash(i, 9) > 0.6) continue;
       tree = h < 0.4 ? B.baen : r < 0.5 ? B.keora : B.baen;
     }
-    else if (home && seen) tree = r < 0.3 ? B.mango : r < 0.45 ? B.coconut : r < 0.62 ? B.supari : r < 0.72 ? B.banana : r < 0.8 ? B.bamboo : r < 0.9 ? B.rain : B.date;
+    // (the homestead's mix as Baul et al. 2021 found it here: mango, akashmoni and coconut the commonest)
+    else if (home && seen) tree = r < 0.24 ? B.mango : r < 0.38 ? B.akashmoni : r < 0.52 ? B.coconut : r < 0.66 ? B.supari : r < 0.75 ? B.banana : r < 0.82 ? B.bamboo : r < 0.9 ? B.rain : B.date;
     else if (home) {
       if (hash(i, 10) > 0.7) continue;
       tree = r < 0.45 ? B.far : r < 0.65 ? B.supariFar : r < 0.8 ? B.coconutFar : r < 0.9 ? B.banana : B.dateFar;
@@ -684,11 +695,12 @@ export function buildVegetation(
     // the hills' forest: big, cheap crowns, a quarter as many as the cells (scaled up below to close the canopy)
     else if (h > 8) {
       if (hash(i, 8) > 0.25) continue;
-      tree = seen && r < 0.06 ? B.rain : seen && r < 0.1 ? B.mango : B.hill;
+      // (planted akashmoni on the slopes the channel sees)
+      tree = seen && r < 0.06 ? B.rain : seen && r < 0.1 ? B.mango : seen && r < 0.25 ? B.akashmoni : B.hill;
     }
     // the lone trees along the fields and roads: fewer of them stand out of the fields than the canopy's cells
     else if (hash(i, 7) > 0.4) continue;
-    else if (seen) tree = r < 0.4 ? B.far : r < 0.55 ? B.rain : r < 0.8 ? B.mango : r < 0.93 ? B.date : B.coconut;
+    else if (seen) tree = r < 0.35 ? B.far : r < 0.5 ? B.rain : r < 0.7 ? B.mango : r < 0.8 ? B.akashmoni : r < 0.93 ? B.date : B.coconut;
     else tree = r < 0.75 ? B.far : r < 0.9 ? B.dateFar : B.coconutFar;
     const canopyHeight = Math.max(3, LAYERS.canopy[i * 2]);
     const s = Math.min(1.5, Math.max(0.6, canopyHeight / (NOMINAL.get(tree) ?? 8))) * (0.9 + 0.2 * hash(i, 5)) * (tree === B.hill ? 1.4 : 1);
@@ -707,6 +719,35 @@ export function buildVegetation(
     if (LAYERS.cover[i] !== COVER.sand || rng.next() > 0.3) continue;
     const c = cellCentre(i % GRID_W, Math.floor(i / GRID_W));
     jhauAt(c.x + rng.range(-4, 4), c.z + rng.range(-4, 4));
+  }
+
+  // the two ways up to Adinath temple (D9): the Dighi Road from the town, and the roads from the Adinath jetty;
+  // trees close along both sides wherever the canopy map has trees beside them (the homestead's and the hills'
+  // kinds), so the way runs under them
+  const temple = place('adinath-temple').world;
+  const landing = place('adinath-jetty-land').world;
+  for (const l of LINES) {
+    if (l.k !== 'road') continue;
+    const p = l.points;
+    let near = l.n === 'Dhighi Road';
+    for (let k = 0; k < p.length && !near; k += 2) near = Math.hypot(p[k] - temple.x, p[k + 1] - temple.z) < 70 || Math.hypot(p[k] - landing.x, p[k + 1] - landing.z) < 70;
+    if (!near) continue;
+    for (let k = 0; k + 3 < p.length; k += 2) {
+      const len = Math.hypot(p[k + 2] - p[k], p[k + 3] - p[k + 1]);
+      for (let d = 0; d < len; d += rng.range(5, 8)) {
+        const t = d / len;
+        const cx = p[k] + (p[k + 2] - p[k]) * t;
+        const cz = p[k + 1] + (p[k + 3] - p[k + 1]) * t;
+        const side = rng.sign();
+        const off = rng.range(3.5, 6.5);
+        const x = cx + ((p[k + 3] - p[k + 1]) / len) * side * off;
+        const z = cz - ((p[k + 2] - p[k]) / len) * side * off;
+        if (canopyAt(x, z).cover < 0.05 || !onDryLand(x, z, 3) || !occ.free(x, z, 2.5)) continue;
+        occ.add(x, z, 2.5);
+        const r = rng.next();
+        put(r < 0.3 ? B.akashmoni : r < 0.55 ? B.mango : r < 0.7 ? B.coconut : r < 0.85 ? B.rain : r < 0.95 ? B.supari : B.date, at(x, z, rng, rng.range(0.9, 1.2)));
+      }
+    }
   }
 
   // the trees by the water and on the hills show in the water's mirror; those far inland on the plain are left

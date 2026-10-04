@@ -40,6 +40,7 @@ import { buildPondLife } from './world/ponds';
 import { buildRain } from './world/rain';
 import { buildRoads } from './world/roads';
 import { Crabs } from './world/crabs';
+import { Ferries } from './world/ferries';
 import { BRIDGE_CLEARING, bridgeTrees, buildBridge } from './world/bridge';
 import { Girl } from './world/girl';
 import { buildMoheshkhali } from './world/moheshkhali';
@@ -177,6 +178,8 @@ async function main(hud: Hud): Promise<void> {
   scene.add(life.group);
   const crabs = new Crabs();
   scene.add(crabs.group);
+  const ferries = new Ferries();
+  scene.add(ferries.group);
   const today = new Date();
   const clock = new Clock(START_HOUR, moonAgeOn(today), dayOfYear(today));
   // golden hour whatever the time of year: winter's sun is down well before half past five
@@ -621,6 +624,7 @@ async function main(hud: Hud): Promise<void> {
     water.oar.set(hero.bladeLocal.x, hero.bladeLocal.z, hero.bladeDrive, hero.bladeWet);
     water.swirl.copy(hero.swirl);
     traffic.update(dt, t, b.pos.z);
+    ferries.update(dt, t);
     const simStart = performance.now();
     // the hyacinth meets the hero's hull and blade, and the fishermen's boats, poles and nets
     drift.update(dt, t, camera.position.z, b, hero.blade, fishing.obstacles());
@@ -859,6 +863,10 @@ async function main(hud: Hud): Promise<void> {
         seaAt(x: number, z: number) {
           const r = (v: number) => Math.round(v * 1000) / 1000;
           return { exposure: r(exposureAt(x, z)), ground: r(terrainHeight(x, z)), depth: r(G.uWaterLevel.value - terrainHeight(x, z)), swell: r(swellFactor(x, z)), crest: r(G.uSwell.value.w), cover: coverAt(x, z), kind: kindAt(x, z) };
+        },
+        /** The ferries: their route's length and points, and where each is. */
+        ferries() {
+          return { way: ferries.way, boats: ferries.state };
         },
         /** How many crab burrows and crabs are made round the camera, and how many crabs are out. */
         crabs() {
