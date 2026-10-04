@@ -44,11 +44,17 @@ const MODELLED = 0x80;
 /** Inland water on ground rising more than this (m) across the 3 × 3 cells round it is ground (bakeTerrain). */
 const INLAND_SLOPE = 3;
 /**
- * The Matarbari plant's north ash pond (OSM way 1537055661): full of water on Sentinel-2 (2026-02-26) but dug
- * and bunded after the DEMs and WorldCover were made, so drawn in here; its water's level and its bunds' crest
- * (m about MSL) are [মডেল]. The east pond (way 1537056321) is mostly dry sand on the same scene and stays land.
+ * The Matarbari plant's ash ponds, dug and bunded after the DEMs and WorldCover were made, so drawn in here: the
+ * north one (OSM way 1537055661) full of water on Sentinel-2 (2026-02-26), the east one (way 1537056321) mostly
+ * dry ash and sand on the same scene, its bed as ground. Their water's level, beds and bunds' crests (m about
+ * MSL) are [মডেল].
  */
-const ASH_POND = { id: 1537055661, level: 6, bund: 8 };
+const ASH_PONDS = [
+  { id: 1537055661, level: 6, bund: 8 },
+  { id: 1537056321, bed: 5, bund: 8 },
+];
+/** The ash pond mask's codes: inside a pond of water, its bunds, inside a dry pond. */
+const ASH = { water: 1, bund: 2, dry: 3 };
 /**
  * Matarbari port's works, reclaimed and dredged after the DEMs, JRC's water and WorldCover were made: inside
  * this box the ground is land or water as Sentinel-2 saw it (2026-02-26), the reclaimed land standing at
@@ -232,28 +238,40 @@ function nearLine(lines, e, n, d) {
   return false;
 }
 
-/** The ash pond on the grid: 1 inside its outline, 2 for the ring of cells round it (its bunds). */
+/** The ash ponds on the grid (`ASH` codes; `pond` which of ASH_PONDS each cell belongs to): inside, and the ring of cells round each (its bunds). */
 async function ashPondMask(g) {
   const { width: W, height: H } = g;
   const mask = new Uint8Array(W * H);
+  const pond = new Uint8Array(W * H);
   const { elements } = JSON.parse(await readFile(at('osm-landuse.json'), 'utf8'));
-  const way = elements.find((e) => e.type === 'way' && e.id === ASH_POND.id && e.geometry?.length);
-  if (!way) return mask;
-  const ring = way.geometry.map((p) => toGround(p.lat, p.lon));
-  const inside = (e, n) => {
-    let c = false;
-    for (let a = 0, b = ring.length - 1; a < ring.length; b = a++)
-      if (ring[a].north > n !== ring[b].north > n && e < ((ring[b].east - ring[a].east) * (n - ring[a].north)) / (ring[b].north - ring[a].north) + ring[a].east) c = !c;
-    return c;
-  };
-  for (let r = 0; r < H; r++)
-    for (let c = 0; c < W; c++) if (inside(g.east0 + (c + 0.5) * SPACING, g.north1 - (r + 0.5) * SPACING)) mask[r * W + c] = 1;
+  ASH_PONDS.forEach((spec, k) => {
+    const way = elements.find((e) => e.type === 'way' && e.id === spec.id && e.geometry?.length);
+    if (!way) return;
+    const ring = way.geometry.map((p) => toGround(p.lat, p.lon));
+    const inside = (e, n) => {
+      let c = false;
+      for (let a = 0, b = ring.length - 1; a < ring.length; b = a++)
+        if (ring[a].north > n !== ring[b].north > n && e < ((ring[b].east - ring[a].east) * (n - ring[a].north)) / (ring[b].north - ring[a].north) + ring[a].east) c = !c;
+      return c;
+    };
+    const code = spec.level !== undefined ? ASH.water : ASH.dry;
+    for (let r = 0; r < H; r++)
+      for (let c = 0; c < W; c++)
+        if (inside(g.east0 + (c + 0.5) * SPACING, g.north1 - (r + 0.5) * SPACING)) {
+          mask[r * W + c] = code;
+          pond[r * W + c] = k;
+        }
+  });
   for (let i = 0; i < W * H; i++) {
     if (mask[i]) continue;
     const c = i % W;
-    for (const j of [i - W, i + W, c > 0 ? i - 1 : -1, c < W - 1 ? i + 1 : -1]) if (j >= 0 && j < W * H && mask[j] === 1) mask[i] = 2;
+    for (const j of [i - W, i + W, c > 0 ? i - 1 : -1, c < W - 1 ? i + 1 : -1])
+      if (j >= 0 && j < W * H && (mask[j] === ASH.water || mask[j] === ASH.dry)) {
+        mask[i] = ASH.bund;
+        pond[i] = pond[j];
+      }
   }
-  return mask;
+  return { mask, pond };
 }
 
 async function bakeTerrain() {
@@ -460,16 +478,21 @@ async function bakeTerrain() {
       level[i] = 0;
     } else height[i] = level[i] - 1.2;
   }
-  // 5. the plant's ash pond, standing above the land round it inside its bunds
-  const ash = await ashPondMask(g);
+  // 5. the plant's ash ponds, standing above the land round them inside their bunds: one of water, one dry
+  const { mask: ash, pond } = await ashPondMask(g);
   for (let i = 0; i < W * H; i++) {
-    if (ash[i] === 1) {
+    const spec = ASH_PONDS[pond[i]];
+    if (ash[i] === ASH.water) {
       kind[i] = KIND.inland | MODELLED;
-      level[i] = ASH_POND.level;
-      height[i] = ASH_POND.level - 1.2;
-    } else if (ash[i] === 2) {
+      level[i] = spec.level;
+      height[i] = spec.level - 1.2;
+    } else if (ash[i] === ASH.dry) {
       kind[i] = KIND.land;
-      height[i] = Math.max(dem[i], ASH_POND.bund);
+      level[i] = 0;
+      height[i] = spec.bed;
+    } else if (ash[i] === ASH.bund) {
+      kind[i] = KIND.land;
+      height[i] = Math.max(dem[i], spec.bund);
     }
   }
   return { grid: g, kind, height, dem, level, ash, lowWater: +lowWater.toFixed(2) };
@@ -670,8 +693,8 @@ async function bakeCover(g, kind, ash) {
       if (k === KIND.sea) cls = COVER.water;
       else if (k === KIND.mangrove) cls = COVER.mangrove;
       // salt pans hold water only through the rains (3–9 months a year, as inside OSM's pans); shrimp ponds and tanks most of the year
-      else if (k === KIND.inland) cls = ash[i] === 1 ? COVER.pond : inSaltPan(lat, lon) || isSeasonal(seasonality(lat, lon)) ? COVER.saltpan : COVER.pond;
-      else if (ash[i] === 2) cls = COVER.bare;
+      else if (k === KIND.inland) cls = ash[i] === ASH.water ? COVER.pond : inSaltPan(lat, lon) || isSeasonal(seasonality(lat, lon)) ? COVER.saltpan : COVER.pond;
+      else if (ash[i] === ASH.bund || ash[i] === ASH.dry) cls = COVER.bare;
       else if (k === KIND.tidal) cls = sentinel.at(lat, lon) >= SAND_BRIGHTNESS ? COVER.sand : COVER.mud;
       else if (inSaltPan(lat, lon)) cls = COVER.saltpan;
       else if (cls === COVER.bare && sentinel.at(lat, lon) >= SAND_BRIGHTNESS) cls = COVER.sand;
