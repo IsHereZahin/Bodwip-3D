@@ -17,7 +17,7 @@ import {
   needleTexture,
   palmFrondTexture,
 } from '../render/textures';
-import { COVER, GRID_H, GRID_W, LAYERS, canopyAt, cellCentre } from '../geo/data';
+import { COVER, GRID_H, GRID_W, KIND, LAYERS, cellCentre } from '../geo/data';
 import {
   BIL,
   CHANNEL_SPAN,
@@ -25,26 +25,22 @@ import {
   VILLAGES,
   VILLAGE_CENTERS,
   WETLANDS,
-  WORLD_X0,
-  WORLD_X1,
-  WORLD_Z0,
-  WORLD_Z1,
   bankInfo,
   bilDepth,
   bilReach,
   edgeHalfWidth,
-  forestCover,
+  inlandWaterAt,
   nearBackwater,
   riverX,
   routeGap,
   mangroveZone,
+  onBridge,
   onLandmark,
   onRoad,
   onTempleHill,
   saltPan,
   sandCover,
   terrainHeight,
-  villageDistance,
 } from './geography';
 import type { HutPlan } from './village';
 
@@ -71,6 +67,8 @@ interface BroadleafOptions {
   tint: RGB;
   /** Trunk colour; near white when a bark texture supplies the colour. */
   bark: RGB;
+  /** A cheap form for trees seen only from afar: a coarser trunk, two limbs. */
+  simple?: boolean;
 }
 
 function randomUnit(rng: Rng, out: Vector3): Vector3 {
@@ -87,13 +85,14 @@ function broadleaf(rng: Rng, o: BroadleafOptions): TreeParts {
   const lean = new Vector3(rng.range(-0.5, 0.5), 0, rng.range(-0.5, 0.5));
   const pts: Vector3[] = [];
   const radii: number[] = [];
-  for (let i = 0; i <= 5; i++) {
-    const t = i / 5;
+  const steps = o.simple ? 2 : 5;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
     pts.push(new Vector3(lean.x * t * t, o.height * t, lean.z * t * t));
     radii.push(o.trunkR * (1 - 0.45 * t) * (i === 0 ? 1.3 : 1));
   }
-  taperedTube(wood, pts, radii, 7, o.bark, 2);
-  const top = pts[5];
+  taperedTube(wood, pts, radii, o.simple ? 5 : 7, o.bark, 2);
+  const top = pts[steps];
   const center = top.clone().add(new Vector3(0, o.crown * 0.5 * o.flat, 0));
   const lobes: { c: Vector3; r: number }[] = [];
   for (let i = 0; i < o.lobes; i++) {
@@ -104,10 +103,10 @@ function broadleaf(rng: Rng, o: BroadleafOptions): TreeParts {
       r: o.crown * rng.range(0.55, 0.8),
     });
   }
-  for (const l of lobes) {
+  for (const l of o.simple ? lobes.slice(0, 2) : lobes) {
     const mid = top.clone().lerp(l.c, 0.55);
     mid.y += 0.3;
-    taperedTube(wood, [top.clone(), mid, l.c.clone().lerp(mid, 0.35)], [radii[5] * 0.75, radii[5] * 0.45, 0.05], 5, o.bark, 2);
+    taperedTube(wood, [top.clone(), mid, l.c.clone().lerp(mid, 0.35)], [radii[steps] * 0.75, radii[steps] * 0.45, 0.05], o.simple ? 3 : 5, o.bark, 2);
   }
   const dir = new Vector3();
   const jitter = new Vector3();
@@ -180,7 +179,8 @@ const bananaProfile = (t: number) => Math.pow(Math.sin(Math.PI * t), 0.45);
 
 type PalmKind = 'coconut' | 'supari' | 'date';
 
-function palm(rng: Rng, kind: PalmKind): TreeParts {
+/** `cheap`: for palms seen only from afar: a coarse trunk, no nuts, half the fronds. */
+function palm(rng: Rng, kind: PalmKind, cheap = false): TreeParts {
   const wood = new MeshBuilder();
   const leaves = new MeshBuilder();
   const H = kind === 'supari' ? rng.range(12, 16) : kind === 'date' ? rng.range(5, 8) : rng.range(8.5, 12.5);
@@ -189,14 +189,15 @@ function palm(rng: Rng, kind: PalmKind): TreeParts {
   const lean = kind === 'coconut' ? rng.range(0.8, 2.8) : rng.range(0.1, 0.6);
   const pts: Vector3[] = [];
   const radii: number[] = [];
-  for (let i = 0; i <= 10; i++) {
-    const t = i / 10;
+  const steps = cheap ? 4 : 10;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
     pts.push(new Vector3(Math.cos(leanAz) * lean * Math.pow(t, 1.6), H * t, Math.sin(leanAz) * lean * Math.pow(t, 1.6)));
     radii.push(R * (1 - 0.3 * t) * (i === 0 ? 1.35 : 1));
   }
-  taperedTube(wood, pts, radii, 8, kind === 'date' ? rgb('#c9b8a0') : WHITE, 1.4);
-  const top = pts[10];
-  if (kind === 'coconut') {
+  taperedTube(wood, pts, radii, cheap ? 5 : 8, kind === 'date' ? rgb('#c9b8a0') : WHITE, 1.4);
+  const top = pts[steps];
+  if (kind === 'coconut' && !cheap) {
     const nut = new SphereGeometry(0.14, 5, 4);
     const m = new Matrix4();
     for (let k = 0; k < 7; k++) {
@@ -205,7 +206,7 @@ function palm(rng: Rng, kind: PalmKind): TreeParts {
       wood.add(nut, m, k % 3 ? rgb('#3d4a1c') : rgb('#6a5226'));
     }
   }
-  const N = kind === 'supari' ? 9 : kind === 'date' ? 22 : 15;
+  const N = Math.ceil((kind === 'supari' ? 9 : kind === 'date' ? 22 : 15) * (cheap ? 0.5 : 1));
   for (let i = 0; i < N; i++) {
     const old = kind !== 'supari' && i % 7 === 0;
     leafStrip(leaves, {
@@ -511,38 +512,42 @@ export function buildVegetation(
     needles: leafMat({ map: tex.needles }, 0.4, 14),
   };
 
-  // a few shapes per species; instances vary them further by yaw and scale
+  // a shape or two per species (each is a draw call in every slab it stands in); instances vary them by yaw and scale
   const variants = <T>(n: number, make: (r: Rng) => T): T[] => Array.from({ length: n }, (_, i) => make(new Rng(100 + i * 31)));
-  const mango = variants(3, (r) =>
+  const mango = variants(2, (r) =>
     broadleaf(r, { height: r.range(2.6, 3.6), trunkR: 0.3, crown: r.range(3.6, 4.6), flat: 0.85, lobes: 6, cards: 125, cardSize: 1.1, tint: WHITE, bark: barkTint }),
   );
-  const rainTree = variants(3, (r) =>
+  const rainTree = variants(2, (r) =>
     broadleaf(r, { height: r.range(4.5, 5.5), trunkR: 0.42, crown: r.range(6, 7.5), flat: 0.45, lobes: 8, cards: 190, cardSize: 1.35, tint: rgb('#e8f0d8'), bark: barkTint }),
   );
-  const farTree = variants(2, (r) =>
-    broadleaf(r, { height: 4, trunkR: 0.4, crown: 5.5, flat: 0.75, lobes: 4, cards: 34, cardSize: 2.6, tint: rgb('#c8d0b8'), bark: barkTint }),
+  const farTree = variants(1, (r) =>
+    broadleaf(r, { height: 4, trunkR: 0.4, crown: 5.5, flat: 0.75, lobes: 4, cards: 34, cardSize: 2.6, tint: rgb('#c8d0b8'), bark: barkTint, simple: true }),
   );
-  const joba = variants(3, hibiscus);
+  const joba = variants(2, hibiscus);
   // the hills' forest crowns: few, large cards, so a slope seen edge-on is not dozens of layers of leaves deep
-  const hillTree = variants(3, (r) =>
-    broadleaf(r, { height: r.range(3.5, 5), trunkR: 0.35, crown: r.range(5, 6.5), flat: 0.75, lobes: 4, cards: 16, cardSize: 3.6, tint: rgb('#c4ccb4'), bark: barkTint }),
+  const hillTree = variants(1, (r) =>
+    broadleaf(r, { height: r.range(3.5, 5), trunkR: 0.35, crown: r.range(5, 6.5), flat: 0.75, lobes: 4, cards: 16, cardSize: 3.6, tint: rgb('#c4ccb4'), bark: barkTint, simple: true }),
   );
   // keora: slender, its crown loose and drooping; baen: low and spreading, dense to the mud
-  const keora = variants(3, (r) =>
-    broadleaf(r, { height: r.range(4.2, 6), trunkR: 0.22, crown: r.range(2.8, 3.5), flat: 1.25, lobes: 5, cards: 70, cardSize: 1.0, tint: rgb('#d8e2cc'), bark: barkTint }),
+  const keora = variants(1, (r) =>
+    broadleaf(r, { height: r.range(4.2, 6), trunkR: 0.22, crown: r.range(2.8, 3.5), flat: 1.25, lobes: 5, cards: 70, cardSize: 1.0, tint: rgb('#d8e2cc'), bark: barkTint, simple: true }),
   );
-  const baen = variants(3, (r) =>
-    broadleaf(r, { height: r.range(1.2, 1.8), trunkR: 0.17, crown: r.range(2.3, 3.0), flat: 0.72, lobes: 5, cards: 62, cardSize: 0.95, tint: rgb('#c8d4b6'), bark: barkTint }),
+  const baen = variants(1, (r) =>
+    broadleaf(r, { height: r.range(1.2, 1.8), trunkR: 0.17, crown: r.range(2.3, 3.0), flat: 0.72, lobes: 5, cards: 62, cardSize: 0.95, tint: rgb('#c8d4b6'), bark: barkTint, simple: true }),
   );
   // casuarina (jhau), planted in belts behind the beaches: tall, its feathery crown a narrow spire
-  const jhau = variants(3, (r) =>
+  const jhau = variants(1, (r) =>
     broadleaf(r, { height: r.range(6.5, 9), trunkR: 0.2, crown: r.range(1.9, 2.4), flat: 2.1, lobes: 6, cards: 72, cardSize: 1.3, tint: WHITE, bark: barkTint }),
   );
-  const coconut = variants(3, (r) => palm(r, 'coconut'));
-  const supari = variants(3, (r) => palm(r, 'supari'));
-  const date = variants(2, (r) => palm(r, 'date'));
-  const bananas = variants(3, banana);
-  const bamboos = variants(2, bamboo);
+  const coconut = variants(1, (r) => palm(r, 'coconut'));
+  const supari = variants(1, (r) => palm(r, 'supari'));
+  const date = variants(1, (r) => palm(r, 'date'));
+  // the same palms, cheap, for those far inland
+  const coconutFar = variants(1, (r) => palm(r, 'coconut', true));
+  const supariFar = variants(1, (r) => palm(r, 'supari', true));
+  const dateFar = variants(1, (r) => palm(r, 'date', true));
+  const bananas = variants(1, banana);
+  const bamboos = variants(1, bamboo);
   const kash = variants(3, (r) => tuft(r, [8, 13], [1.5, 2.5], 0.17, 1.6));
   const grass = variants(3, (r) => tuft(r, [7, 10], [0.4, 0.8], 0.24, 1.2));
 
@@ -560,6 +565,9 @@ export function buildVegetation(
     coconut: bucket(coconut, mats.frond, palmWood),
     supari: bucket(supari, mats.frond, palmWood),
     date: bucket(date, mats.frond, palmWood),
+    coconutFar: bucket(coconutFar, mats.frond, palmWood),
+    supariFar: bucket(supariFar, mats.frond, palmWood),
+    dateFar: bucket(dateFar, mats.frond, palmWood),
     banana: bucket(bananas, mats.banana),
     bamboo: bucket(bamboos, mats.bamboo, culmMat),
     joba: bucket(joba, mats.hibiscus, flowerMat),
@@ -571,27 +579,9 @@ export function buildVegetation(
   const put = (b: Bucket, p: Placement) => b.items[rng.int(0, b.items.length - 1)].push(p);
   for (const f of featured) put(B[f.kind], { x: f.x, y: terrainHeight(f.x, f.z) - 0.15, z: f.z, ry: f.ry, s: f.s });
 
-  // villages: groves of mango and jackfruit, coconut and supari palms by the houses, bananas, bamboo at the back
+  // the houses' joba bushes by the villages on the channel: one or two beside a hut, by the door or the yard
   VILLAGES.forEach((v, i) => {
     const c = VILLAGE_CENTERS[i];
-    const tryPlace = (b: Bucket, count: number, rMin: number, rMax: number, gap: number, scale: [number, number]) => {
-      for (let k = 0, tries = 0; k < count && tries < count * 12; tries++) {
-        const a = rng.range(0, Math.PI * 2);
-        const d = v.radius * Math.sqrt(rng.range(rMin * rMin, rMax * rMax));
-        const x = c.x + Math.cos(a) * d;
-        const z = c.z + Math.sin(a) * d;
-        if (!onDryLand(x, z, 4) || !occ.free(x, z, gap)) continue;
-        occ.add(x, z, gap * 0.6);
-        put(b, at(x, z, rng, rng.range(scale[0], scale[1])));
-        k++;
-      }
-    };
-    tryPlace(B.mango, 24, 0.2, 1.25, 4.5, [0.8, 1.25]);
-    tryPlace(B.rain, 3, 0.5, 1.3, 9, [0.9, 1.2]);
-    tryPlace(B.coconut, 10, 0.3, 1.2, 2.5, [0.9, 1.15]);
-    tryPlace(B.supari, 12, 0.1, 0.9, 1.6, [0.85, 1.15]);
-    tryPlace(B.banana, 12, 0.05, 0.8, 1.6, [0.8, 1.2]);
-    // a joba bush or two beside the houses, by the door or at the edge of the yard
     for (const h of huts) {
       if (Math.hypot(h.x - c.x, h.z - c.z) > v.radius * 1.3 || rng.next() < 0.45) continue;
       const a = rng.range(0, Math.PI * 2);
@@ -599,36 +589,10 @@ export function buildVegetation(
       const x = h.x + Math.cos(a) * d;
       const z = h.z + Math.sin(a) * d;
       // clear of every hut's walls (the huts' own clearance rings are meant for trees, not bushes)
-      if (!onDryLand(x, z, 3) || huts.some((o) => Math.hypot(o.x - x, o.z - z) < Math.max(o.l, o.w) * 0.5 + 0.8)) continue;
+      if (!onDryLand(x, z, 3) || huts.some((o) => Math.abs(o.x - x) < 12 && Math.hypot(o.x - x, o.z - z) < Math.max(o.l, o.w) * 0.5 + 0.8)) continue;
       put(B.joba, at(x, z, rng, rng.range(0.85, 1.2), 0.05));
     }
-    // bamboo groves sit at the landward edge of the village
-    for (let k = 0; k < 2; k++) {
-      const x = c.x + v.side * v.radius * rng.range(0.8, 1.05);
-      const z = c.z + rng.range(-0.6, 0.6) * v.radius;
-      if (onDryLand(x, z, 10) && occ.free(x, z, 3)) {
-        occ.add(x, z, 3);
-        put(B.bamboo, at(x, z, rng, rng.range(0.9, 1.15)));
-      }
-    }
   });
-
-  // trees along both banks, thinning and thickening with a slow noise
-  for (const side of [-1, 1] as const) {
-    for (let z = BANKS.z0; z > BANKS.z1; z -= rng.range(8, 16)) {
-      if (fbm(z * 0.006, side * 4.1, 2, 3) < 0.45) continue;
-      const inland = rng.range(4, 26);
-      const x = riverX(z) + side * (edgeHalfWidth(z, side) + 3 + inland);
-      // as the satellites see the bank: groves where their canopy stands, the odd palm on the open banks
-      const canopy = canopyAt(x, z).cover;
-      if (rng.next() > 0.15 + canopy) continue;
-      if (villageDistance(x, z) < 1.3 || !onDryLand(x, z, 3) || !occ.free(x, z, 3)) continue;
-      occ.add(x, z, 3);
-      const r = rng.next();
-      const tree = canopy < 0.2 ? (r < 0.55 ? B.coconut : B.date) : r < 0.35 ? B.rain : r < 0.7 ? B.mango : r < 0.9 ? B.coconut : B.supari;
-      put(tree, at(x, z, rng, rng.range(0.85, 1.2)));
-    }
-  }
 
   // round the bil: groves standing back from its marshy rim, and hijol trees out in its shallows
   for (let k = 0; k < 260; k++) {
@@ -654,65 +618,81 @@ export function buildVegetation(
     placed++;
   }
 
-  // lone date palms and supari along the field bunds
-  for (let k = 0; k < 160; k++) {
-    const side = rng.sign();
-    const z = rng.range(BANKS.z1, BANKS.z0);
-    const x = riverX(z) + side * (edgeHalfWidth(z, side) + rng.range(60, 700));
-    if (villageDistance(x, z) < 1.4 || !onDryLand(x, z, 30)) continue;
-    put(rng.next() < 0.6 ? B.date : B.supari, at(x, z, rng, rng.range(0.85, 1.15)));
-  }
-
-  // distant groves: big, cheap trees that build the horizon's dark band
-  for (const side of [-1, 1] as const) {
-    for (let z = BANKS.z0; z > BANKS.z1; z -= rng.range(5, 9)) {
-      for (const band of [rng.range(260, 420), rng.range(480, 700)]) {
-        if (fbm(z * 0.004 + band * 0.01, side * 2.7, 2, 8) < 0.42) continue;
-        const x = riverX(z) + side * (edgeHalfWidth(z, side) + band);
-        // on the island the hills' forest stands in for them; elsewhere only where the satellites see trees
-        if (side > 0 || canopyAt(x, z).cover < 0.2 || !onDryLand(x, z, 30)) continue;
-        put(B.far, at(x, z, rng, rng.range(1.2, 1.9), 0.4));
-      }
-    }
-  }
-
-  // the hills under forest wherever the map has trees on high ground (the island's hills, the mainland's
-  // beyond Cox's Bazar): dense on the slopes facing the channel, thinner farther off; on a jittered grid, so
-  // no two crowns meet (big, cheap crowns: the painted forest floor between them reads as forest from the
-  // channel, and every tree is drawn again in the water's mirror; near the shore the odd full mango or rain tree)
-  for (let z = WORLD_Z0; z > WORLD_Z1; z -= 15) {
-    for (let x = WORLD_X0; x < WORLD_X1; x += rng.range(16, 26)) {
-      const xx = x + rng.range(-6, 6);
-      const zz = z + rng.range(-6, 6);
-      const f = forestCover(xx, zz);
-      if (f < 0.25) continue;
-      const shore = bankInfo(xx, zz).inland;
-      if (rng.next() > f * (shore < 450 ? 0.9 : 0.45) || villageDistance(xx, zz) < 1.2 || onLandmark(xx, zz, 4) || onTempleHill(xx, zz) || onRoad(xx, zz, 2) || !occ.free(xx, zz, 2)) continue;
-      const r = rng.next();
-      put(shore < 200 && r < 0.08 ? (r < 0.04 ? B.rain : B.mango) : B.hill, at(xx, zz, rng, rng.range(1.0, 1.5), 0.3));
-    }
-  }
-
-  // mangroves where the map has them (Global Mangrove Watch): along the channel's banks, by Gorakghata, on
-  // Sonadia and the flats round Matarbari; baen to the water, keora behind
-  for (let k = 0, placed = 0; k < 70000 && placed < 1000; k++) {
-    let x: number;
-    let z: number;
-    if (k % 2 === 0) {
-      const side = rng.sign();
-      z = rng.range(BANKS.z1, BANKS.z0);
-      x = riverX(z) + side * (edgeHalfWidth(z, side) + rng.range(-8, 24));
-    } else {
-      z = rng.range(WORLD_Z1, WORLD_Z0);
-      x = rng.range(WORLD_X0, WORLD_X1);
-    }
+  // Trees where the satellites see them (Meta/WRI canopy heights, 30 m cells on the ground), cell by cell: on
+  // the 1:3 map one tree to a 10 m cell of full cover, so about a ninth of the real ones as the land is a ninth
+  // (GEOGRAPHY_PLAN.md §5.1), each as tall as the canopy there. What grows depends on where [মডেল: the canopy
+  // map has no species]: round the houses the homestead's mango and jackfruit, coconut and supari, banana and
+  // bamboo; keora and baen in the mangrove forest; the hills' forest on high ground; rain trees, mango and date
+  // palms along the fields and roads.
+  const home = new Set<number>();
+  const HOME = 30;
+  const homeKey = (i: number, j: number) => (i + 4096) * 8192 + (j + 4096);
+  for (const h of huts) home.add(homeKey(Math.floor(h.x / HOME), Math.floor(h.z / HOME)));
+  const nearHome = (x: number, z: number) => {
+    const i = Math.floor(x / HOME);
+    const j = Math.floor(z / HOME);
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) if (home.has(homeKey(i + a, j + b))) return true;
+    return false;
+  };
+  /** Each kind's height at scale 1 (m), to size it to the canopy's. */
+  const NOMINAL = new Map<Bucket, number>([
+    [B.coconutFar, 12],
+    [B.supariFar, 10],
+    [B.dateFar, 7],
+    [B.mango, 8],
+    [B.rain, 11],
+    [B.far, 9],
+    [B.hill, 9],
+    [B.coconut, 12],
+    [B.supari, 10],
+    [B.date, 7],
+    [B.banana, 3.5],
+    [B.bamboo, 10],
+    [B.keora, 7],
+    [B.baen, 3.5],
+  ]);
+  const hash = (i: number, k: number) => ((Math.imul(i ^ (k * 0x9e3779b1), 0x45d9f3b) >>> 0) % 100000) / 100000;
+  for (let i = 0; i < GRID_W * GRID_H; i++) {
+    const cover = LAYERS.canopy[i * 2 + 1] / 255;
+    if (cover < 0.15 || hash(i, 1) > cover) continue;
+    const kind = LAYERS.kind[i] & 0x7f;
+    const covered = LAYERS.cover[i];
+    const mangrove = kind === KIND.mangrove || covered === COVER.mangrove;
+    if ((kind !== KIND.land && !mangrove) || covered === COVER.saltpan) continue;
+    const c = cellCentre(i % GRID_W, Math.floor(i / GRID_W));
+    const x = c.x + (hash(i, 2) - 0.5) * 8;
+    const z = c.z + (hash(i, 3) - 0.5) * 8;
+    if (inlandWaterAt(x, z) || onRoad(x, z, 1.5) || onLandmark(x, z, 3) || onTempleHill(x, z) || onBridge(x, z, 1) || !occ.free(x, z, 1.2)) continue;
     const h = terrainHeight(x, z);
-    const m = mangroveZone(x, z, h);
-    // in stands along the shore, not an even hedge
-    if (m < 0.2 || rng.next() > m || fbm(x * 0.012, z * 0.012, 2, 119) < 0.47 || onRoad(x, z, 1.5) || !occ.free(x, z, 2.4)) continue;
-    occ.add(x, z, 2.4);
-    put(h < 0.35 ? B.baen : rng.next() < 0.5 ? B.keora : B.baen, { x, y: h - 0.1, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.8, 1.2) });
-    placed++;
+    if (!mangrove && h < 0.3) continue;
+    const r = hash(i, 4);
+    // the trees the channel looks at are drawn in full; those farther inland are cheap crowns that read the
+    // same at a distance (the palms are cheap anyway)
+    const seen = bankInfo(x, z).inland < 500;
+    const home = nearHome(x, z);
+    let tree: Bucket;
+    // the mangroves: fewer than the cells, as the forest's crowns crowd into one another
+    if (mangrove) {
+      if (hash(i, 9) > 0.6) continue;
+      tree = h < 0.4 ? B.baen : r < 0.5 ? B.keora : B.baen;
+    }
+    else if (home && seen) tree = r < 0.3 ? B.mango : r < 0.45 ? B.coconut : r < 0.62 ? B.supari : r < 0.72 ? B.banana : r < 0.8 ? B.bamboo : r < 0.9 ? B.rain : B.date;
+    else if (home) {
+      if (hash(i, 10) > 0.7) continue;
+      tree = r < 0.45 ? B.far : r < 0.65 ? B.supariFar : r < 0.8 ? B.coconutFar : r < 0.9 ? B.banana : B.dateFar;
+    }
+    // the hills' forest: big, cheap crowns, a quarter as many as the cells (scaled up below to close the canopy)
+    else if (h > 8) {
+      if (hash(i, 8) > 0.25) continue;
+      tree = seen && r < 0.06 ? B.rain : seen && r < 0.1 ? B.mango : B.hill;
+    }
+    // the lone trees along the fields and roads: fewer of them stand out of the fields than the canopy's cells
+    else if (hash(i, 7) > 0.4) continue;
+    else if (seen) tree = r < 0.4 ? B.far : r < 0.55 ? B.rain : r < 0.8 ? B.mango : r < 0.93 ? B.date : B.coconut;
+    else tree = r < 0.75 ? B.far : r < 0.9 ? B.dateFar : B.coconutFar;
+    const canopyHeight = Math.max(3, LAYERS.canopy[i * 2]);
+    const s = Math.min(1.5, Math.max(0.6, canopyHeight / (NOMINAL.get(tree) ?? 8))) * (0.9 + 0.2 * hash(i, 5)) * (tree === B.hill ? 1.4 : 1);
+    put(tree, { x, y: h - (mangrove ? 0.1 : 0.2), z, ry: hash(i, 6) * Math.PI * 2, s });
   }
 
   // casuarina belts on the sand above the spring tides' reach (the beaches' backs and dunes on the island,
@@ -729,12 +709,24 @@ export function buildVegetation(
     jhauAt(c.x + rng.range(-4, 4), c.z + rng.range(-4, 4));
   }
 
-  for (const b of Object.values(B)) {
+  // the trees by the water and on the hills show in the water's mirror; those far inland on the plain are left
+  // out of it (from any water they stand behind the banks' own trees)
+  const mirrored = (p: Placement) => p.y > 8 || bankInfo(p.x, p.z).inland < 600;
+  for (const [name, b] of Object.entries(B)) {
     b.parts.forEach((parts, i) => {
       const items = b.items[i];
-      if (!items.length) return;
-      group.add(instanced(parts.wood, b.wood, items, { cast: true }));
-      group.add(instanced(parts.leaves, b.leaves, items, { cast: true }));
+      for (const [list, layer] of [
+        [items.filter(mirrored), undefined],
+        [items.filter((p) => !mirrored(p)), LAYER_NO_REFLECT],
+      ] as const) {
+        if (!list.length) continue;
+        // in slabs 900 m along z, so fewer stand in view
+        const wood = instanced(parts.wood, b.wood, list, { cast: true, chunk: 900, layer });
+        const leaves = instanced(parts.leaves, b.leaves, list, { cast: true, chunk: 900, layer });
+        wood.name = `${name}-wood`;
+        leaves.name = `${name}-leaves`;
+        group.add(wood, leaves);
+      }
     });
   }
 

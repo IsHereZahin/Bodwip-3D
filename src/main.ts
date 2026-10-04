@@ -1,4 +1,5 @@
 import { Color, PCFShadowMap, PerspectiveCamera, SRGBColorSpace, Scene, Vector3, WebGLRenderer } from 'three';
+import type { InstancedMesh, Mesh } from 'three';
 import { Soundscape } from './audio/soundscape';
 import { G, LAYER_NO_REFLECT, LAYER_WATER } from './core/globals';
 import { clamp } from './core/mathx';
@@ -821,6 +822,29 @@ async function main(hud: Hud): Promise<void> {
         /** Today's sky events, as { kind, hour }. */
         events() {
           return clock.today().map((ev) => ({ kind: ev.kind, hour: Math.round(hourOf(ev) * 100) / 100 }));
+        },
+        /**
+         * What the scene holds, by top-level group: meshes, instances and triangles (all of them, drawn or not);
+         * with `group`, that group's geometries by triangles in all, the heaviest first.
+         */
+        stats(group?: string) {
+          const out: Record<string, { meshes: number; instances: number; tris: number }> = {};
+          scene.traverse((o) => {
+            const m = o as Mesh;
+            if (!m.isMesh) return;
+            let top = o;
+            while (top.parent && top.parent !== scene) top = top.parent;
+            const g = m.geometry;
+            const tris = (g.index ? g.index.count : g.getAttribute('position').count) / 3;
+            const n = (m as InstancedMesh).isInstancedMesh ? (m as InstancedMesh).count : 1;
+            const key = group ? (top.name === group ? (m.parent?.name || g.uuid.slice(0, 8)) + ':' + tris : '') : top.name || '?';
+            if (!key) return;
+            const e = (out[key] ??= { meshes: 0, instances: 0, tris: 0 });
+            e.meshes++;
+            e.instances += n;
+            e.tris += tris * n;
+          });
+          return Object.fromEntries(Object.entries(out).sort((a, b) => b[1].tris - a[1].tris).slice(0, 40));
         },
         /** Hides every object with this name (debugging what draws where). */
         hide(name: string) {
