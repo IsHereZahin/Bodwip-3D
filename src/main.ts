@@ -19,6 +19,7 @@ import { tourScenes } from './rig/tour';
 import { Rig, VIEWS } from './rig/rig';
 import type { ViewName } from './rig/rig';
 import { EVENT_NOW, clockLabel, tideLabel } from './ui/bangla';
+import { toWorld } from './geo/project';
 import { Controls } from './ui/controls';
 import { WEATHER_PICKS } from './ui/controls';
 import type { CameraChoice, WeatherPick } from './ui/controls';
@@ -54,7 +55,7 @@ import { setWalls } from './world/walkable';
 import { ambienceAt } from './world/ambience';
 import { routeLength } from './world/navigation';
 import { Ships } from './world/ships';
-import { cullBeyond, updateCulling } from './render/cull';
+import { cullBeyond, setCullReach, updateCulling } from './render/cull';
 import { buildSky } from './world/sky';
 import { Terrain } from './world/terrain';
 import { buildVegetation } from './world/vegetation';
@@ -224,7 +225,8 @@ async function main(hud: Hud): Promise<void> {
   env.season = season;
   env.weather = weather;
   env.addTo(scene);
-  env.setShadowMapSize(Math.min(4096, renderer.capabilities.maxTextureSize) >= 4096 && devicePixelRatio <= 1.5 ? 4096 : 2048);
+  const SHADOW_BEST = Math.min(4096, renderer.capabilities.maxTextureSize) >= 4096 && devicePixelRatio <= 1.5 ? 4096 : 2048;
+  env.setShadowMapSize(SHADOW_BEST);
   const rig = new Rig(camera, canvas);
   // the viewer on foot, and the walls he cannot walk through (the huts and the map's buildings)
   scene.add(rig.walker.group);
@@ -317,6 +319,22 @@ async function main(hud: Hud): Promise<void> {
   ships.onHorn = (x, z, blasts) => sound.horn(Math.hypot(camera.position.x - x, camera.position.z - z), blasts);
   hud.progress(0.85);
   await nextTask();
+
+  // ---- quality: the detail the device can afford (D7: in full on a good GPU, 30 fps on an ordinary laptop) ----
+  /** `?quality=low|high` holds a tier; without it the low one comes in by itself if even the smallest picture is slow. */
+  const QUALITY_ASKED = new URLSearchParams(location.search).get('quality');
+  let quality: 'high' | 'low' = 'high';
+  const setQuality = (q: 'high' | 'low') => {
+    quality = q;
+    const low = q === 'low';
+    // less drawn far off, a coarser mirror, a smaller shadow map, the grass kept closer
+    setCullReach(low ? 0.7 : 1);
+    pipeline.setReflectionScale(low ? 0.33 : 0.5);
+    env.setShadowMapSize(low ? 2048 : SHADOW_BEST);
+    renderer.shadowMap.needsUpdate = true;
+    meadow.setReach(low ? 0.7 : 1);
+  };
+  if (QUALITY_ASKED === 'low') setQuality('low');
 
   // ---- size and adaptive resolution ----
   const perf = { scale: 1, acc: 0, n: 0, frames: 0, cool: 0, locked: false, ms: 16, driftMs: 0, fishMs: 0 };
@@ -526,6 +544,9 @@ async function main(hud: Hud): Promise<void> {
     map: () => mapPanel.toggle(),
     touched: noteInput,
   });
+
+  /** The GIS reference mode's readout and overlay (`?debug&geo`), once it has loaded. */
+  let geoMode: { update(dt: number): void } | null = null;
 
   // ---- the map: the ways to a place, by the boat, on foot or from above ----
   /** A jump through mist (s each way): it thickens, the act happens unseen, it clears. */
@@ -777,7 +798,7 @@ async function main(hud: Hud): Promise<void> {
     perf.fishMs += (performance.now() - fishStart - perf.fishMs) * 0.1;
     // birds and fireflies gather round whoever is being watched: the boat, or the free camera
     life.update(dt, t, director.active ? director.focus : rig.subject, director.active ? rig.boat.course : rig.subjectHeading, env.night, weather.rain);
-    // the beach's crabs round the camera (none away from the beaches); nobody else walks there yet
+    // the beach's crabs round the camera (none away from the beaches), wary of the viewer on foot
     crabs.update(dt, camera.position, rig.mode === 'walk' ? [rig.subject] : [], weather.rain);
     sky.mesh.position.copy(camera.position);
     terrain.update(camera.position);
@@ -831,6 +852,7 @@ async function main(hud: Hud): Promise<void> {
     controls.update(clock, director.active ? 'film' : rig.mode, soundOn, tideLabel(tide.flow, tide.level));
     const who = rig.subject;
     mapPanel.update(who.x, who.z, rig.subjectHeading);
+    geoMode?.update(raw);
 
     // adaptive resolution: hold ~45–60 fps by trading pixels, never below 60% scale
     perf.frames++;
@@ -848,6 +870,11 @@ async function main(hud: Hud): Promise<void> {
           perf.scale = Math.min(1, perf.scale + 0.06);
           perf.cool = now + 3000;
         }
+        // at the smallest picture and still under 30 fps: the lower tier, once, unless a tier was asked for
+        if (perf.scale <= 0.6 && avg > 0.034 && quality === 'high' && !QUALITY_ASKED) {
+          setQuality('low');
+          perf.cool = now + 6000;
+        }
         if (before !== perf.scale) resize();
       }
     }
@@ -856,6 +883,14 @@ async function main(hud: Hud): Promise<void> {
   readyAt = performance.now();
   hud.ready();
   controls.show();
+
+  if (DEBUG && new URLSearchParams(location.search).has('geo')) {
+    import('./ui/geoMode')
+      .then(({ GeoMode }) => {
+        geoMode = new GeoMode(scene, camera, canvas, () => ({ level: G.uWaterLevel.value, flow: tide.flow, tide: tideLabel(tide.flow, tide.level) }));
+      })
+      .catch((err: unknown) => console.error('geo mode:', err));
+  }
 
   if (DEBUG) {
     // hooks for headless stills: put the boat, the day and the camera where you want them and freeze
@@ -1037,6 +1072,13 @@ async function main(hud: Hud): Promise<void> {
           const b = rig.boat;
           return { voyage: rig.voyage, mode: rig.mode, boat: { x: Math.round(b.pos.x), z: Math.round(b.pos.z), speed: Math.round(b.speed * 10) / 10, rowing: b.rowing }, walker: { x: Math.round(rig.walker.x * 10) / 10, y: Math.round(rig.walker.y * 10) / 10, z: Math.round(rig.walker.z * 10) / 10, wading: Math.round(rig.walker.wading * 100) / 100 } };
         },
+        /** The free camera `height` m over a real place (WGS84), looking down at it from the south; returns its world point. */
+        goto(lat: number, lon: number, height = 150) {
+          const p = toWorld(lat, lon);
+          const y = Math.max(terrainHeight(p.x, p.z), G.uWaterLevel.value);
+          rig.placeFree(p.x, y + height, p.z - height * 0.7, 0, -Math.atan2(height, height * 0.7));
+          return { x: Math.round(p.x), z: Math.round(p.z) };
+        },
         /** Goes to a place (its id) the way the map's buttons do: by the boat, on foot or from above. */
         go(id: string, how: keyof MapActions = 'sail') {
           const p = PLACES.find((q) => q.id === id);
@@ -1088,7 +1130,7 @@ async function main(hud: Hud): Promise<void> {
         },
         info() {
           const cam = camera.position.toArray().map((v) => Math.round(v * 10) / 10);
-          return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, scale: perf.scale, ms: Math.round(perf.ms * 10) / 10, programs: renderer.info.programs?.length, camera: cam, mode: director.active ? 'film' : rig.mode, hour: Math.round(clock.hour * 100) / 100, driftMs: Math.round(perf.driftMs * 100) / 100, fishMs: Math.round(perf.fishMs * 100) / 100, rain: Math.round(G.uRain.value * 100) / 100, rainShown: rain.visible, wind: Math.round(G.uWind.value.z * 100) / 100, seaWind: Math.round(sea.wind * 10) / 10, waveHeight: Math.round(sea.height * 100) / 100, wavePeak: Math.round(sea.peak * 10) / 10, chop: Math.round(sea.chop * 100) / 100 };
+          return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, scale: perf.scale, ms: Math.round(perf.ms * 10) / 10, programs: renderer.info.programs?.length, camera: cam, mode: director.active ? 'film' : rig.mode, quality, hour: Math.round(clock.hour * 100) / 100, driftMs: Math.round(perf.driftMs * 100) / 100, fishMs: Math.round(perf.fishMs * 100) / 100, rain: Math.round(G.uRain.value * 100) / 100, rainShown: rain.visible, wind: Math.round(G.uWind.value.z * 100) / 100, seaWind: Math.round(sea.wind * 10) / 10, waveHeight: Math.round(sea.height * 100) / 100, wavePeak: Math.round(sea.peak * 10) / 10, chop: Math.round(sea.chop * 100) / 100 };
         },
       },
     });

@@ -184,6 +184,7 @@ export class Meadow {
   private readonly huts: readonly HutPlan[];
   private wanted: string[] = [];
   private centre = '';
+  private reach = 1;
   private dirty = false;
   private frame = 0;
 
@@ -225,6 +226,12 @@ export class Meadow {
     };
   }
 
+  /** How far the grass reaches, as a share of NEAR and FAR (the lower quality tier keeps it closer). */
+  setReach(k: number): void {
+    this.reach = k;
+    this.centre = '';
+  }
+
   /** Call every frame with the camera's position. `all` builds every missing chunk now (for stills). */
   update(view: Vector3, all = false): void {
     this.frame++;
@@ -233,15 +240,17 @@ export class Meadow {
     const centre = `${cx},${cz}`;
     if (centre !== this.centre) {
       this.centre = centre;
-      const R = Math.ceil(FAR / CHUNK);
+      const far = FAR * this.reach;
+      const near = NEAR * this.reach;
+      const R = Math.ceil(far / CHUNK);
       const list: { key: string; d: number }[] = [];
       for (let dz = -R; dz <= R; dz++) {
         for (let dx = -R; dx <= R; dx++) {
           const x = (cx + dx + 0.5) * CHUNK;
           const z = (cz + dz + 0.5) * CHUNK;
           const d = Math.hypot(x - view.x, z - view.z);
-          if (d > FAR) continue;
-          list.push({ key: `${cx + dx},${cz + dz},${d < NEAR ? 0 : 1}`, d });
+          if (d > far) continue;
+          list.push({ key: `${cx + dx},${cz + dz},${d < near ? 0 : 1}`, d });
         }
       }
       list.sort((a, b) => a.d - b.d);

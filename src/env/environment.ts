@@ -124,7 +124,11 @@ export class Environment {
   }
 
   setShadowMapSize(size: number): void {
+    if (this.key.shadow.mapSize.x === size) return;
     this.key.shadow.mapSize.set(size, size);
+    // a map already made keeps its size until it is let go
+    this.key.shadow.map?.dispose();
+    this.key.shadow.map = null;
   }
 
   /** `hour` is local solar time (12 = noon); `moonAge` is days since new moon. */

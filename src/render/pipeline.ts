@@ -210,7 +210,7 @@ export class Pipeline {
   private width = 1;
   private height = 1;
   private frame = 0;
-  private readonly reflScale: number;
+  private reflScale: number;
   /** Height of one letterbox bar as a fraction of the frame. */
   bar = 0.12;
 
@@ -239,6 +239,12 @@ export class Pipeline {
 
   get size(): { width: number; height: number } {
     return { width: this.width, height: this.height };
+  }
+
+  /** The mirror pass's resolution as a share of the frame's. */
+  setReflectionScale(k: number): void {
+    this.reflScale = k;
+    this.reflection.setSize(Math.round(this.width * k), Math.round(this.height * k));
   }
 
   setSize(width: number, height: number): void {

@@ -473,6 +473,22 @@ body.ui-off #ui-restore:focus-visible {
   font-size: 13px;
   color: var(--ink-dim);
 }
+/* the data's sources, small, as each asks to be credited */
+#help .help-sources {
+  margin-top: 16px;
+  font-size: 11.5px;
+  color: var(--ink-dim);
+}
+#help .help-sources p {
+  margin: 0 0 6px;
+}
+#help .help-sources ul {
+  margin: 0;
+  padding-left: 18px;
+}
+#help .help-sources a {
+  color: inherit;
+}
 #help kbd {
   font-family: inherit;
   font-size: 12px;

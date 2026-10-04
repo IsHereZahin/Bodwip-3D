@@ -46,10 +46,10 @@ const DELTA = [
   (4279 * N ** 4) / 630,
 ];
 
-/** Transverse Mercator on the origin's meridian: [east, north] in metres from the equator. */
-function forward(lat: number, lon: number): [number, number] {
+/** Transverse Mercator on a meridian (the origin's unless given): [east, north] in metres from the equator. */
+function forward(lat: number, lon: number, lon0: number = ORIGIN.lon): [number, number] {
   const phi = lat * RAD;
-  const dl = (lon - ORIGIN.lon) * RAD;
+  const dl = (lon - lon0) * RAD;
   const s = Math.sin(phi);
   const t = Math.sinh(Math.atanh(s) - E * Math.atanh(E * s));
   const xi = Math.atan2(t, Math.cos(dl));
@@ -96,4 +96,12 @@ export function toWorld(lat: number, lon: number): { x: number; z: number } {
 /** The real place under a point of the world. */
 export function toLatLon(x: number, z: number): LatLon {
   return fromGround(-x * MAP_SCALE, z * MAP_SCALE);
+}
+
+/** UTM (WGS84, northern hemisphere) for a real place: its zone and easting and northing in metres (the GIS readout). */
+export function toUtm(lat: number, lon: number): { zone: number; east: number; north: number } {
+  const zone = Math.floor((lon + 180) / 6) + 1;
+  const [east, north] = forward(lat, lon, zone * 6 - 183);
+  const K0 = 0.9996;
+  return { zone, east: 500000 + K0 * east, north: K0 * north };
 }

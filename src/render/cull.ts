@@ -14,6 +14,12 @@ interface Entry {
 }
 
 const entries: Entry[] = [];
+/** Every distance scaled by this (the lower quality tier draws less far). */
+let reach = 1;
+
+export function setCullReach(k: number): void {
+  reach = k;
+}
 
 /** Leaves every mesh under `root` undrawn while the camera is farther than `far` from its bounding sphere. */
 export function cullBeyond(root: Object3D, far: number): void {
@@ -30,5 +36,5 @@ export function cullBeyond(root: Object3D, far: number): void {
 
 /** Call once a frame, before drawing, with the camera's position. */
 export function updateCulling(eye: Vector3): void {
-  for (const e of entries) e.mesh.visible = e.centre.distanceTo(eye) - e.radius < e.far;
+  for (const e of entries) e.mesh.visible = e.centre.distanceTo(eye) - e.radius < e.far * reach;
 }
