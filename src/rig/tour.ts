@@ -2,6 +2,7 @@ import { Vector3 } from 'three';
 import { G } from '../core/globals';
 import { angleDelta, lerp } from '../core/mathx';
 import { canopyAt, place } from '../geo/data';
+import { plainZ } from '../geo/project';
 import {
   ADINATH,
   BIL,
@@ -125,13 +126,13 @@ function glide(run: { from: Vector3; to: Vector3 }, side: 1 | -1, height: number
 
 // places found once, at load (deterministic); the tour is re-authored for the real map later (plan's step L),
 // these keep each scene on a real place meanwhile
-const MUSTARD = fieldRun(4200, -1);
-const FLOODED = fieldRun(2600, -1);
-const HARVEST = fieldRun(1800, -1);
-const SALT = saltRun(1200, 1);
+const MUSTARD = fieldRun(plainZ(4200), -1);
+const FLOODED = fieldRun(plainZ(2600), -1);
+const HARVEST = fieldRun(plainZ(1800), -1);
+const SALT = saltRun(plainZ(1200), 1);
 /** A stretch of the island's bank under trees (the satellites' canopy) for spring's blossom, south from `z0`. */
 const BLOSSOM_Z = (() => {
-  for (let z = 2400; z > 0; z -= 10) if (canopyAt(riverX(z) + edgeHalfWidth(z, 1) + 18, z).cover > 0.5) return z;
+  for (let z = plainZ(2400); z > 0; z -= 10) if (canopyAt(riverX(z) + edgeHalfWidth(z, 1) + 18, z).cover > 0.5) return z;
   return 2400;
 })();
 const VILLAGE_GHAT = GHATS[Math.min(2, GHATS.length - 1)];

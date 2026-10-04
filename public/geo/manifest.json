@@ -10,10 +10,10 @@
   },
   "grid": {
     "spacing": 30,
-    "east0": -21870,
-    "north1": 33390,
-    "width": 1033,
-    "height": 1548,
+    "east0": -12000,
+    "north1": 14130,
+    "width": 575,
+    "height": 693,
     "rows": "north to south",
     "columns": "west to east",
     "note": "cell centre (c, r): east = east0 + (c + 0.5)·spacing, north = north1 − (r + 0.5)·spacing, ground metres"
@@ -74,22 +74,22 @@
       "encoding": "deflate-raw",
       "type": "JSON",
       "counts": {
-        "road": 3364,
-        "rail": 10,
-        "waterway": 218,
+        "road": 2428,
+        "rail": 2,
+        "waterway": 145,
         "site": 10,
-        "structure": 86,
+        "structure": 80,
         "power": 12,
-        "towers": 191,
-        "nodes": 29
+        "towers": 116,
+        "nodes": 28
       },
       "licence": "ODbL (OpenStreetMap)"
     },
     "channel": {
       "file": "channel.json",
-      "points": 458,
-      "worldKm": 9.2,
-      "medianHalfWidth": 148.3
+      "points": 320,
+      "worldKm": 6.4,
+      "medianHalfWidth": 105
     },
     "places": {
       "file": "places.json",
@@ -110,7 +110,7 @@
         "commercial": 7,
         "industrial": 8
       },
-      "count": 11138,
+      "count": 4928,
       "names": "buildings.json",
       "note": "a ninth of the ordinary buildings (by a hash of their id) and every one OSM names or tags as more than a house, kept clear of each other on the 1:3 map; OSM's footprints, and Microsoft's where OSM has none",
       "licence": "ODbL (OpenStreetMap; Microsoft Global ML Building Footprints)"
@@ -127,18 +127,18 @@
     }
   },
   "coverKm2": {
-    "water": 679.6,
-    "mud": 34.7,
-    "sand": 15.7,
-    "tree": 186.3,
-    "crop": 185.5,
-    "grass": 22.4,
-    "bare": 13.2,
-    "pond": 88.4,
-    "saltpan": 122.9,
-    "built": 11.8,
-    "marsh": 12.8,
-    "mangrove": 65.8,
+    "water": 120,
+    "saltpan": 33,
+    "bare": 4.4,
+    "sand": 6.5,
+    "grass": 8.2,
+    "pond": 23,
+    "marsh": 5.8,
+    "crop": 44.1,
+    "tree": 58.1,
+    "mud": 15.4,
+    "built": 4.1,
+    "mangrove": 35.9,
     "shrub": 0
   },
   "tide": {
@@ -209,11 +209,11 @@
     }
   },
   "areaKm2": {
-    "sea": 679.6,
-    "tidal": 41.6,
-    "land": 564,
-    "inland": 88.4,
-    "mangrove": 65.7
+    "sea": 120,
+    "land": 161.3,
+    "inland": 23,
+    "tidal": 18.4,
+    "mangrove": 35.9
   },
   "licence": "each layer its own: terrain and kind CC BY-NC-SA 4.0 (from FABDEM V1-2), cover ODbL, canopy CC BY 4.0",
   "attribution": [

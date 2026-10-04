@@ -2,6 +2,7 @@ import { BoxGeometry, Group, Matrix4, Mesh, MeshStandardMaterial, Quaternion, Sp
 import { G } from '../core/globals';
 import { Rng } from '../core/rng';
 import { place } from '../geo/data';
+import { plain } from '../geo/project';
 import { MeshBuilder, rgb, scaleRgb, slab, strut, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { claddingTexture } from '../render/textures';
@@ -463,8 +464,8 @@ export class Ships {
     this.fsru = make('lng', fsru.x, fsru.z, 0);
     // the tugs, at their station in the inner channel
     this.tugHome = [
-      { x: 3560, z: 6772, heading: -Math.PI / 2 },
-      { x: 3610, z: 6772, heading: -Math.PI / 2 },
+      { ...plain(3560, 6772), heading: -Math.PI / 2 },
+      { ...plain(3610, 6772), heading: -Math.PI / 2 },
     ];
     for (const h of this.tugHome) this.tugs.push(make('tug', h.x, h.z, h.heading));
 

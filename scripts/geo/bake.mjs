@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { deflateRawSync, inflateSync } from 'node:zlib';
 import { fromFile } from 'geotiff';
 import proj4 from 'proj4';
-import { MAP_SCALE, ORIGIN, fromGround, toGround } from '../../src/geo/project.ts';
+import { CROP_GROUND, MAP_SCALE, ORIGIN, fromGround, toGround } from '../../src/geo/project.ts';
 import { BBOX, CACHE } from './config.mjs';
 import { PLACES } from './places.mjs';
 import { encodePng } from './lib/png.mjs';
@@ -152,10 +152,11 @@ function gridSpec() {
   const east = along((t) => toGround(BBOX.south + t * (BBOX.north - BBOX.south), BBOX.east).east);
   const south = along((t) => toGround(BBOX.south, BBOX.west + t * (BBOX.east - BBOX.west)).north);
   const north = along((t) => toGround(BBOX.north, BBOX.west + t * (BBOX.east - BBOX.west)).north);
-  const east0 = Math.ceil(Math.max(...west) / SPACING) * SPACING;
-  const east1 = Math.floor(Math.min(...east) / SPACING) * SPACING;
-  const north0 = Math.ceil(Math.max(...south) / SPACING) * SPACING;
-  const north1 = Math.floor(Math.min(...north) / SPACING) * SPACING;
+  // the data's box, cut to the compact map's extent (src/geo/project.ts CROP)
+  const east0 = Math.ceil(Math.max(...west, CROP_GROUND.east0) / SPACING) * SPACING;
+  const east1 = Math.floor(Math.min(...east, CROP_GROUND.east1) / SPACING) * SPACING;
+  const north0 = Math.ceil(Math.max(...south, CROP_GROUND.north0) / SPACING) * SPACING;
+  const north1 = Math.floor(Math.min(...north, CROP_GROUND.north1) / SPACING) * SPACING;
   return { spacing: SPACING, east0, north1, width: (east1 - east0) / SPACING, height: (north1 - north0) / SPACING };
 }
 

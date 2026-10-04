@@ -3,7 +3,7 @@ import { SegmentIndex } from '../core/segmentIndex';
 import { clamp, smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
 import { CHANNEL_POINTS, COVER, KIND, LINES, WORLD, canopyAt, coverAt, heightAt, inlandSurfaceAt, kindAt, place, type GeoLine } from '../geo/data';
-import { MAP_SCALE } from '../geo/project';
+import { MAP_SCALE, plainZ } from '../geo/project';
 import { onPlant, plantGround } from './plantSite';
 import { onPort, portGround } from './portSite';
 import { onRoad, roadGround } from './roads';
@@ -187,8 +187,8 @@ export function boatLane(z: number): number {
  * The boat's journey: from the narrow north of the channel, past Shaplapur, Adinath hill and Gorakghata's
  * jetties, out toward the mouth by Sonadia; it loops through a mist fade at the end.
  */
-export const JOURNEY_Z0 = Math.min(6800, CHANNEL_Z1 - 200);
-export const JOURNEY_Z1 = Math.max(-1400, CHANNEL_Z0 + 200);
+export const JOURNEY_Z0 = Math.min(plainZ(6800), CHANNEL_Z1 - 200);
+export const JOURNEY_Z1 = Math.max(plainZ(-1400), CHANNEL_Z0 + 200);
 
 // ---------- the inland waters the scene adds: the shapla bil and the khal under the old bridge ----------
 

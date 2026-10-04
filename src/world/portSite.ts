@@ -1,5 +1,6 @@
 import { smoothstep } from '../core/mathx';
 import { LINES, place } from '../geo/data';
+import { plain } from '../geo/project';
 
 // Matarbari deep-sea port's plan and the ground it leaves (GEOGRAPHY_PLAN.md §8.6), apart from its meshes
 // (world/port.ts) and its ships (world/ships.ts) so the ground, the roads and the planting can ask about it.
@@ -33,13 +34,13 @@ export interface ChannelPoint {
   half: number;
 }
 
-/** The channel's middle inside the harbour, from the coal basin to the entrance [মডেল]. */
+/** The channel's middle inside the harbour, from the coal basin to the entrance [মডেল] (laid out on the plain 1:3 map). */
 const INSIDE: readonly ChannelPoint[] = [
-  { x: 3356, z: 6790, half: 45 },
-  { x: 3500, z: 6728, half: 58 },
-  { x: 3700, z: 6720, half: 62 },
-  { x: 3870, z: 6610, half: 80 },
-  { x: 4005, z: 6450, half: 85 },
+  { ...plain(3356, 6790), half: 45 },
+  { ...plain(3500, 6728), half: 58 },
+  { ...plain(3700, 6720), half: 62 },
+  { ...plain(3870, 6610), half: 80 },
+  { ...plain(4005, 6450), half: 85 },
 ];
 /** Where in CHANNEL the entrance (between the breakwaters' heads) is; the points after it lie out at sea. */
 export const ENTRANCE = INSIDE.length;
@@ -152,9 +153,9 @@ export function breakwaterLine(outline: Float32Array, n = 48): Float32Array {
 /** The berths: each quay's face from `a` to `b` (the water on its left looking from a to b), its length. */
 export const BERTHS = {
   /** The container berth off the spit's harbour shore (its face just seaward of the shore all along), facing west. */
-  container: { a: { x: 3956, z: 6209 }, b: { x: 3890, z: 6534 }, depth: DREDGED },
+  container: { a: plain(3956, 6209), b: plain(3890, 6534), depth: DREDGED },
   /** The multipurpose berth along the inner channel's south bank, facing north. */
-  multipurpose: { a: { x: 3640, z: 6663 }, b: { x: 3420, z: 6663 }, depth: -16.5 },
+  multipurpose: { a: plain(3640, 6663), b: plain(3420, 6663), depth: -16.5 },
 } as const;
 /** How far out from a berth's face its pocket is dredged (m): a ship's beam and a little. */
 const POCKET = 50;

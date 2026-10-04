@@ -14,6 +14,7 @@ import {
 } from 'three';
 import type { BufferGeometry, Material } from 'three';
 import { G } from '../core/globals';
+import { plainZ } from '../geo/project';
 import { clamp } from '../core/mathx';
 import { Rng } from '../core/rng';
 import { windAt } from '../env/wind';
@@ -47,16 +48,16 @@ import { hullWaves, type HullWaves } from './waves';
  * the plant and the boat's lane, nearer a village the better; the best by that, at least 700 m apart.
  */
 export const LIFT_NETS: readonly { z: number; side: 1 | -1 }[] = [
-  { z: 6180, side: -1 },
-  { z: 4860, side: -1 },
-  { z: 2000, side: 1 },
-  { z: -1100, side: -1 },
+  { z: plainZ(6180), side: -1 },
+  { z: plainZ(4860), side: -1 },
+  { z: plainZ(2000), side: 1 },
+  { z: plainZ(-1100), side: -1 },
 ];
 
 /** Where the fishing boats ride at anchor: near which z, and on which side of the river's lane they prefer. */
 const NET_BOATS: readonly { z: number; prefer: 1 | -1 }[] = [
-  { z: 5300, prefer: -1 },
-  { z: 1600, prefer: 1 },
+  { z: plainZ(5300), prefer: -1 },
+  { z: plainZ(1600), prefer: 1 },
 ];
 
 const SHORE: LiftNetSpec = {
