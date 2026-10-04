@@ -43,6 +43,12 @@ const BARE_TIDAL = 6;
 const MODELLED = 0x80;
 /** Inland water on ground rising more than this (m) across the 3 × 3 cells round it is ground (bakeTerrain). */
 const INLAND_SLOPE = 3;
+/**
+ * The Matarbari plant's north ash pond (OSM way 1537055661): full of water on Sentinel-2 (2026-02-26) but dug
+ * and bunded after the DEMs and WorldCover were made, so drawn in here; its water's level and its bunds' crest
+ * (m about MSL) are [মডেল]. The east pond (way 1537056321) is mostly dry sand on the same scene and stays land.
+ */
+const ASH_POND = { id: 1537055661, level: 6, bund: 8 };
 
 const smoothstep = (a, b, x) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
@@ -192,6 +198,30 @@ function distanceToOutside(inside, w, h) {
     for (let x = 0; x < w; x++) d[y * w + x] = out[x];
   }
   return d;
+}
+
+/** The ash pond on the grid: 1 inside its outline, 2 for the ring of cells round it (its bunds). */
+async function ashPondMask(g) {
+  const { width: W, height: H } = g;
+  const mask = new Uint8Array(W * H);
+  const { elements } = JSON.parse(await readFile(at('osm-landuse.json'), 'utf8'));
+  const way = elements.find((e) => e.type === 'way' && e.id === ASH_POND.id && e.geometry?.length);
+  if (!way) return mask;
+  const ring = way.geometry.map((p) => toGround(p.lat, p.lon));
+  const inside = (e, n) => {
+    let c = false;
+    for (let a = 0, b = ring.length - 1; a < ring.length; b = a++)
+      if (ring[a].north > n !== ring[b].north > n && e < ((ring[b].east - ring[a].east) * (n - ring[a].north)) / (ring[b].north - ring[a].north) + ring[a].east) c = !c;
+    return c;
+  };
+  for (let r = 0; r < H; r++)
+    for (let c = 0; c < W; c++) if (inside(g.east0 + (c + 0.5) * SPACING, g.north1 - (r + 0.5) * SPACING)) mask[r * W + c] = 1;
+  for (let i = 0; i < W * H; i++) {
+    if (mask[i]) continue;
+    const c = i % W;
+    for (const j of [i - W, i + W, c > 0 ? i - 1 : -1, c < W - 1 ? i + 1 : -1]) if (j >= 0 && j < W * H && mask[j] === 1) mask[i] = 2;
+  }
+  return mask;
 }
 
 async function bakeTerrain() {
@@ -359,7 +389,19 @@ async function bakeTerrain() {
       level[i] = 0;
     } else height[i] = level[i] - 1.2;
   }
-  return { grid: g, kind, height, dem, level, lowWater: +lowWater.toFixed(2) };
+  // 5. the plant's ash pond, standing above the land round it inside its bunds
+  const ash = await ashPondMask(g);
+  for (let i = 0; i < W * H; i++) {
+    if (ash[i] === 1) {
+      kind[i] = KIND.inland | MODELLED;
+      level[i] = ASH_POND.level;
+      height[i] = ASH_POND.level - 1.2;
+    } else if (ash[i] === 2) {
+      kind[i] = KIND.land;
+      height[i] = Math.max(dem[i], ASH_POND.bund);
+    }
+  }
+  return { grid: g, kind, height, dem, level, ash, lowWater: +lowWater.toFixed(2) };
 }
 
 /**
@@ -508,7 +550,7 @@ async function canopySampler() {
   };
 }
 
-async function bakeCover(g, kind) {
+async function bakeCover(g, kind, ash) {
   const { width: W, height: H } = g;
   const worldcover = await windowSampler('worldcover-2021', Uint8Array);
   const seasonality = await windowSampler('jrc-seasonality', Uint8Array);
@@ -539,7 +581,8 @@ async function bakeCover(g, kind) {
       if (k === KIND.sea) cls = COVER.water;
       else if (k === KIND.mangrove) cls = COVER.mangrove;
       // salt pans hold water only through the rains (3–9 months a year, as inside OSM's pans); shrimp ponds and tanks most of the year
-      else if (k === KIND.inland) cls = inSaltPan(lat, lon) || isSeasonal(seasonality(lat, lon)) ? COVER.saltpan : COVER.pond;
+      else if (k === KIND.inland) cls = ash[i] === 1 ? COVER.pond : inSaltPan(lat, lon) || isSeasonal(seasonality(lat, lon)) ? COVER.saltpan : COVER.pond;
+      else if (ash[i] === 2) cls = COVER.bare;
       else if (k === KIND.tidal) cls = sentinel.at(lat, lon) >= SAND_BRIGHTNESS ? COVER.sand : COVER.mud;
       else if (inSaltPan(lat, lon)) cls = COVER.saltpan;
       else if (cls === COVER.bare && sentinel.at(lat, lon) >= SAND_BRIGHTNESS) cls = COVER.sand;
@@ -915,9 +958,9 @@ async function bakeChannel(g, kind) {
 // ---------- lines from OpenStreetMap, and the landmarks ----------
 
 /**
- * Roads, rails, waterways, built structures in the water and power lines, in ground decimetres
- * ([east, north, east, north, …] about the origin), with power towers as points. Kept if any of a line's
- * points lies in the grid.
+ * Roads, rails, waterways, built structures in the water, power lines and the outlines of the industrial
+ * sites, in ground decimetres ([east, north, east, north, …] about the origin), with power towers, cranes,
+ * chimneys and wind turbines as points. Kept if any of a line's points lies in the grid.
  */
 async function bakeVectors(g) {
   const load = async (theme) => JSON.parse(await readFile(at(`osm-${theme}.json`), 'utf8')).elements;
@@ -944,8 +987,32 @@ async function bakeVectors(g) {
     else if (e.tags?.railway === 'rail') add('rail', e, {});
   }
   for (const e of await load('coast')) if (e.tags?.waterway) add('waterway', e, { t: e.tags.waterway });
+  // the sites the scene builds on, as closed outlines: the power plant's fence line, its ash ponds, the port's
+  // works and the substations (a way can be in both themes: kept once)
+  const sites = new Set();
+  const site = (e) => {
+    const t = e.tags ?? {};
+    const kind = t.power === 'plant' ? 'plant' : t.industrial === 'ash_pond' || t.substance === 'coal-ash' ? 'ash_pond' : t.industrial === 'port' ? 'port' : t.power === 'substation' ? 'substation' : null;
+    if (!kind || e.type !== 'way' || sites.has(e.id)) return;
+    sites.add(e.id);
+    add('site', e, { t: kind, ...(t.voltage ? { v: +String(t.voltage).split(';')[0] } : {}) });
+  };
+  for (const e of await load('landuse')) site(e);
+  // single things OSM marks as points: the cranes at the berths, chimneys, and wind turbines (with their
+  // rating where OSM gives it; a node rated over 10 MW marks a whole wind farm, not a turbine)
+  const nodes = [];
+  const point = (e, extra) => {
+    const q = toGround(e.lat, e.lon);
+    if (inGrid(q.east, q.north)) nodes.push({ ...extra, p: [Math.round(q.east * 10), Math.round(q.north * 10)] });
+  };
   for (const e of await load('infrastructure')) {
     const t = e.tags ?? {};
+    site(e);
+    if (e.type === 'node' && /^(crane|chimney)$/.test(t.man_made ?? '')) point(e, { t: t.man_made });
+    if (e.type === 'node' && t['generator:method'] === 'wind_turbine') {
+      const mw = /^([\d.]+)\s*MW$/.exec(t['generator:output:electricity'] ?? '');
+      if (mw ? +mw[1] <= 10 : t['generator:type'] !== undefined) point(e, { t: 'wind_turbine', ...(mw ? { mw: +mw[1] } : {}) });
+    }
     if (/^(pier|breakwater|groyne|dyke|quay)$/.test(t.man_made ?? '')) add('structure', e, { t: t.man_made });
     else if (t.embankment === 'yes') add('structure', e, { t: 'embankment' });
     else if (/^(line|minor_line)$/.test(t.power ?? '')) add('power', e, { t: t.power, ...(t.voltage ? { v: +String(t.voltage).split(';')[0] } : {}) });
@@ -954,10 +1021,10 @@ async function bakeVectors(g) {
       if (inGrid(q.east, q.north)) towers.push(Math.round(q.east * 10), Math.round(q.north * 10));
     }
   }
-  await writeFile(`${OUT}vectors.bin`, deflateRawSync(Buffer.from(JSON.stringify({ unit: 'ground decimetres about the origin', lines, towers }))));
+  await writeFile(`${OUT}vectors.bin`, deflateRawSync(Buffer.from(JSON.stringify({ unit: 'ground decimetres about the origin', lines, towers, nodes }))));
   const count = {};
   for (const l of lines) count[l.k] = (count[l.k] ?? 0) + 1;
-  return { ...count, towers: towers.length / 2 };
+  return { ...count, towers: towers.length / 2, nodes: nodes.length };
 }
 
 /** The landmarks, each with the world point and the baked ground under it (public/geo/places.json). */
@@ -983,7 +1050,7 @@ const RAD_DEG = Math.PI / 180;
 const isSeasonal = (months) => months !== null && months >= 3 && months <= 9;
 
 const terrain = await bakeTerrain();
-const coverage = await bakeCover(terrain.grid, terrain.kind);
+const coverage = await bakeCover(terrain.grid, terrain.kind, terrain.ash);
 Object.assign(terrain, await writeGround(terrain, coverage.cover));
 const vectors = await bakeVectors(terrain.grid);
 const buildings = await bakeBuildings(terrain.grid, terrain.kind);

@@ -4,6 +4,7 @@ import { clamp, smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
 import { CHANNEL_POINTS, COVER, KIND, LINES, WORLD, canopyAt, coverAt, heightAt, inlandSurfaceAt, kindAt, place, type GeoLine } from '../geo/data';
 import { MAP_SCALE } from '../geo/project';
+import { onPlant, plantGround } from './plantSite';
 import { onRoad, roadGround } from './roads';
 
 // Where land and water are. The terrain mesh, the water and every placement read these, so the boat, the
@@ -449,11 +450,15 @@ const TEMPLE = (() => {
   return { x: p.world.x, z: p.world.z, r: 9, y: heightAt(p.world.x, p.world.z) };
 })();
 
-/** Height of the ground at (x, z): the baked map, with the temple's terrace, the roads' embankments, the bil's bowl and the khals. */
+/**
+ * Height of the ground at (x, z): the baked map, with the temple's terrace, the power plant's platform, the
+ * roads' embankments, the bil's bowl and the khals.
+ */
 export function terrainHeight(x: number, z: number): number {
   let h = heightAt(x, z);
   const t = Math.hypot(x - TEMPLE.x, z - TEMPLE.z);
   if (t < TEMPLE.r * 2.2) h += (TEMPLE.y - h) * smoothstep(TEMPLE.r * 2.2, TEMPLE.r, t);
+  h = plantGround(x, z, h);
   h = roadGround(x, z, h);
   return Math.min(h, carved(x, z, h));
 }
@@ -514,9 +519,9 @@ export function mangroveZone(x: number, z: number, _h: number): number {
   return kindAt(x, z) === KIND.mangrove || coverAt(x, z) === COVER.mangrove ? 1 : 0;
 }
 
-/** Salt pans at (x, z) (0..1): OSM's pans and the inland water wet only through the rains (bake.mjs). */
+/** Salt pans at (x, z) (0..1): OSM's pans and the inland water wet only through the rains (bake.mjs); none under the power plant's fill. */
 export function saltPan(x: number, z: number): number {
-  return coverAt(x, z) === COVER.saltpan ? 1 : 0;
+  return coverAt(x, z) === COVER.saltpan && !onPlant(x, z, 14) ? 1 : 0;
 }
 
 /** How high above the plain (x, z) rises (m): the hills, where huts and fields do not go. */
@@ -689,6 +694,8 @@ export function onTempleHill(x: number, z: number): boolean {
 
 /** Ground the landmarks stand on (with `margin` m round it): no huts, trees or tall grass there. */
 export function onLandmark(x: number, z: number, margin = 0): boolean {
+  // the power plant's platform and its embankment (world/plantSite.ts)
+  if (onPlant(x, z, 14 + margin)) return true;
   const g = GORAKGHATA;
   if (Math.hypot(x - g.pagoda.x, z - g.pagoda.z) < g.pagoda.r + margin) return true;
   for (const y of SHUTKI_YARDS) if (Math.hypot(x - y.x, z - y.z) < 14 + margin) return true;

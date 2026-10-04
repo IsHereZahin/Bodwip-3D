@@ -44,6 +44,10 @@ import { Ferries } from './world/ferries';
 import { BRIDGE_CLEARING, bridgeTrees, buildBridge } from './world/bridge';
 import { Girl } from './world/girl';
 import { buildMoheshkhali } from './world/moheshkhali';
+import { Beacons } from './world/beacons';
+import { PowerPlant } from './world/powerPlant';
+import { buildPowerLines } from './world/powerLines';
+import { WindFarm } from './world/windFarm';
 import { cullBeyond, updateCulling } from './render/cull';
 import { buildSky } from './world/sky';
 import { Terrain } from './world/terrain';
@@ -143,6 +147,17 @@ async function main(hud: Hud): Promise<void> {
   const landmarks = buildMoheshkhali();
   scene.add(landmarks.seen, landmarks.near);
   cullBeyond(landmarks.near, 1500);
+  // the Matarbari power plant, the power lines and substations, the wind farm across from Gorakghata, and the
+  // lights they show at night
+  const plant = new PowerPlant();
+  scene.add(plant.group);
+  const powerLines = buildPowerLines(plant.lineEnd);
+  scene.add(powerLines);
+  cullBeyond(powerLines, 4500);
+  const windFarm = new WindFarm();
+  scene.add(windFarm.group);
+  const beacons = new Beacons([...plant.lights, ...windFarm.lights]);
+  scene.add(beacons.points);
   hud.progress(0.52);
   await nextTask();
   const vegetation = buildVegetation(standing, surfaces.bark, [...fishingClearings(), BRIDGE_CLEARING], bridgeTrees());
@@ -298,6 +313,7 @@ async function main(hud: Hud): Promise<void> {
     camera.updateProjectionMatrix();
     pipeline.setSize(W, H);
     life.setPixelRatio(k);
+    beacons.setPixelRatio(k);
   };
   resize();
   window.addEventListener('resize', resize);
@@ -625,6 +641,8 @@ async function main(hud: Hud): Promise<void> {
     water.swirl.copy(hero.swirl);
     traffic.update(dt, t, b.pos.z);
     ferries.update(dt, t);
+    plant.update(dt);
+    windFarm.update(dt);
     const simStart = performance.now();
     // the hyacinth meets the hero's hull and blade, and the fishermen's boats, poles and nets
     drift.update(dt, t, camera.position.z, b, hero.blade, fishing.obstacles());
@@ -650,7 +668,7 @@ async function main(hud: Hud): Promise<void> {
     focus.set(Math.round(focus.x / 12) * 12, 0, Math.round(focus.z / 12) * 12);
     if (env.aimShadow(focus, false)) renderer.shadowMap.needsUpdate = true;
     if (weather.struck) sound.thunder();
-    sound.update(dt, env.night, G.uWind.value.z, weather.rain);
+    sound.update(dt, env.night, G.uWind.value.z, weather.rain, plant.loudness(camera.position));
   };
   updateSky(0, true);
   step(0);
@@ -754,6 +772,8 @@ async function main(hud: Hud): Promise<void> {
           watch.event = null;
           watch.asked = false;
           updateSky(0, true);
+          plant.settle();
+          windFarm.update(0, true);
           // the boat goes in after the river has its level
           if (o.journey !== undefined) rig.place(o.journey);
           env.update(clock.hour, clock.moonAge);
@@ -878,6 +898,14 @@ async function main(hud: Hud): Promise<void> {
             if (o.name === name) o.visible = false;
           });
           step(0);
+        },
+        /** Whether the Matarbari plant runs (its plume shows); with an argument, set it. */
+        plant(on?: boolean) {
+          if (on !== undefined) {
+            plant.running = on;
+            plant.settle();
+          }
+          return plant.running;
         },
         birds(ahead = 40) {
           life.launchAll(rig.boat.pos, rig.boat.heading, ahead);

@@ -130,7 +130,7 @@ async function sentinelOnGrid() {
   return rgb;
 }
 
-const COLOURS = { road: [255, 255, 255], rail: [255, 120, 0], waterway: [60, 230, 255], structure: [255, 40, 40], power: [255, 230, 0] };
+const COLOURS = { road: [255, 255, 255], rail: [255, 120, 0], waterway: [60, 230, 255], structure: [255, 40, 40], power: [255, 230, 0], site: [255, 0, 255] };
 
 function drawLines(rgb, vectors) {
   const plot = (east, north, col) => {

@@ -708,6 +708,34 @@ export function hullPlankTexture(seed: number): { map: DataTexture; normal: Data
   return { map, normal: normalFromHeight(hgt, 3.2) };
 }
 
+/**
+ * Profiled steel cladding (the power plant's halls and galleries), 3 m a tile: trapezoidal ribs running up v,
+ * painted pale (tinted by vertex colour), with the faint grime the sea air streaks down it. Tiles.
+ */
+export function claddingTexture(seed: number): DataTexture {
+  const S = 256;
+  const rng = new Rng(seed);
+  const ctx = paint(S, S, (c) => {
+    // twelve ribs a tile: a lit face, the rib's top, its shaded face, the flat pan between
+    const pitch = S / 12;
+    for (let x = 0; x < S; x++) {
+      const f = (x % pitch) / pitch;
+      const v = f < 0.12 ? 232 : f < 0.22 ? 246 : f < 0.32 ? 200 : 222;
+      c.fillStyle = `rgb(${v},${v},${v})`;
+      c.fillRect(x, 0, 1, S);
+    }
+    // streaks of grime from the sheet laps
+    for (let i = 0; i < 70; i++) {
+      c.fillStyle = `rgba(90,86,78,${rng.range(0.03, 0.1)})`;
+      c.fillRect(rng.range(0, S), rng.range(-S * 0.2, S), rng.range(1, 4), rng.range(30, 160));
+    }
+    // the horizontal laps between sheets
+    c.fillStyle = 'rgba(70,70,70,0.25)';
+    c.fillRect(0, 0, S, 2);
+  });
+  return toTexture(ctx, { repeat: true });
+}
+
 /** Tarred, weathered planks laid along u. Tiles. */
 export function plankTexture(seed: number): DataTexture {
   const S = 256;

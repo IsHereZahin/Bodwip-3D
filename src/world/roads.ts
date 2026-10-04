@@ -7,13 +7,16 @@ import { KIND, LINES, heightAt, kindAt } from '../geo/data';
 import { MeshBuilder, rgb, scaleRgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { ROAD_SURFACES, roadAtlas } from '../render/textures';
+import { onPlant, plantGround, plantReserved } from './plantSite';
 
 // The roads OpenStreetMap draws (geo/vectors.bin): on the 1:3 map at their real width (GEOGRAPHY_PLAN.md
 // §5.1), each with a crest a little above the land (the coast's roads run on low embankments, the highways
 // on high ones: [মডেল], OSM has no heights) that the ground is levelled to (geography.ts terrainHeight), and a
 // surface by its kind: the highways and the main roads in bitumen, the village roads in herringbone brick
 // (HBB), the tracks and paths bare earth [মডেল: OSM's surface tags are not baked]. Where OSM marks a bridge
-// the ground is left as it is and a deck crosses it.
+// the ground is left as it is and a deck crosses it. On the power plant's platform the roads lie on the fill,
+// paved, and leave out the pieces that would run through its parts (world/plantSite.ts packs them tighter
+// than OSM's roads allow).
 
 type Surface = 'asphalt' | 'brick' | 'earth';
 
@@ -66,7 +69,11 @@ interface RoadReach {
 function crests(p: Float32Array, raise: number): Float32Array {
   const n = p.length / 2;
   const land = new Float32Array(n);
-  for (let i = 0; i < n; i++) land[i] = kindAt(p[i * 2], p[i * 2 + 1]) === KIND.land ? heightAt(p[i * 2], p[i * 2 + 1]) : Number.NaN;
+  for (let i = 0; i < n; i++) {
+    const x = p[i * 2];
+    const z = p[i * 2 + 1];
+    land[i] = kindAt(x, z) === KIND.land ? plantGround(x, z, heightAt(x, z)) : Number.NaN;
+  }
   // fill the points in water from the nearest land along the road (or a little above the high tides if none)
   for (let i = 0; i < n; i++) {
     if (!Number.isNaN(land[i])) continue;
@@ -96,14 +103,29 @@ for (const l of LINES) {
   if (!kind || l.points.length < 4) continue;
   const p = l.points;
   const c = crests(p, kind.raise);
-  const first = REACHES.length;
+  let first = REACHES.length;
   let v = 0;
   for (let k = 0; k + 3 < p.length; k += 2) {
     const len = Math.hypot(p[k + 2] - p[k], p[k + 3] - p[k + 1]);
-    REACHES.push({ ax: p[k], az: p[k + 1], bx: p[k + 2], bz: p[k + 3], half: kind.width / 2, ca: c[k / 2], cb: c[k / 2 + 1], surface: kind.surface, bridge: l.bridge === 1, va: v, vb: v + len });
+    if (throughPlant(p[k], p[k + 1], p[k + 2], p[k + 3], kind.width / 2)) {
+      // the road breaks here: its pieces either side are roads of their own
+      if (REACHES.length > first) ROADS.push({ first, count: REACHES.length - first });
+      first = REACHES.length;
+      v += len;
+      continue;
+    }
+    const surface = onPlant((p[k] + p[k + 2]) / 2, (p[k + 1] + p[k + 3]) / 2) ? 'asphalt' : kind.surface;
+    REACHES.push({ ax: p[k], az: p[k + 1], bx: p[k + 2], bz: p[k + 3], half: kind.width / 2, ca: c[k / 2], cb: c[k / 2 + 1], surface, bridge: l.bridge === 1, va: v, vb: v + len });
     v += len;
   }
-  ROADS.push({ first, count: REACHES.length - first });
+  if (REACHES.length > first) ROADS.push({ first, count: REACHES.length - first });
+}
+
+/** Whether a piece of road from a to b would run through the power plant's parts. */
+function throughPlant(ax: number, az: number, bx: number, bz: number, half: number): boolean {
+  const n = Math.ceil(Math.hypot(bx - ax, bz - az) / 6);
+  for (let i = 0; i <= n; i++) if (plantReserved(ax + ((bx - ax) * i) / n, az + ((bz - az) * i) / n, half + 1)) return true;
+  return false;
 }
 
 const INDEX = new SegmentIndex(32);

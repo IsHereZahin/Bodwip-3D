@@ -37,14 +37,14 @@ export interface Place {
   world: { x: number; z: number };
 }
 
-/** A line from OpenStreetMap in world metres: x, z pairs. */
+/** A line from OpenStreetMap in world metres: x, z pairs (a site's outline closes on its first point). */
 export interface GeoLine {
-  k: 'road' | 'rail' | 'waterway' | 'structure' | 'power';
-  /** The OSM tag value: highway=…, waterway=…, man_made=…, power=…. */
+  k: 'road' | 'rail' | 'waterway' | 'structure' | 'power' | 'site';
+  /** The OSM tag value: highway=…, waterway=…, man_made=…, power=…; a site's kind (plant, ash_pond, port, substation). */
   t?: string;
   n?: string;
   bridge?: 1;
-  /** Volts, for power lines. */
+  /** Volts, for power lines and substations. */
   v?: number;
   points: Float32Array;
 }
@@ -91,7 +91,11 @@ async function load() {
     level: new Int16Array(level),
     cover: new Uint8Array(cover),
     canopy: new Uint8Array(canopy),
-    vectors: JSON.parse(new TextDecoder().decode(vectors)) as { lines: { k: GeoLine['k']; t?: string; n?: string; bridge?: 1; v?: number; p: number[] }[]; towers: number[] },
+    vectors: JSON.parse(new TextDecoder().decode(vectors)) as {
+      lines: { k: GeoLine['k']; t?: string; n?: string; bridge?: 1; v?: number; p: number[] }[];
+      towers: number[];
+      nodes: { t: 'crane' | 'chimney' | 'wind_turbine'; mw?: number; p: [number, number] }[];
+    },
     channel: channel.points,
     places,
     buildings: new DataView(buildings),
@@ -229,6 +233,14 @@ export const LINES: readonly GeoLine[] = data.vectors.lines.map((l) => {
 
 /** Power towers, world x, z pairs. */
 export const TOWERS: Float32Array = Float32Array.from(data.vectors.towers, (v, k) => (k % 2 === 0 ? -v : v) / 10 / MAP_SCALE);
+
+/** Single things OSM marks as points (the cranes at the berths, chimneys, wind turbines with their rating), at their world points. */
+export const NODES: readonly { t: 'crane' | 'chimney' | 'wind_turbine'; mw?: number; x: number; z: number }[] = data.vectors.nodes.map((n) => ({
+  t: n.t,
+  mw: n.mw,
+  x: -n.p[0] / 10 / MAP_SCALE,
+  z: n.p[1] / 10 / MAP_SCALE,
+}));
 
 /** The data sources to credit (manifest.attribution). */
 export const ATTRIBUTION: readonly string[] = data.manifest.attribution;

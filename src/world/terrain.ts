@@ -6,6 +6,7 @@ import { mixRgb, rgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import type { GroundSet } from '../render/surfaces';
 import { WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, bilMarsh, bridgePath, riverX, seaWaterAt, terrainHeight, villageDistance, waterLevelAt } from './geography';
+import { plantCover } from './plantSite';
 import { roadCover } from './roads';
 
 // The ground: the baked map's heights (geography.ts terrainHeight) and covers (geo/data.ts), drawn as a
@@ -32,6 +33,9 @@ const COLORS = {
   /** The salt pans' grey, salty clay. */
   saltClay: rgb('#8a8170'),
   coastGrass: rgb('#6d7442'),
+  /** The power plant's platform: pale dredged sand, levelled and rolled; its embankment faced with stone. */
+  fill: rgb('#b8a78b'),
+  revetment: rgb('#837d72'),
 };
 
 /**
@@ -124,6 +128,8 @@ function cover(x: number, z: number, h: number): Cover {
     return { color, zone: 0, grass: 0, dirt: 0, sand: look.sand, pebbles: 0 };
   }
   let ground = look.color;
+  const site = plantCover(x, z);
+  const plant = site.top + site.bank;
   // some variety: greener and drier patches, and on the hills red earth showing through the forest
   ground = mixRgb(ground, COLORS.grassB, (fbm(x * 0.012, z * 0.012, 2, 21) - 0.5) * 0.6 * look.grass);
   const dry = smoothstep(0.6, 0.8, fbm(x * 0.004, z * 0.004, 2, 33));
@@ -131,7 +137,12 @@ function cover(x: number, z: number, h: number): Cover {
   if (h > 10) {
     const canopy = mixRgb(COLORS.forest, COLORS.forestLight, fbm(x * 0.02, z * 0.02, 2, 121));
     const bare = smoothstep(0.72, 0.85, fbm(x * 0.03 + 9, z * 0.03, 2, 123));
-    ground = mixRgb(ground, mixRgb(canopy, COLORS.laterite, bare * 0.8), smoothstep(10, 18, h) * (1 - look.sand));
+    ground = mixRgb(ground, mixRgb(canopy, COLORS.laterite, bare * 0.8), smoothstep(10, 18, h) * (1 - look.sand) * (1 - plant));
+  }
+  // the power plant's platform, kept bare, and the stone down its sides
+  if (plant > 0) {
+    ground = mixRgb(ground, mixRgb(COLORS.fill, COLORS.dust, (fbm(x * 0.05, z * 0.05, 2, 41) - 0.5) * 0.8), site.top);
+    ground = mixRgb(ground, COLORS.revetment, site.bank);
   }
   // round the houses the ground is trodden bare; the footpath over the old bridge is worn to earth
   const yard = smoothstep(1.0, 0.35, villageDistance(x, z));
@@ -148,14 +159,15 @@ function cover(x: number, z: number, h: number): Cover {
   ground = mixRgb(ground, COLORS.dust, road * 0.4);
   const dirt = Math.min(1, look.dirt + yard * 0.9 + path + dry * 0.35 * look.grass + road);
   const top = 1 - wetBand;
+  const wild = 1 - plant;
   return {
     color: ground,
-    // paddy plots and salt pans only on their own ground above the water, and off the roads
-    zone: look.zone * top * (1 - road),
-    grass: Math.max(0, look.grass * top * (1 - dirt) * (1 - road) + marsh * 0.8),
-    dirt: dirt * top * (1 - look.sand),
-    sand: look.sand,
-    pebbles: 0,
+    // paddy plots and salt pans only on their own ground above the water, and off the roads and the plant
+    zone: look.zone * top * (1 - road) * wild,
+    grass: Math.max(0, look.grass * top * (1 - dirt) * (1 - road) + marsh * 0.8) * wild,
+    dirt: dirt * top * (1 - look.sand) * wild + site.top * 0.55 + site.bank * 0.7,
+    sand: look.sand * wild + site.top * 0.45,
+    pebbles: site.bank,
   };
 }
 

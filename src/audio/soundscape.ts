@@ -1,6 +1,6 @@
 /**
  * The whole soundscape is synthesised with Web Audio from one noise buffer and a few oscillators:
- * river, wind, oar splashes, birds by day, crickets by night. Nothing is downloaded.
+ * river, wind, oar splashes, birds by day, crickets by night, the power plant's drone near it. Nothing is downloaded.
  * Browsers only allow audio after a user gesture, so `start()` is called from one.
  */
 export class Soundscape {
@@ -12,6 +12,7 @@ export class Soundscape {
   private wind: GainNode | null = null;
   private windFilter: BiquadFilterNode | null = null;
   private rain: GainNode | null = null;
+  private hum: GainNode | null = null;
   private nextBird = 2;
   private nextCricket = 0;
   muted = false;
@@ -62,6 +63,29 @@ export class Soundscape {
     src.connect(this.windFilter).connect(this.wind).connect(this.master);
     // rain: a bright hiss on the water and the leaves, silent until it rains
     this.rain = this.bed(9000, 1400, 0);
+    // the power plant: its transformers' hum at twice the grid's 50 Hz and the overtones, over the rumble of
+    // its fans and turbines; silent away from it
+    this.hum = ctx.createGain();
+    this.hum.gain.value = 0;
+    this.hum.connect(this.master);
+    for (const [f, g] of [
+      [100, 0.5],
+      [200, 0.18],
+      [300, 0.07],
+    ]) {
+      const o = ctx.createOscillator();
+      const og = ctx.createGain();
+      o.frequency.value = f;
+      og.gain.value = g;
+      o.connect(og).connect(this.hum);
+      o.start();
+    }
+    const rumble = ctx.createBiquadFilter();
+    rumble.type = 'lowpass';
+    rumble.frequency.value = 160;
+    const rg = ctx.createGain();
+    rg.gain.value = 1.2;
+    this.loop().connect(rumble).connect(rg).connect(this.hum);
   }
 
   setMuted(muted: boolean): void {
@@ -184,10 +208,12 @@ export class Soundscape {
     s.stop(t + 6);
   }
 
-  update(dt: number, night: number, wind: number, rain: number): void {
+  /** `plant`: how near the power plant is (0..1, world/powerPlant.ts loudness). */
+  update(dt: number, night: number, wind: number, rain: number, plant = 0): void {
     const ctx = this.ctx;
-    if (!ctx || !this.master || !this.wind || !this.windFilter || !this.river || !this.rain) return;
+    if (!ctx || !this.master || !this.wind || !this.windFilter || !this.river || !this.rain || !this.hum) return;
     const now = ctx.currentTime;
+    this.hum.gain.setTargetAtTime(0.05 * plant, now, 1);
     // the river carries further in the still night air
     this.river.gain.setTargetAtTime(0.2 + 0.08 * night, now, 2);
     // the wind roars more than it grows: louder and higher as it strengthens

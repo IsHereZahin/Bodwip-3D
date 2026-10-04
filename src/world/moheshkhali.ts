@@ -1,6 +1,6 @@
 import { CylinderGeometry, DoubleSide, Group, LatheGeometry, Matrix4, Mesh, MeshStandardMaterial, Quaternion, SphereGeometry, Vector2, Vector3 } from 'three';
 import { Rng } from '../core/rng';
-import { MeshBuilder, rgb, scaleRgb, type RGB } from '../render/builder';
+import { MeshBuilder, rgb, scaleRgb, slab, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { plasterTexture, strawTexture, tinTexture } from '../render/textures';
 import {
@@ -34,32 +34,6 @@ const UP = new Vector3(0, 1, 0);
 const q = new Quaternion();
 const mat4 = new Matrix4();
 const ONE = new Vector3(1, 1, 1);
-
-/** A box (centre, size, yaw) whose faces carry texture coordinates in metres over `tile`, so plaster and tin keep their scale on every face. */
-function slab(b: MeshBuilder, cx: number, cy: number, cz: number, sx: number, sy: number, sz: number, ry: number, c: RGB, tile = 3): void {
-  const cos = Math.cos(ry);
-  const sin = Math.sin(ry);
-  const P = (x: number, y: number, z: number) => new Vector3(cx + x * cos + z * sin, cy + y, cz - x * sin + z * cos);
-  const N = (x: number, y: number, z: number) => new Vector3(x * cos + z * sin, y, -x * sin + z * cos);
-  const hx = sx / 2;
-  const hy = sy / 2;
-  const hz = sz / 2;
-  const face = (k: readonly (readonly [number, number, number])[], n: readonly [number, number, number], w: number, h: number) => {
-    const nn = N(n[0], n[1], n[2]);
-    const s = b.vertexCount;
-    b.vertex(P(...k[0]), nn, 0, 0, c);
-    b.vertex(P(...k[1]), nn, w / tile, 0, c);
-    b.vertex(P(...k[2]), nn, w / tile, h / tile, c);
-    b.vertex(P(...k[3]), nn, 0, h / tile, c);
-    b.quad(s, s + 1, s + 2, s + 3);
-  };
-  face([[-hx, -hy, hz], [hx, -hy, hz], [hx, hy, hz], [-hx, hy, hz]], [0, 0, 1], sx, sy);
-  face([[hx, -hy, -hz], [-hx, -hy, -hz], [-hx, hy, -hz], [hx, hy, -hz]], [0, 0, -1], sx, sy);
-  face([[hx, -hy, hz], [hx, -hy, -hz], [hx, hy, -hz], [hx, hy, hz]], [1, 0, 0], sz, sy);
-  face([[-hx, -hy, -hz], [-hx, -hy, hz], [-hx, hy, hz], [-hx, hy, -hz]], [-1, 0, 0], sz, sy);
-  face([[-hx, hy, hz], [hx, hy, hz], [hx, hy, -hz], [-hx, hy, -hz]], [0, 1, 0], sx, sz);
-  face([[-hx, -hy, -hz], [hx, -hy, -hz], [hx, -hy, hz], [-hx, -hy, hz]], [0, -1, 0], sx, sz);
-}
 
 /** A part from a three geometry, placed and turned (yaw), in one colour. */
 function part(b: MeshBuilder, g: ConstructorParameters<typeof Mesh>[0], x: number, y: number, z: number, ry: number, c: RGB): void {
