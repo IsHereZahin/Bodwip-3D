@@ -4,9 +4,6 @@
 /** The area (WGS84): Moheshkhali, Matarbari, Sonadia, the channel, Cox's Bazar's northern end, with a margin. */
 export const BBOX = { south: 21.4, north: 21.82, west: 91.76, east: 92.06 };
 
-/** The world is the real map at 1:3 (GEOGRAPHY_PLAN.md §5.1); objects and heights stay real size. */
-export const MAP_SCALE = 3;
-
 export const CACHE = new URL('./cache/', import.meta.url);
 
 const FABDEM = 'https://data.bris.ac.uk/datasets/s5hqmjcdj8yo2ibzi9b4ew3sn/N20E090-N30E100_FABDEM_V1-2.zip';
