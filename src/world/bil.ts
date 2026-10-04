@@ -19,7 +19,7 @@ import {
   Vector4,
 } from 'three';
 import type { Material } from 'three';
-import { G, LAYER_NO_REFLECT } from '../core/globals';
+import { LAYER_NO_REFLECT } from '../core/globals';
 import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
 import { Rng } from '../core/rng';
@@ -28,7 +28,7 @@ import { instanced, type Placement } from '../render/instancing';
 import { patchMaterial, type PatchOptions } from '../render/patch';
 import { lilyCarpetTexture } from '../render/textures';
 import type { BoatBody } from './boatPhysics';
-import { BIL, BIL_ROUTE_SPAN, bilDepth, bilReach, riverX, routeGap, routeOffset } from './geography';
+import { BIL, bilDepth, bilReach, riverX, routeGap } from './geography';
 import { HERO_HULL, heroBeamAtWater } from './hull';
 import { SHELTERED, waveHeightGlsl, waveSlopeGlsl } from './waves';
 
@@ -417,8 +417,8 @@ function carpetGeometry(): BufferGeometry {
 }
 
 /**
- * The lilies' life on the GPU: they float on the season's water, rising and falling with it, and are not
- * there where it has left their bed dry; flowers open only in their months (G.uSeasonB.x); they ride the
+ * The lilies' life on the GPU: they float on the bil's water (its own level, BIL.level, up among the hills),
+ * and are not there where their bed lies too shallow; flowers open only in their months (G.uSeasonB.x); they ride the
  * bil's sheltered swell and the boat's wash spreading from her, and rock in the breeze.
  */
 function lilyMotion(wash: Vector4, perVertex: boolean, flower = false): NonNullable<PatchOptions['vertex']> {
@@ -446,11 +446,11 @@ function lilyMotion(wash: Vector4, perVertex: boolean, flower = false): NonNulla
   vec2 tilt = waveSlope(lilyAt.xz) * ${s} + toWash / max(wd, 0.001) * wa * (2.4 * cos(wph) - 0.25 * sin(wph));
   tilt += uWind.xy * (0.02 * uWind.z) * sin(uTime * 1.7 + dot(lilyAt.xz, vec2(0.61, 0.37)));
   float lift = waveHeight(lilyAt.xz) * ${s} + wa * sin(wph) + dot(tilt, lilyOff.xz);
-  transformed.y += (lift + uWaterLevel) / lilyScale;
+  transformed.y += (lift + ${BIL.level.toFixed(3)}) / lilyScale;
   ${
     perVertex
-      ? '#ifdef USE_COLOR_ALPHA\n  vColor.a *= smoothstep(0.05, 0.2, uWaterLevel + aBed);\n  #endif'
-      : `transformed *= smoothstep(0.03, 0.1, uWaterLevel + aBed)${flower ? ' * smoothstep(-0.05, 0.05, uSeasonB.x - hash12(floor(lilyAt.xz * 3.0)))' : ''};`
+      ? '#ifdef USE_COLOR_ALPHA\n  vColor.a *= smoothstep(0.05, 0.2, aBed);\n  #endif'
+      : `transformed *= smoothstep(0.03, 0.1, aBed)${flower ? ' * smoothstep(-0.05, 0.05, uSeasonB.x - hash12(floor(lilyAt.xz * 3.0)))' : ''};`
   }
 }`,
   };
@@ -482,7 +482,6 @@ export class Bil {
   private readonly hi: number[] = [];
   private readonly spots: Spot[] = [];
   private readonly egrets: Egret[] = [];
-  private spotLevel = 0;
   private readonly rng = new Rng(404);
   private readonly m = new Matrix4();
   private readonly q = new Quaternion();
@@ -519,14 +518,13 @@ export class Bil {
       return r < 0.55 ? WHITE : r < 0.8 ? PINK : RED;
     };
     for (let r = 0; r < RAFTS && xs.length < MAX_PLANTS; r++) {
-      // a raft's middle: beside the boat's way, a few metres to a few tens off it
+      // a raft's middle: anywhere out on the open water
       let cx = 0;
       let cz = 0;
       let found = false;
       for (let tries = 0; tries < 30 && !found; tries++) {
         const z = BIL.z + rng.range(-0.95, 0.95) * BIL.halfLen;
-        if (z > BIL_ROUTE_SPAN.z0 || z < BIL_ROUTE_SPAN.z1) continue;
-        const u = routeOffset(z) + rng.sign() * rng.range(3.5, 30);
+        const u = BIL.u + rng.range(-0.95, 0.95) * BIL.halfWid;
         const x = riverX(z) + u;
         const d = bilDepth(z, u);
         if (bilReach(z, u) < 0.93 && d > 0.35 && d < 2.1 && routeGap(x, z) > 2.5) {
@@ -654,7 +652,7 @@ export class Bil {
       if (e < 0.88 || e > 1.03 || fbm(z * 0.02, u * 0.02, 2, 97) < 0.45) continue;
       const x = riverX(z) + u;
       if (routeGap(x, z) < 12) continue;
-      reeds[rng.int(0, reeds.length - 1)].push({ x, y: -bilDepth(z, u) * 0.5, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.8, 1.2) });
+      reeds[rng.int(0, reeds.length - 1)].push({ x, y: BIL.level - bilDepth(z, u) * 0.5, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.8, 1.2) });
     }
     const reedMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.7, side: DoubleSide }), {
       wind: 0.12,
@@ -674,21 +672,19 @@ export class Bil {
       if (d < 0.4 || bilReach(z, u) > 0.95) continue;
       const x = riverX(z) + u;
       if (routeGap(x, z) < 14) continue;
-      if (rng.next() < 0.13) blooms.push({ x, y: rng.range(0.6, 0.95), z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.9, 1.2) });
-      else leaves.push({ x, y: rng.range(0.12, 0.6), z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.24, 0.4), tx: rng.range(-0.25, 0.25), tz: rng.range(-0.25, 0.25) });
+      if (rng.next() < 0.13) blooms.push({ x, y: BIL.level + rng.range(0.6, 0.95), z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.9, 1.2) });
+      else leaves.push({ x, y: BIL.level + rng.range(0.12, 0.6), z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.24, 0.4), tx: rng.range(-0.25, 0.25), tz: rng.range(-0.25, 0.25) });
     }
     const lotusMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.45, side: DoubleSide }), {
       wind: 0.06,
       windHeight: 0.6,
       translucency: 1.1,
-      // a lotus's stalks grow with the water: leaves and flowers stand the same height above it
-      vertex: { key: 'afloat', pars: '', code: 'transformed.y += uWaterLevel / length(instanceMatrix[0].xyz);' },
     });
     if (leaves.length) this.group.add(instanced(lotusLeaf(), lotusMat, leaves, { receive: true }));
     if (blooms.length) this.group.add(instanced(lotusFlower(), lotusMat, blooms, { receive: true }));
 
     // ---- egrets wading in the shallows ----
-    this.findSpots(G.uWaterLevel.value);
+    this.findSpots();
     const egretMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.75, side: DoubleSide }), { translucency: 0.6 });
     const body = egretBody();
     const neck = egretNeck();
@@ -702,12 +698,8 @@ export class Bil {
     }
   }
 
-  /**
-   * Where an egret can wade at this water level: points round the edge where the water is between ankle
-   * and knee deep, away from the boat's way. Egrets standing where it has gone too deep or dry move on.
-   */
-  private findSpots(level: number): void {
-    this.spotLevel = level;
+  /** Where an egret can wade: points round the edge where the water is between ankle and knee deep. */
+  private findSpots(): void {
     for (const s of this.spots) s.busy = false;
     this.spots.length = 0;
     const rng = new Rng(91);
@@ -719,12 +711,11 @@ export class Bil {
       for (let e = 1.3; e > 0.6; e -= 0.03) {
         const z = BIL.z + (dz * e) / edge;
         const u = BIL.u + (du * e) / edge;
-        // the bed here, as a height (the bil's own, or the marsh beyond its edge)
+        // the bed here, below the bil's water (its own bed, or the marsh beyond its edge)
         const bed = e < 1 ? -bilDepth(z, u) : -0.04 + 0.3 * (e - 1);
-        const depth = level - bed;
-        if (depth < 0.06 || depth > 0.32) continue;
+        if (-bed < 0.06 || -bed > 0.32) continue;
         const x = riverX(z) + u;
-        if (routeGap(x, z) >= 8) this.spots.push({ x, y: bed, z, busy: false });
+        if (routeGap(x, z) >= 8) this.spots.push({ x, y: BIL.level + bed, z, busy: false });
         break;
       }
     }
@@ -734,7 +725,6 @@ export class Bil {
   /** `blade` and `bladeWet`: the paddle's blade (world) and how much of it is in the water. */
   update(dt: number, t: number, boat: BoatBody, blade: Vector3, bladeWet: number): void {
     this.wash.set(boat.pos.x, boat.pos.z, Math.max(0, boat.speed), 0);
-    if (Math.abs(G.uWaterLevel.value - this.spotLevel) > 0.08) this.findSpots(G.uWaterLevel.value);
     const h = Math.min(dt, 1 / 30);
     const near = bilReach(boat.pos.z, boat.pos.x - riverX(boat.pos.z)) < 1.15;
     if (h > 0 && (near || this.awakeList.length)) this.simulate(h, boat, blade, bladeWet > 0.3, near);

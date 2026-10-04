@@ -1,14 +1,11 @@
 import { Vector3 } from 'three';
 import type { PerspectiveCamera } from 'three';
 import { angleDelta, clamp, damp } from '../core/mathx';
-import { G } from '../core/globals';
-import { WORLD_Z0, WORLD_Z1, riverX, terrainHeight } from '../world/geography';
+import { WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, terrainHeight, waterLevelAt } from '../world/geography';
 
-/** How far the free camera may roam: across the river from its centre line, along it, and up. */
-const REACH = 900;
-const Z_MAX = WORLD_Z0 - 60;
-const Z_MIN = WORLD_Z1 + 260;
-const CEILING = 140;
+/** How far the free camera may roam: the whole map (a little inside its edges), and up high enough to see it. */
+const EDGE = 60;
+const CEILING = 1500;
 /** Metres kept above the ground and the water. */
 const CLEARANCE = 1.6;
 /** Metres per second near the ground; faster higher up, and four times faster with Shift. */
@@ -85,7 +82,7 @@ export class FlyCam {
     const ahead = Number(has('KeyW') || has('ArrowUp')) - Number(has('KeyS') || has('ArrowDown'));
     const side = Number(has('KeyD')) - Number(has('KeyA'));
     const lift = Number(has('KeyE') || has('PageUp')) - Number(has('KeyQ') || has('PageDown'));
-    const ground = Math.max(terrainHeight(this.pos.x, this.pos.z), G.uWaterLevel.value);
+    const ground = Math.max(terrainHeight(this.pos.x, this.pos.z), waterLevelAt(this.pos.x, this.pos.z));
     const speed = SPEED * (1 + (this.pos.y - ground) / 25) * (has('ShiftLeft') || has('ShiftRight') ? 4 : 1);
     this.want.copy(this.fwd).multiplyScalar(ahead).addScaledVector(this.right, side);
     if (this.want.lengthSq() > 1) this.want.normalize();
@@ -98,10 +95,9 @@ export class FlyCam {
     this.pos.addScaledVector(this.vel, dt).addScaledVector(this.fwd, step);
 
     // stay inside the world, above the ground and the water
-    this.pos.z = clamp(this.pos.z, Z_MIN, Z_MAX);
-    const cx = riverX(this.pos.z);
-    this.pos.x = clamp(this.pos.x, cx - REACH, cx + REACH);
-    const floor = Math.max(terrainHeight(this.pos.x, this.pos.z), G.uWaterLevel.value) + CLEARANCE;
+    this.pos.z = clamp(this.pos.z, WORLD_Z1 + EDGE, WORLD_Z0 - EDGE);
+    this.pos.x = clamp(this.pos.x, WORLD_X0 + EDGE, WORLD_X1 - EDGE);
+    const floor = Math.max(terrainHeight(this.pos.x, this.pos.z), waterLevelAt(this.pos.x, this.pos.z)) + CLEARANCE;
     this.pos.y = clamp(this.pos.y, floor, CEILING);
 
     camera.position.copy(this.pos);

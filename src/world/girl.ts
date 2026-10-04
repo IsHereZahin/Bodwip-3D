@@ -386,7 +386,7 @@ export class Girl {
     });
 
     const at = bridgeToWorld(STAND.x, STAND.z);
-    g.position.set(at.x, bridgeDeck(STAND.x), at.z);
+    g.position.set(at.x, BRIDGE.water + bridgeDeck(STAND.x), at.z);
     g.rotation.y = this.yaw;
     g.updateMatrixWorld();
     this.inverse.copy(g.quaternion).invert();

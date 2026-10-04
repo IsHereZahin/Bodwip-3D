@@ -1,22 +1,21 @@
 import { Vector3 } from 'three';
 import { G } from '../core/globals';
 import { angleDelta, lerp } from '../core/mathx';
+import { canopyAt, place } from '../geo/data';
 import {
   ADINATH,
-  CHARS,
+  BIL,
+  BRIDGE,
   GORAKGHATA,
   JOURNEY_Z0,
-  SONADIA,
   JOURNEY_Z1,
+  PONDS,
   VILLAGES,
-  WETLANDS,
-  charHeight,
+  bridgeToWorld,
   edgeHalfWidth,
-  khalPoint,
   riverX,
   saltPan,
   terrainHeight,
-  wetlandPoint,
 } from '../world/geography';
 import { groundAt } from '../world/terrain';
 import { GHATS } from '../world/village';
@@ -66,12 +65,14 @@ function rel(stage: Stage, a: number, s: number, h: number, out: Vector3): Vecto
 }
 
 /**
- * A stretch of paddy fields to fly over: from `z0` downstream on `side`, the first place where a 60 m run
- * parallel to the river lies all in field plots. Returns its start, and its end downstream.
+ * A stretch of paddy fields to fly over: on `side`, as near `z0` along the channel as there is one, a 60 m run
+ * parallel to it all in field plots (the fields lie behind the flats, the mangroves and the ghers, up to
+ * 1.5 km inland). Returns its start, and its end downstream.
  */
 function fieldRun(z0: number, side: 1 | -1): { from: Vector3; to: Vector3 } {
-  for (let z = z0; z > z0 - 1400; z -= 25) {
-    for (let inland = 70; inland <= 230; inland += 16) {
+  for (let k = 0; k < 240; k++) {
+    const z = z0 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 25;
+    for (let inland = 70; inland <= 1500; inland += 16) {
       const at = (zz: number) => riverX(zz) + side * (edgeHalfWidth(zz, side) + inland);
       const ok = [0, 20, 40, 60].every((d) => groundAt(at(z - d), z - d).zone > 0.85);
       if (ok) return { from: new Vector3(at(z), 0, z), to: new Vector3(at(z - 60), 0, z - 60) };
@@ -81,9 +82,10 @@ function fieldRun(z0: number, side: 1 | -1): { from: Vector3; to: Vector3 } {
   return { from: new Vector3(riverX(z) + side * 150, 0, z), to: new Vector3(riverX(z - 60) + side * 150, 0, z - 60) };
 }
 
-/** Salt pans to crane over: a run of 50 m all in pans, on `side` (on the island they lie beyond its hills). */
+/** Salt pans to crane over: a run of 50 m all in pans, on `side`, as near `z0` along the channel as there is one. */
 function saltRun(z0: number, side: 1 | -1): { from: Vector3; to: Vector3 } {
-  for (let z = z0; z > z0 - 400; z -= 20) {
+  for (let k = 0; k < 300; k++) {
+    const z = z0 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 20;
     for (let inland = 60; inland <= 1500; inland += 20) {
       const at = (zz: number) => riverX(zz) + side * (edgeHalfWidth(zz, side) + inland);
       if ([0, 25, 50].every((d) => saltPan(at(z - d), z - d) > 0.95)) return { from: new Vector3(at(z), 0, z), to: new Vector3(at(z - 50), 0, z - 50) };
@@ -107,15 +109,23 @@ function glide(run: { from: Vector3; to: Vector3 }, side: 1 | -1, height: number
   look.y = pos.y - height * 0.7;
 }
 
-// places found once, at load (deterministic)
-const MUSTARD = fieldRun(-180, -1);
-const FLOODED = fieldRun(-1900, -1);
-const HARVEST = fieldRun(-2300, -1);
-const SALT = saltRun(-2150, 1);
-const KASH_CHAR = CHARS[0];
-const VILLAGE_GHAT = GHATS[2];
-const STORM_VILLAGE = VILLAGES[1];
-const WETLAND = WETLANDS[1] ?? WETLANDS[0];
+// places found once, at load (deterministic); the tour is re-authored for the real map later (plan's step L),
+// these keep each scene on a real place meanwhile
+const MUSTARD = fieldRun(4200, -1);
+const FLOODED = fieldRun(2600, -1);
+const HARVEST = fieldRun(1800, -1);
+const SALT = saltRun(1200, 1);
+/** A stretch of the island's bank under trees (the satellites' canopy) for spring's blossom, south from `z0`. */
+const BLOSSOM_Z = (() => {
+  for (let z = 2400; z > 0; z -= 10) if (canopyAt(riverX(z) + edgeHalfWidth(z, 1) + 18, z).cover > 0.5) return z;
+  return 2400;
+})();
+const VILLAGE_GHAT = GHATS[Math.min(2, GHATS.length - 1)];
+const STORM_VILLAGE = VILLAGES[Math.min(1, VILLAGES.length - 1)];
+/** A village pond to walk round in the morning (in place of the made-up wetlands); the bil if there is none. */
+const POND = PONDS[0] ?? { x: riverX(BIL.z) + BIL.u, z: BIL.z, r: BIL.halfWid, level: BIL.level };
+const SONADIA_BEACH = place('sonadia-beach').world;
+const SONADIA = place('sonadia').world;
 
 export function tourScenes(): Scene[] {
   // per-scene choices made as each scene opens
@@ -171,7 +181,7 @@ export function tourScenes(): Scene[] {
       world: { day: 75, hour: 16.3, weather: 'clear', wind: 0.5 },
       // down the bank under its trees in flower, from the water
       pose: (u, _s, pos, look) => {
-        const z = lerp(-835, -880, u);
+        const z = lerp(BLOSSOM_Z + 20, BLOSSOM_Z - 25, u);
         across(z, edgeHalfWidth(z, 1) - 20, onWater(2.2), pos);
         across(z - 50, edgeHalfWidth(z - 50, 1) + 18, onWater(6), look);
       },
@@ -180,14 +190,12 @@ export function tourScenes(): Scene[] {
       caption: 'সরু জলপথ',
       seconds: 12,
       world: { day: 110, hour: 10.5, weather: 'clear', wind: 0.6 },
-      // high over a khal winding out through the fields toward the river, drifting along it
+      // high over the khal by Bara Moheshkhali winding through the fields, drifting along it toward the old bridge
       pose: (u, _s, pos, look) => {
-        const s0 = lerp(0.62, 0.4, u);
-        const p = khalPoint(3, s0);
-        const q = khalPoint(3, s0 - 0.22);
-        const sideways = tmpA.set(Math.cos(p.heading), 0, -Math.sin(p.heading));
-        pos.set(p.x, onWater(lerp(34, 24, u)), p.z).addScaledVector(sideways, 22);
-        look.set(q.x, onWater(0), q.z);
+        const p = bridgeToWorld(22, lerp(-150, -90, u));
+        const q = bridgeToWorld(0, lerp(-60, 0, u));
+        pos.set(p.x, BRIDGE.water + lerp(34, 24, u), p.z);
+        look.set(q.x, BRIDGE.water, q.z);
       },
     },
     {
@@ -231,13 +239,12 @@ export function tourScenes(): Scene[] {
       caption: 'খাল',
       seconds: 13,
       world: { day: 150, hour: 17.5, weather: 'clear', wind: 0.3 },
-      // gliding up a khal between its palms, past a dinghy tied to the bank
+      // gliding up the khal between its banks, the old bridge ahead
       pose: (u, _s, pos, look) => {
-        const s0 = lerp(0.2, 0.32, u);
-        const p = khalPoint(1, s0);
-        const q = khalPoint(1, s0 + 0.1);
-        pos.set(p.x, onWater(1.7), p.z);
-        look.set(q.x, onWater(1.3), q.z);
+        const p = bridgeToWorld(0, lerp(110, 70, u));
+        const q = bridgeToWorld(0, lerp(40, 0, u));
+        pos.set(p.x, BRIDGE.water + 1.7, p.z);
+        look.set(q.x, BRIDGE.water + 1.3, q.z);
       },
     },
     {
@@ -273,37 +280,37 @@ export function tourScenes(): Scene[] {
       caption: 'সেতুর নিচে',
       seconds: 16,
       world: { day: 268, hour: { at: 'sunset', offset: -0.7 }, weather: 'clear', wind: 0.55 },
-      journey: journeyAt(-652),
-      // low behind the boat as she glides up the channel to the old bridge and under it, the girl with her
-      // umbrella above watching her come, the evening sun over the camera's shoulder lighting them both
-      pose: (u, s, pos, look) => {
-        rel(s, lerp(-14, -9, u), lerp(1.6, 0.6, u), lerp(2.2, 1.5, u), pos);
-        rel(s, 12, 0, lerp(3.6, 2.4, u), look);
+      // low on the khal, gliding up to the old bridge and under it, the girl with her umbrella above, the
+      // evening sun over the camera's shoulder
+      pose: (u, _s, pos, look) => {
+        const p = bridgeToWorld(lerp(1.6, 0.6, u), lerp(-26, -4, u));
+        const q = bridgeToWorld(0, lerp(4, 20, u));
+        pos.set(p.x, BRIDGE.water + lerp(2.2, 1.5, u), p.z);
+        look.set(q.x, BRIDGE.water + lerp(3.6, 2.4, u), q.z);
       },
     },
     {
       caption: 'শাপলা বিল',
       seconds: 14,
       world: { day: 235, hour: 9.2, weather: 'clear', wind: 0.25 },
-      journey: journeyAt(-850),
-      // over the lily rafts off her side as she glides through the bil
-      pose: (u, s, pos, look) => {
-        rel(s, lerp(-18, -6, u), -16, lerp(5, 3.2, u), pos);
-        rel(s, 4, 0, 0.2, look);
+      // low over the lily rafts, drifting across the bil in its valley among the hills
+      pose: (u, _s, pos, look) => {
+        const z = BIL.z + lerp(-BIL.halfLen * 0.7, -BIL.halfLen * 0.4, u);
+        pos.set(riverX(z) + BIL.u - BIL.halfWid * 0.3, BIL.level + lerp(5, 3.2, u), z);
+        look.set(riverX(BIL.z) + BIL.u, BIL.level + 0.2, BIL.z);
       },
     },
     {
       caption: 'জলাভূমি',
       seconds: 12,
       world: { day: 250, hour: 8.3, weather: 'clear', wind: 0.6 },
-      // along a wetland's reedy rim in the morning, over its lilies and hyacinth
+      // round a village pond's rim in the morning, over its lilies
       pose: (u, _s, pos, look) => {
-        const w = WETLAND;
         const angle = lerp(1.3, 1.65, u);
-        const p = wetlandPoint(w, angle, 0.7);
-        const q = wetlandPoint(w, angle + Math.PI, 0.95);
-        pos.set(p.x, Math.max(terrainHeight(p.x, p.z), G.uWaterLevel.value) + 1.2, p.z);
-        look.set(q.x, onWater(0.7), q.z);
+        const px = POND.x + Math.cos(angle) * POND.r * 1.1;
+        const pz = POND.z + Math.sin(angle) * POND.r * 1.1;
+        pos.set(px, Math.max(terrainHeight(px, pz), POND.level) + 1.2, pz);
+        look.set(POND.x - Math.cos(angle) * POND.r * 0.8, POND.level + 0.7, POND.z - Math.sin(angle) * POND.r * 0.8);
       },
     },
     {
@@ -311,12 +318,11 @@ export function tourScenes(): Scene[] {
       seconds: 12,
       world: { day: 262, hour: 16.4, weather: 'clear', wind: 0.9 },
       journey: journeyAt(150),
-      // among the kash on the char, its plumes tossing, the boat coming down the channel
+      // among the kash on the island's bank, its plumes tossing, the boat coming down the channel
       pose: (u, s, pos, look) => {
-        const ch = KASH_CHAR;
-        const z = ch.z + ch.halfLen * 0.3 - lerp(0, 6, u);
-        const off = ch.u - Math.sign(ch.u) * ch.halfWid * 0.3;
-        across(z, off, Math.max(charHeight(z, off), G.uWaterLevel.value) + 1.7, pos);
+        const z = s.boatPos.z - 60 - lerp(0, 6, u);
+        const off = edgeHalfWidth(z, 1) + 5;
+        across(z, off, Math.max(terrainHeight(riverX(z) + off, z), G.uWaterLevel.value) + 1.7, pos);
         look.lerpVectors(across(z + 90, off, onWater(1.4), a), rel(s, 0, 0, 1.2, b), 0.85);
       },
     },
@@ -355,12 +361,12 @@ export function tourScenes(): Scene[] {
       caption: 'সোনাদিয়া',
       seconds: 13,
       world: { day: 20, hour: { at: 'sunset', offset: -0.9 }, weather: 'clear', wind: 0.6 },
-      // a long glide in from the Bay over Sonadia at the channel's mouth, the low sun behind: its beach, its
-      // dunes and casuarinas, the mangroves on its inner shore, the island's hills beyond
+      // a long glide in from the Bay (south-west of it) onto Sonadia's beach: its dunes and casuarinas, the
+      // mangroves on its inner shore beyond
       pose: (u, _s, pos, look) => {
-        const z = lerp(SONADIA.z - 380, SONADIA.z - 250, u);
-        across(z, SONADIA.u - lerp(260, 160, u), onWater(lerp(32, 20, u)), pos);
-        across(SONADIA.z + 140, SONADIA.u + 60, onWater(2), look);
+        const d = lerp(260, 140, u);
+        pos.set(SONADIA_BEACH.x + d * 0.7, onWater(lerp(32, 20, u)), SONADIA_BEACH.z - d * 0.7);
+        look.set(SONADIA.x, onWater(2), SONADIA.z);
       },
     },
     {

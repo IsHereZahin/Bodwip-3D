@@ -39,6 +39,13 @@
       },
       "modelledBit": 128
     },
+    "level": {
+      "file": "level.bin",
+      "encoding": "deflate-raw",
+      "type": "int16",
+      "unit": "decimetre",
+      "note": "the surface of inland water (ponds, pans, tanks) as the DEM measured it; 0 elsewhere"
+    },
     "cover": {
       "file": "cover.bin",
       "encoding": "deflate-raw",
@@ -76,6 +83,12 @@
       },
       "licence": "ODbL (OpenStreetMap)"
     },
+    "channel": {
+      "file": "channel.json",
+      "points": 458,
+      "worldKm": 9.2,
+      "medianHalfWidth": 148.3
+    },
     "places": {
       "file": "places.json",
       "note": "landmarks with sources (scripts/geo/places.mjs)"
@@ -95,14 +108,14 @@
     "water": 681.6,
     "mud": 32.5,
     "sand": 16.8,
-    "tree": 180,
-    "crop": 185.2,
-    "grass": 22.4,
+    "tree": 186.4,
+    "crop": 185.6,
+    "grass": 22.5,
     "bare": 13.3,
-    "pond": 99.9,
-    "saltpan": 125.6,
+    "pond": 88.3,
+    "saltpan": 124.4,
     "built": 11.8,
-    "marsh": 4,
+    "marsh": 10,
     "mangrove": 66.1,
     "shrub": 0
   },
@@ -114,8 +127,8 @@
   "areaKm2": {
     "sea": 681.6,
     "tidal": 35.9,
-    "land": 436,
-    "inland": 219.7,
+    "land": 567.3,
+    "inland": 88.3,
     "mangrove": 66
   },
   "licence": "each layer its own: terrain and kind CC BY-NC-SA 4.0 (from FABDEM V1-2), cover ODbL, canopy CC BY 4.0",

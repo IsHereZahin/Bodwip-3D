@@ -53,9 +53,10 @@ function keepClearOfBridge(cam: Vector3): void {
   const face = BRIDGE.width / 2 + BRIDGE.parapet;
   const s = smoothstep(face + 3, face + 0.4, Math.abs(f.z)) * smoothstep(BRIDGE.half + 3, BRIDGE.half + 1, Math.abs(f.x));
   if (s <= 0) return;
+  // the bridge's heights are above the khal's water
   const soffit = bridgeSoffit(f.x);
-  if (soffit - 0.6 > G.uWaterLevel.value + 0.8) cam.y = lerp(cam.y, Math.min(cam.y, soffit - 0.6), s);
-  else cam.y = lerp(cam.y, Math.max(cam.y, bridgeDeck(f.x) + BRIDGE.parapetHeight + 1.2), s);
+  if (soffit - 0.6 > 0.8) cam.y = lerp(cam.y, Math.min(cam.y, BRIDGE.water + soffit - 0.6), s);
+  else cam.y = lerp(cam.y, Math.max(cam.y, BRIDGE.water + bridgeDeck(f.x) + BRIDGE.parapetHeight + 1.2), s);
 }
 
 /**

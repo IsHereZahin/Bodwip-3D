@@ -1,8 +1,8 @@
-import { BufferGeometry, DoubleSide, Group, Matrix4, Mesh, MeshStandardMaterial, SphereGeometry, Vector2, Vector3 } from 'three';
+import { BufferGeometry, DoubleSide, Group, Matrix4, MeshStandardMaterial, SphereGeometry, Vector2, Vector3 } from 'three';
 import type { Texture } from 'three';
 import { LAYER_NO_REFLECT } from '../core/globals';
 import { smoothstep } from '../core/mathx';
-import { fbm, valueNoise } from '../core/noise';
+import { fbm } from '../core/noise';
 import { Rng } from '../core/rng';
 import { MeshBuilder, card, rgb, scaleRgb, taperedTube, type RGB } from '../render/builder';
 import { instanced, type Placement } from '../render/instancing';
@@ -17,27 +17,23 @@ import {
   needleTexture,
   palmFrondTexture,
 } from '../render/textures';
+import { COVER, GRID_H, GRID_W, LAYERS, canopyAt, cellCentre } from '../geo/data';
 import {
   BIL,
-  CHARS,
-  KHALS,
+  CHANNEL_SPAN,
   PONDS,
   VILLAGES,
   VILLAGE_CENTERS,
   WETLANDS,
+  WORLD_X0,
+  WORLD_X1,
   WORLD_Z0,
   WORLD_Z1,
   bankInfo,
   bilDepth,
   bilReach,
-  charHeight,
-  coastal,
   edgeHalfWidth,
   forestCover,
-  islandNorthCoast,
-  islandWestCoast,
-  khalPoint,
-  landLevel,
   nearBackwater,
   riverX,
   routeGap,
@@ -365,27 +361,10 @@ function tuft(rng: Rng, count: [number, number], height: [number, number], width
   return b.build();
 }
 
-/** The far tree line on the horizon: a strip whose top edge is the bumpy silhouette of village groves. */
-function treeLine(side: 1 | -1, offset: number, seed: number): BufferGeometry {
-  const b = new MeshBuilder();
-  const n = new Vector3();
-  let prev = -1;
-  for (let z = WORLD_Z0 + 200; z >= WORLD_Z1 - 400; z -= 8) {
-    const x = riverX(z) + side * (edgeHalfWidth(z, side) + offset);
-    const h = 7 + 9 * fbm(z * 0.012, seed, 3, seed) + 4 * valueNoise(z * 0.12, seed * 3.1, seed);
-    n.set(-side, 0.7, 0).normalize();
-    const lo = b.vertex(new Vector3(x, 0.5, z), n, 0, 0, rgb('#12180a'));
-    b.vertex(new Vector3(x, landLevel(x, z) + h, z), n, 0, 1, rgb('#2c3a16'));
-    if (prev >= 0) b.quad(prev, lo, lo + 1, prev + 1);
-    prev = lo;
-  }
-  return b.build();
-}
-
 // ---------- placement ----------
 
-/** Where the casuarina belt runs down the island's west coast (z), from its north end to its south. */
-const ISLAND_BELT = { z0: 120, z1: -3350 };
+/** The stretch of the channel the bank plantings run along, head to mouth. */
+const BANKS = { z0: CHANNEL_SPAN.north, z1: CHANNEL_SPAN.south };
 
 interface Spot {
   x: number;
@@ -635,36 +614,20 @@ export function buildVegetation(
 
   // trees along both banks, thinning and thickening with a slow noise
   for (const side of [-1, 1] as const) {
-    for (let z = WORLD_Z0; z > WORLD_Z1; z -= rng.range(8, 16)) {
+    for (let z = BANKS.z0; z > BANKS.z1; z -= rng.range(8, 16)) {
       if (fbm(z * 0.006, side * 4.1, 2, 3) < 0.45) continue;
       const inland = rng.range(4, 26);
       const x = riverX(z) + side * (edgeHalfWidth(z, side) + 3 + inland);
+      // as the satellites see the bank: groves where their canopy stands, the odd palm on the open banks
+      const canopy = canopyAt(x, z).cover;
+      if (rng.next() > 0.15 + canopy) continue;
       if (villageDistance(x, z) < 1.3 || !onDryLand(x, z, 3) || !occ.free(x, z, 3)) continue;
-      // the coast is open country: only the odd palm along its banks
-      const coast = coastal(z);
-      if (coast > 0 && rng.next() < coast * 0.8) continue;
       occ.add(x, z, 3);
       const r = rng.next();
-      const tree = coast > 0.5 ? (r < 0.55 ? B.coconut : B.date) : r < 0.35 ? B.rain : r < 0.7 ? B.mango : r < 0.9 ? B.coconut : B.supari;
+      const tree = canopy < 0.2 ? (r < 0.55 ? B.coconut : B.date) : r < 0.35 ? B.rain : r < 0.7 ? B.mango : r < 0.9 ? B.coconut : B.supari;
       put(tree, at(x, z, rng, rng.range(0.85, 1.2)));
     }
   }
-
-  // palms, bananas and the odd bamboo clump along the khals' banks, as along any village canal
-  KHALS.forEach((_, k) => {
-    for (let s = 0.08; s < 0.95; s += rng.range(0.025, 0.05)) {
-      const c = khalPoint(k, s);
-      if (fbm(c.z * 0.02, k * 3.7, 2, 15) < 0.4) continue;
-      const side = rng.sign();
-      const off = c.halfWidth + rng.range(4, 9);
-      const x = c.x + Math.cos(c.heading) * side * off;
-      const z = c.z - Math.sin(c.heading) * side * off;
-      if (villageDistance(x, z) < 1.2 || !onDryLand(x, z, 6) || !occ.free(x, z, 2.5)) continue;
-      occ.add(x, z, 2.5);
-      const r = rng.next();
-      put(r < 0.3 ? B.coconut : r < 0.55 ? B.supari : r < 0.75 ? B.date : r < 0.92 ? B.banana : B.bamboo, at(x, z, rng, rng.range(0.85, 1.15)));
-    }
-  });
 
   // round the bil: groves standing back from its marshy rim, and hijol trees out in its shallows
   for (let k = 0; k < 260; k++) {
@@ -693,7 +656,7 @@ export function buildVegetation(
   // lone date palms and supari along the field bunds
   for (let k = 0; k < 160; k++) {
     const side = rng.sign();
-    const z = rng.range(WORLD_Z1, WORLD_Z0);
+    const z = rng.range(BANKS.z1, BANKS.z0);
     const x = riverX(z) + side * (edgeHalfWidth(z, side) + rng.range(60, 700));
     if (villageDistance(x, z) < 1.4 || !onDryLand(x, z, 30)) continue;
     put(rng.next() < 0.6 ? B.date : B.supari, at(x, z, rng, rng.range(0.85, 1.15)));
@@ -701,51 +664,46 @@ export function buildVegetation(
 
   // distant groves: big, cheap trees that build the horizon's dark band
   for (const side of [-1, 1] as const) {
-    for (let z = WORLD_Z0 + 100; z > WORLD_Z1 - 100; z -= rng.range(5, 9)) {
+    for (let z = BANKS.z0; z > BANKS.z1; z -= rng.range(5, 9)) {
       for (const band of [rng.range(260, 420), rng.range(480, 700)]) {
         if (fbm(z * 0.004 + band * 0.01, side * 2.7, 2, 8) < 0.42) continue;
         const x = riverX(z) + side * (edgeHalfWidth(z, side) + band);
-        // on the island the hills' forest stands in for them
-        if (side > 0 || !onDryLand(x, z, 30)) continue;
+        // on the island the hills' forest stands in for them; elsewhere only where the satellites see trees
+        if (side > 0 || canopyAt(x, z).cover < 0.2 || !onDryLand(x, z, 30)) continue;
         put(B.far, at(x, z, rng, rng.range(1.2, 1.9), 0.4));
       }
     }
   }
 
-  // the island's hills under forest: dense on the slopes facing the channel, thinner beyond the crest; the
-  // mainland's far hills thinly (their painted ground carries them); on a jittered grid, so no two crowns meet
-  // (big, cheap crowns: the painted forest floor between them reads as forest from the river, and every
-  // tree is drawn again in the water's mirror; only near the shore the odd full mango or rain tree)
+  // the hills under forest wherever the map has trees on high ground (the island's hills, the mainland's
+  // beyond Cox's Bazar): dense on the slopes facing the channel, thinner farther off; on a jittered grid, so
+  // no two crowns meet (big, cheap crowns: the painted forest floor between them reads as forest from the
+  // channel, and every tree is drawn again in the water's mirror; near the shore the odd full mango or rain tree)
   for (let z = WORLD_Z0; z > WORLD_Z1; z -= 15) {
-    for (let u = 110; u < 1150; u += rng.range(u < 520 ? 16 : 28, u < 520 ? 22 : 38)) {
-      const x = riverX(z) + u + rng.range(-6, 6);
+    for (let x = WORLD_X0; x < WORLD_X1; x += rng.range(16, 26)) {
+      const xx = x + rng.range(-6, 6);
       const zz = z + rng.range(-6, 6);
-      const f = forestCover(x, zz);
-      if (f < 0.25 || rng.next() > f * (u < 520 ? 0.9 : 0.45) || villageDistance(x, zz) < 1.2 || onLandmark(x, zz, 4) || onTempleHill(x, zz) || !occ.free(x, zz, 2)) continue;
+      const f = forestCover(xx, zz);
+      if (f < 0.25) continue;
+      const shore = bankInfo(xx, zz).inland;
+      if (rng.next() > f * (shore < 450 ? 0.9 : 0.45) || villageDistance(xx, zz) < 1.2 || onLandmark(xx, zz, 4) || onTempleHill(xx, zz) || !occ.free(xx, zz, 2)) continue;
       const r = rng.next();
-      put(u < 300 && r < 0.08 ? (r < 0.04 ? B.rain : B.mango) : B.hill, at(x, zz, rng, rng.range(1.0, 1.5), 0.3));
-    }
-  }
-  for (let z = -700; z > WORLD_Z1; z -= 30) {
-    for (let u = -1350; u > -2600; u -= rng.range(30, 42)) {
-      const x = riverX(z) + u;
-      if (rng.next() > forestCover(x, z) * 0.18) continue;
-      put(B.hill, at(x, z, rng, rng.range(1.2, 1.7), 0.4));
+      put(shore < 200 && r < 0.08 ? (r < 0.04 ? B.rain : B.mango) : B.hill, at(xx, zz, rng, rng.range(1.0, 1.5), 0.3));
     }
   }
 
-  // mangroves on the tidal mud: along the channel toward its mouths, the Kohelia, the island's north shore
-  // and Sonadia's inner side; baen to the water, keora behind
+  // mangroves where the map has them (Global Mangrove Watch): along the channel's banks, by Gorakghata, on
+  // Sonadia and the flats round Matarbari; baen to the water, keora behind
   for (let k = 0, placed = 0; k < 70000 && placed < 1000; k++) {
     let x: number;
     let z: number;
     if (k % 2 === 0) {
       const side = rng.sign();
-      z = rng.range(WORLD_Z1, WORLD_Z0);
+      z = rng.range(BANKS.z1, BANKS.z0);
       x = riverX(z) + side * (edgeHalfWidth(z, side) + rng.range(-8, 24));
     } else {
       z = rng.range(WORLD_Z1, WORLD_Z0);
-      x = riverX(z) + rng.range(300, 2300);
+      x = rng.range(WORLD_X0, WORLD_X1);
     }
     const h = terrainHeight(x, z);
     const m = mangroveZone(x, z, h);
@@ -756,22 +714,18 @@ export function buildVegetation(
     placed++;
   }
 
-  // casuarina belts behind the island's beaches on the Bay and on the Kutubdia channel, and on Sonadia's dunes
+  // casuarina belts on the sand above the spring tides' reach (the beaches' backs and dunes on the island,
+  // Sonadia and the Cox's Bazar shore), cell by cell where the map has sand
   const jhauAt = (x: number, z: number) => {
     const h = terrainHeight(x, z);
-    if (h < 0.6 || saltPan(x, z) > 0.2 || !occ.free(x, z, 2.2)) return;
+    if (h < 2.2 || saltPan(x, z) > 0.2 || onLandmark(x, z, 3) || !occ.free(x, z, 2.2)) return;
     occ.add(x, z, 2.2);
     put(B.jhau, { x, y: h - 0.15, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.85, 1.2) });
   };
-  for (let z = ISLAND_BELT.z0; z > ISLAND_BELT.z1; z -= rng.range(7, 11)) jhauAt(riverX(z) + islandWestCoast(z) - rng.range(40, 60), z);
-  for (let u = 260; u < 2000; u += rng.range(7, 11)) {
-    const z = islandNorthCoast(u) - rng.range(40, 60);
-    jhauAt(riverX(z) + u, z);
-  }
-  for (let k = 0; k < 1500; k++) {
-    const z = rng.range(-4300, -3450);
-    const x = riverX(z) + rng.range(450, 1300);
-    if (sandCover(x, z) > 0.8 && terrainHeight(x, z) > 1.4 && rng.next() < 0.35) jhauAt(x, z);
+  for (let i = 0; i < GRID_W * GRID_H; i++) {
+    if (LAYERS.cover[i] !== COVER.sand || rng.next() > 0.3) continue;
+    const c = cellCentre(i % GRID_W, Math.floor(i / GRID_W));
+    jhauAt(c.x + rng.range(-4, 4), c.z + rng.range(-4, 4));
   }
 
   for (const b of Object.values(B)) {
@@ -783,29 +737,17 @@ export function buildVegetation(
     });
   }
 
-  // kash on the chars and on low stretches of bank
+  // kash on low stretches of bank
   const kashItems: Placement[][] = kash.map(() => []);
-  for (const c of CHARS) {
-    for (let dz = -c.halfLen; dz <= c.halfLen; dz += 2.4) {
-      for (let du = -c.halfWid; du <= c.halfWid; du += 2.4) {
-        const z = c.z + dz + rng.range(-1.1, 1.1);
-        const u = c.u + du + rng.range(-1.1, 1.1);
-        const h = charHeight(z, u);
-        if (h < 0.22 || h > 1.0) continue;
-        if (fbm(z * 0.03, u * 0.05 + c.z, 2, 61) < 0.3) continue;
-        const x = riverX(z) + u;
-        kashItems[rng.int(0, kash.length - 1)].push({ x, y: h - 0.05, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.8, 1.2) });
-      }
-    }
-  }
   for (const side of [-1, 1] as const) {
-    for (let z = WORLD_Z0; z > WORLD_Z1; z -= 2.8) {
+    for (let z = BANKS.z0; z > BANKS.z1; z -= 2.8) {
       if (fbm(z * 0.01, side * 9.3, 2, 62) < 0.55) continue;
       const we = edgeHalfWidth(z, side);
       for (let k = 0; k < 2; k++) {
         const x = riverX(z) + side * (we + rng.range(2.5, 7));
         const h = terrainHeight(x, z);
-        if (h < 0.25 || h > 1.6) continue;
+        // only above the spring tides' reach (≈1.8 m), where the bank stays dry
+        if (h < 1.9 || h > 3.5) continue;
         kashItems[rng.int(0, kash.length - 1)].push({ x, y: h - 0.05, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.75, 1.1) });
       }
     }
@@ -815,7 +757,7 @@ export function buildVegetation(
   // grass tufts on the bank tops and round the villages
   const grassItems: Placement[][] = grass.map(() => []);
   for (const side of [-1, 1] as const) {
-    for (let z = WORLD_Z0; z > WORLD_Z1; z -= 1.1) {
+    for (let z = BANKS.z0; z > BANKS.z1; z -= 1.1) {
       // thickest along the lip of the bank, where it shows from the river
       for (const inland of [rng.range(0.5, 4), rng.range(2, 18)]) {
         const x = riverX(z) + side * (edgeHalfWidth(z, side) + 3 + inland);
@@ -827,12 +769,6 @@ export function buildVegetation(
   grass.forEach(
     (g, i) => grassItems[i].length && group.add(instanced(g, mats.grass, grassItems[i], { layer: LAYER_NO_REFLECT, receive: true })),
   );
-
-  // horizon tree lines
-  const lineMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 1, side: DoubleSide }), {});
-  // the mainland's horizon; on the island its hills and casuarina belts make their own
-  group.add(new Mesh(treeLine(-1, 820, 5), lineMat));
-  group.add(new Mesh(treeLine(-1, 1250, 9), lineMat));
 
   return group;
 }

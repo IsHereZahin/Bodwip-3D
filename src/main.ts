@@ -39,7 +39,7 @@ import { Girl } from './world/girl';
 import { buildMoheshkhali } from './world/moheshkhali';
 import { cullBeyond, updateCulling } from './render/cull';
 import { buildSky } from './world/sky';
-import { buildTerrain } from './world/terrain';
+import { Terrain } from './world/terrain';
 import { buildVegetation } from './world/vegetation';
 import { buildVillages, planHuts } from './world/village';
 import { buildWater } from './world/water';
@@ -108,11 +108,13 @@ async function main(hud: Hud): Promise<void> {
   scene.add(sky.mesh);
   const surfaces = await surfacesLoading;
   hud.progress(0.15);
-  scene.add(buildTerrain(surfaces.ground));
+  // the ground in patches round the camera, finer near it (world/terrain.ts)
+  const terrain = new Terrain(surfaces.ground);
+  scene.add(terrain.group);
   hud.progress(0.3);
   await nextTask();
   const water = buildWater(pipeline.reflection.target.texture, pipeline.reflection.textureMatrix, Math.min(aniso, 8));
-  scene.add(water.mesh);
+  scene.add(water.mesh, water.inland);
   hud.progress(0.42);
   await nextTask();
   const huts = planHuts();
@@ -244,6 +246,8 @@ async function main(hud: Hud): Promise<void> {
       return env.moonDir;
     },
     prepare: (at) => {
+      terrain.update(at, true);
+      water.update(at.x, at.z, true);
       meadow.update(at, true);
       crops.update(at, true);
     },
@@ -603,6 +607,8 @@ async function main(hud: Hud): Promise<void> {
     // birds and fireflies gather round whoever is being watched: the boat, or the free camera
     life.update(dt, t, director.active ? director.focus : rig.subject, director.active ? rig.boat.course : rig.subjectHeading, env.night, weather.rain);
     sky.mesh.position.copy(camera.position);
+    terrain.update(camera.position);
+    water.update(camera.position.x, camera.position.z);
     meadow.update(camera.position);
     crops.update(camera.position);
     // the shadow box rides ahead of the view, snapped so it redraws only every few metres
@@ -615,6 +621,8 @@ async function main(hud: Hud): Promise<void> {
   };
   updateSky(0, true);
   step(0);
+  terrain.update(camera.position, true);
+  water.update(camera.position.x, camera.position.z, true);
   renderer.setRenderTarget(pipeline.sceneTarget);
   await renderer.compileAsync(scene, camera);
   renderer.setRenderTarget(null);
@@ -735,6 +743,8 @@ async function main(hud: Hud): Promise<void> {
           debug.freeze = false;
           clock.playing = false;
           step(0.001);
+          terrain.update(camera.position, true);
+          water.update(camera.position.x, camera.position.z, true);
           meadow.update(camera.position, true);
           crops.update(camera.position, true);
           renderer.shadowMap.needsUpdate = true;

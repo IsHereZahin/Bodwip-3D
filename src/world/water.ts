@@ -25,12 +25,26 @@ import { GLSL_COMMON } from '../render/glsl';
 import { HERO_HULL, HERO_SINK, hullWaterlineGlsl } from './hull';
 import { wakeGlsl } from './wake';
 import { SHELTERED, waveHeightLodGlsl, waveSlopeGlsl } from './waves';
-import { WORLD_U, WORLD_Z0, WORLD_Z1, downstream, edgeHalfWidth, halfWidth, islandCoast, riverX, streamSpeed, terrainHeight } from './geography';
+import { GRID_H, GRID_W, KIND, LAYERS, WORLD } from '../geo/data';
+import { BIL, BRIDGE, WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, downstream, edgeHalfWidth, halfWidth, inlandWaterAt, riverX, seaWaterAt, streamSpeed, terrainHeight, waterLevelAt } from './geography';
 
-/** The fine field over the channel and its backwaters: about 3 m a texel across, so the khals and the bil's channels have a depth of their own. */
-const FIELD = { x0: -620, sx: 1240, w: 384, h: 1280 };
-/** The wide field out to the open sea west of the island (and the mainland's edge east), coarser. */
-const FIELD_WIDE = { x0: -WORLD_U - 100, sx: (WORLD_U + 100) * 2, w: 384, h: 640 };
+/** A field's rectangle in the world (x0, z0 its corner with the least x and z; sx, sz its extent) and its texels. */
+interface FieldRect {
+  x0: number;
+  z0: number;
+  sx: number;
+  sz: number;
+  w: number;
+  h: number;
+}
+
+/** The wide field over the whole map and a margin of sea round it, ≈27 m a texel. */
+const FIELD_WIDE: FieldRect = { x0: WORLD_X0 - 2000, z0: WORLD_Z1 - 2000, sx: WORLD_X1 - WORLD_X0 + 4000, sz: WORLD_Z0 - WORLD_Z1 + 4000, w: 512, h: 768 };
+/**
+ * The fine field round the camera: 1 km square at 4 m a texel, so the creeks and the khal have their own
+ * depth. Rebuilt round the camera once it strays `drift` m from the middle, `rows` rows a frame.
+ */
+const FINE = { size: 1024, texels: 256, drift: 300, rows: 24 };
 
 /** Tiling ripple normals, generated once. */
 function rippleNormals(maxAnisotropy: number): DataTexture {
@@ -76,14 +90,12 @@ function rippleNormals(maxAnisotropy: number): DataTexture {
 
 /**
  * r: the bed's height, gb: the surface current (m/s), a: how open the water is to the wind and the swell
- * (1 in the channel and out on the sea, 0 in the khals, the bil, the ponds and the creeks, which lie still).
- * Lets the water know its depth, its flow and its shelter anywhere.
+ * (1 on the sea's water: the channel, the creeks, the open Bay; 0 on inland water, which lies still).
+ * Lets the water know its depth, its flow and its shelter anywhere. Fills rows [from, to) of `data`.
  */
-function riverField(o: { x0: number; sx: number; w: number; h: number }): { texture: DataTexture; bounds: Vector4 } {
-  const SZ = WORLD_Z0 - WORLD_Z1;
-  const data = new Uint16Array(o.w * o.h * 4);
-  for (let j = 0; j < o.h; j++) {
-    const z = WORLD_Z1 + ((j + 0.5) / o.h) * SZ;
+function fillField(o: FieldRect, data: Uint16Array, from: number, to: number): void {
+  for (let j = from; j < to; j++) {
+    const z = o.z0 + ((j + 0.5) / o.h) * o.sz;
     const cx = riverX(z);
     const hw = halfWidth(z);
     const [fx, fz] = downstream(z);
@@ -92,30 +104,173 @@ function riverField(o: { x0: number; sx: number; w: number; h: number }): { text
       const x = o.x0 + ((i + 0.5) / o.w) * o.sx;
       const h = terrainHeight(x, z);
       const u = x - cx;
+      const sea = seaWaterAt(x, z);
+      // the channel runs (the tide's currents in the creeks and over the flats come with the tide)
+      const inChannel = sea && Math.abs(u) < edgeHalfWidth(z, u >= 0 ? 1 : -1) + 6;
       const t = u / hw;
-      const speed = h < 0 ? mid * Math.max(0, 1 - t * t) : 0;
-      const inChannel = Math.abs(u) < edgeHalfWidth(z, u >= 0 ? 1 : -1) + 6;
-      const atSea = u > 0 && islandCoast(z, u) < -10;
+      const speed = inChannel ? mid * Math.max(0, 1 - t * t) : 0;
       const k = (j * o.w + i) * 4;
-      data[k] = DataUtils.toHalfFloat(Math.max(-12, Math.min(12, h)));
+      data[k] = DataUtils.toHalfFloat(Math.max(-40, Math.min(40, h)));
       data[k + 1] = DataUtils.toHalfFloat(fx * speed);
       data[k + 2] = DataUtils.toHalfFloat(fz * speed);
-      data[k + 3] = DataUtils.toHalfFloat(h < 0 && (inChannel || atSea) ? 1 : 0);
+      data[k + 3] = DataUtils.toHalfFloat(sea ? 1 : 0);
     }
   }
+}
+
+function fieldTexture(o: FieldRect): { texture: DataTexture; bounds: Vector4 } {
+  const data = new Uint16Array(o.w * o.h * 4);
+  fillField(o, data, 0, o.h);
   const texture = new DataTexture(data, o.w, o.h, RGBAFormat, HalfFloatType);
   texture.minFilter = texture.magFilter = LinearFilter;
   texture.needsUpdate = true;
-  return { texture, bounds: new Vector4(o.x0, WORLD_Z1, 1 / o.sx, 1 / SZ) };
+  return { texture, bounds: new Vector4(o.x0, o.z0, 1 / o.sx, 1 / o.sz) };
 }
 
-/** GLSL: the water field at p, from the fine one over the channel or the wide one beyond it. */
+/**
+ * The fine field follows the camera: once it strays from the field's middle a new one is filled round it a
+ * few rows a frame (no hitch), then swapped in whole.
+ */
+class FineField {
+  readonly texture: DataTexture;
+  readonly bounds: Vector4;
+  private rect: FieldRect;
+  private next: { rect: FieldRect; data: Uint16Array; row: number } | null = null;
+
+  constructor(x: number, z: number) {
+    this.rect = FineField.around(x, z);
+    const f = fieldTexture(this.rect);
+    this.texture = f.texture;
+    this.bounds = f.bounds;
+  }
+
+  private static around(x: number, z: number): FieldRect {
+    // snapped to whole texels, so a rebuilt field samples the ground at the same points as before
+    const step = FINE.size / FINE.texels;
+    return { x0: Math.round((x - FINE.size / 2) / step) * step, z0: Math.round((z - FINE.size / 2) / step) * step, sx: FINE.size, sz: FINE.size, w: FINE.texels, h: FINE.texels };
+  }
+
+  /** Follows the camera at (x, z); `now` rebuilds round it at once (stills, jumps). */
+  update(x: number, z: number, now = false): void {
+    if (!this.next) {
+      const off = Math.max(Math.abs(x - this.rect.x0 - FINE.size / 2), Math.abs(z - this.rect.z0 - FINE.size / 2));
+      if (off < (now ? 8 : FINE.drift)) return;
+      this.next = { rect: FineField.around(x, z), data: new Uint16Array(FINE.texels * FINE.texels * 4), row: 0 };
+    }
+    const n = this.next;
+    const to = now ? n.rect.h : Math.min(n.rect.h, n.row + FINE.rows);
+    fillField(n.rect, n.data, n.row, to);
+    n.row = to;
+    if (n.row < n.rect.h) return;
+    (this.texture.image.data as Uint16Array).set(n.data);
+    this.texture.needsUpdate = true;
+    this.bounds.set(n.rect.x0, n.rect.z0, 1 / n.rect.sx, 1 / n.rect.sz);
+    this.rect = n.rect;
+    this.next = null;
+  }
+}
+
+/** How many cells (10 m each) round inland water carry its level on (see levelTexture). */
+const LEVEL_SPREAD = 6;
+
+/**
+ * Inland water's level and where each water lies, over the map at its own 10 m cells: r the surface of a pond,
+ * a pan, the bil or the khal; g 1 where the water is the sea's (the channel, the creeks, the flats and
+ * mangroves it floods); b 1 where it is inland water. Round inland water r carries the nearest water's level
+ * on for LEVEL_SPREAD cells, so the water grid's vertices beside a pond stand at its level and the pond's
+ * edge is cut by the ground, not by the grid; farther off r lies well under the ground.
+ */
+function levelTexture(): { texture: DataTexture; map: Vector4 } {
+  const n = GRID_W * GRID_H;
+  const surface = new Float32Array(n);
+  const sea = new Uint8Array(n);
+  const inland = new Uint8Array(n);
+  const { kind, level, terrain } = LAYERS;
+  for (let i = 0; i < n; i++) {
+    const k = kind[i] & 0x7f;
+    sea[i] = k === KIND.sea || k === KIND.tidal || k === KIND.mangrove ? 1 : 0;
+    inland[i] = k === KIND.inland ? 1 : 0;
+    surface[i] = inland[i] ? level[i] / 10 : terrain[i] / 10 - 20;
+  }
+  // the inland waters the scene adds: the bil and the khal under the old bridge
+  const cell = (WORLD.x1 - WORLD.x0) / GRID_W;
+  const paint = (x0: number, x1: number, z0: number, z1: number) => {
+    for (let z = z0; z <= z1; z += cell / 2) {
+      for (let x = x0; x <= x1; x += cell / 2) {
+        if (!inlandWaterAt(x, z)) continue;
+        const c = Math.floor((WORLD.x1 - x) / cell);
+        const r = Math.floor((WORLD.z1 - z) / cell);
+        if (c < 0 || r < 0 || c >= GRID_W || r >= GRID_H) continue;
+        const i = r * GRID_W + c;
+        surface[i] = waterLevelAt(x, z);
+        inland[i] = 1;
+        sea[i] = 0;
+      }
+    }
+  };
+  const bx = riverX(BIL.z) + BIL.u;
+  paint(bx - BIL.halfWid * 1.7, bx + BIL.halfWid * 1.7, BIL.z - BIL.halfLen * 1.7, BIL.z + BIL.halfLen * 1.7);
+  paint(BRIDGE.x - 200, BRIDGE.x + 200, BRIDGE.z - 200, BRIDGE.z + 200);
+  // carry each inland water's level outward, ring by ring (the nearest water's, as a breadth-first search)
+  const reached = new Uint8Array(n);
+  let ring: number[] = [];
+  for (let i = 0; i < n; i++) if (inland[i]) (reached[i] = 1), ring.push(i);
+  for (let step = 0; step < LEVEL_SPREAD && ring.length; step++) {
+    const next: number[] = [];
+    for (const i of ring) {
+      const c = i % GRID_W;
+      for (const j of [c > 0 ? i - 1 : -1, c < GRID_W - 1 ? i + 1 : -1, i - GRID_W, i + GRID_W]) {
+        if (j < 0 || j >= n || reached[j]) continue;
+        reached[j] = 1;
+        surface[j] = surface[i];
+        next.push(j);
+      }
+    }
+    ring = next;
+  }
+  const data = new Uint16Array(n * 4);
+  for (let i = 0; i < n; i++) {
+    data[i * 4] = DataUtils.toHalfFloat(surface[i]);
+    data[i * 4 + 1] = DataUtils.toHalfFloat(sea[i]);
+    data[i * 4 + 2] = DataUtils.toHalfFloat(inland[i]);
+  }
+  const texture = new DataTexture(data, GRID_W, GRID_H, RGBAFormat, HalfFloatType);
+  texture.minFilter = texture.magFilter = LinearFilter;
+  texture.needsUpdate = true;
+  // u runs west to east (x falling), v north to south (z falling)
+  return { texture, map: new Vector4(WORLD.x1, WORLD.z1, 1 / (WORLD.x1 - WORLD.x0), 1 / (WORLD.z1 - WORLD.z0)) };
+}
+
+/**
+ * The level the mirror pass reflects about for an eye over (x, z): that of the water nearest it, looking out
+ * in rings to 240 m; the sea's when there is none.
+ */
+function mirrorLevelAt(x: number, z: number): number {
+  for (const r of [0, 25, 60, 120, 240]) {
+    const n = r ? 12 : 1;
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2;
+      const px = x + Math.cos(a) * r;
+      const pz = z + Math.sin(a) * r;
+      if (inlandWaterAt(px, pz)) return waterLevelAt(px, pz);
+      if (seaWaterAt(px, pz)) return G.uWaterLevel.value;
+    }
+  }
+  return G.uWaterLevel.value;
+}
+
+/** GLSL: the water field at p, from the fine one round the camera or the wide one beyond it; and the levels. */
 const FIELD_GLSL = /* glsl */ `
 vec4 waterField(vec2 p) {
   vec2 f = (p - uField.xy) * uField.zw;
   vec4 fine = texture2D(tField, f);
   vec4 wide = texture2D(tFieldWide, (p - uFieldWide.xy) * uFieldWide.zw);
-  return f.x > 0.01 && f.x < 0.99 ? fine : wide;
+  vec2 edge = min(f, 1.0 - f);
+  return min(edge.x, edge.y) > 0.01 ? fine : wide;
+}
+// inland water's level (r), the sea's reach (g) and inland water's (b) at p
+vec3 waterLevels(vec2 p) {
+  return texture2D(tLevel, (uLevelMap.xy - p) * uLevelMap.zw).rgb;
 }`;
 
 /** Angular segments of the water's grid; its vertices lie this share of their distance from the camera apart. */
@@ -124,8 +279,8 @@ const GRID_SPACING = (Math.PI * 2) / GRID_SEGMENTS;
 /** Out to here (m) the grid is fine enough to carry waves; beyond, its rings widen fast to the world's edge. */
 const GRID_WAVES = 300;
 const GRID_FAR = 6000;
-/** The water's extent (x0, z0, x1, z1): the world's, and the open Bay on to the horizon west and south. */
-const WATER_BOUNDS = new Vector4(-WORLD_U, WORLD_Z1 - 5000, WORLD_U + 4000, WORLD_Z0);
+/** The water's extent (x0, z0, x1, z1): the map and the open Bay round it, on to the horizon. */
+const WATER_BOUNDS = new Vector4(WORLD_X0 - 6000, WORLD_Z1 - 6000, WORLD_X1 + 6000, WORLD_Z0 + 6000);
 
 /**
  * The water's mesh: rings round the camera, each a little wider than the last, so its vertices lie about as
@@ -180,6 +335,9 @@ uniform vec4 uFieldWide;
 uniform vec4 uBoat;
 uniform vec4 uOar;
 uniform vec4 uBounds;
+uniform sampler2D tLevel;
+uniform vec4 uLevelMap;
+uniform float uInland;
 varying vec3 vWorld;
 varying float vWave;
 ${FIELD_GLSL}
@@ -191,11 +349,14 @@ void main() {
   float spacing = max(length(local), 0.6) * ${GRID_SPACING.toFixed(5)};
   vec2 xz = clamp(uCamPos.xz + local, uBounds.xy, uBounds.zw);
   vec4 fld = waterField(xz);
-  float depth = max(uWaterLevel - fld.r, 0.0);
-  // still water carries a share of the open water's waves, and they die out on the shallows by the shore
+  // the sea's water stands at the sea's level; inland water (ponds, pans, the bil) at its own
+  float level = uInland > 0.5 ? waterLevels(xz).r : uWaterLevel;
+  float depth = max(level - fld.r, 0.0);
+  // still water carries a share of the open water's waves, and they die out on the shallows by the shore;
+  // a pond's are only ripples
   float running = max(smoothstep(0.0, 0.2, length(fld.gb) * uFlowScale), fld.a);
   float shoal = smoothstep(0.0, 0.6, depth);
-  float h = waveHeightLod(xz, spacing) * mix(${SHELTERED.toFixed(2)}, 1.0, running) * shoal;
+  float h = waveHeightLod(xz, spacing) * mix(${SHELTERED.toFixed(2)}, 1.0, running) * shoal * (uInland > 0.5 ? 0.15 : 1.0);
   vWave = h;
   // the water the boat pushes aside
   vec2 bd = xz - uBoat.xy;
@@ -203,7 +364,7 @@ void main() {
     vec2 q = vec2(dot(bd, vec2(cos(uBoat.z), -sin(uBoat.z))), dot(bd, vec2(sin(uBoat.z), cos(uBoat.z))));
     h += boatWake(q, uBoat.w, uOar, spacing) * shoal;
   }
-  vWorld = vec3(xz.x, uWaterLevel + h, xz.y);
+  vWorld = vec3(xz.x, level + h, xz.y);
   gl_Position = projectionMatrix * viewMatrix * vec4(vWorld, 1.0);
 }
 `;
@@ -225,6 +386,9 @@ uniform vec4 uNetB0;     // ... how hard its rim is cutting the surface, how muc
 uniform vec4 uNetA1;     // the next nearest
 uniform vec4 uNetB1;
 uniform vec3 uAmb;
+uniform sampler2D tLevel;
+uniform vec4 uLevelMap;
+uniform float uInland;
 varying vec3 vWorld;
 varying float vWave;
 
@@ -305,7 +469,12 @@ void main() {
   float boatSpd = clamp(uBoat.w / 2.0, 0.0, 1.4);
 
   vec4 fld = waterField(wp.xz);
-  float depth = max(uWaterLevel - fld.r, 0.0);
+  // each water only where it belongs: the sea's where the ground is joined to the sea (not over the ponds
+  // and pans, nor the polders' fields below its level); inland water only where it stands above its bed
+  vec3 lv = waterLevels(wp.xz);
+  if (uInland > 0.5 ? (lv.b < 0.5 || lv.r < fld.r + 0.03) : lv.g < 0.5) discard;
+  float level = uInland > 0.5 ? lv.r : uWaterLevel;
+  float depth = max(level - fld.r, 0.0);
   // the season sets the river's pace: fast and full in the rains, slack in the dry months
   vec2 flow = fld.gb * uFlowScale;
   float spd = length(flow);
@@ -410,10 +579,12 @@ void main() {
   float NdV = max(dot(N, V), 0.0);
   float F = 0.02 + 0.98 * pow(1.0 - NdV, 5.0);
 
-  // reflection (planar), distorted by the ripples
+  // reflection (planar), distorted by the ripples; water standing at another level than the mirror's (a pond
+  // seen from the channel, the channel from the bil) shows the hazy sky instead of a misplaced image
   vec4 rc = uTexMatrix * vec4(wp, 1.0);
   vec2 ruv = rc.xy / rc.w + N.xz * 0.05 / (1.0 + dist * 0.02);
   vec3 refl = texture2D(tRefl, clamp(ruv, vec2(0.001), vec2(0.999))).rgb;
+  refl = mix(hazeColor(reflect(-V, N)), refl, 1.0 - smoothstep(0.2, 0.6, abs(level - uMirrorLevel)));
 
   // Premultiplied: the surface reflects F of the light and lets the rest through to the riverbed, which
   // tints itself with the silty water it is seen through (see underwater()). Shallows show their bed.
@@ -421,6 +592,13 @@ void main() {
   vec3 light = uAmb + uKeyColor * keyUp * 0.45;
   vec3 col = refl * F;
   float alpha = F;
+  // inland water shows its own murky body: the beds under it are not tinted by underwater(), which knows
+  // only the sea's level
+  if (uInland > 0.5) {
+    float body = (1.0 - exp(-depth * 1.6)) * (1.0 - F);
+    col += uWaterBody * light * 0.55 * body;
+    alpha += body * 0.92;
+  }
 
   // sun (or moon) glitter
   vec3 H = normalize(uKeyDir + V);
@@ -448,7 +626,12 @@ export interface NetRipples {
 }
 
 export interface Water {
+  /** The sea's water: the channel, the creeks, the flooded flats and the Bay. */
   mesh: Mesh;
+  /** Inland water: the ponds, the pans, the bil and the khal, each at its own level. */
+  inland: Mesh;
+  /** Keeps the fine field round the camera at (x, z) (`now` rebuilds it at once), and the mirror at the level of the water nearest it. */
+  update(x: number, z: number, now?: boolean): void;
   /** The hero boat: x, z, heading, speed through the water. */
   boat: Vector4;
   /** Its paddle blade in the boat's frame (x across, z along), how hard it pulls, how deep it is (0..1). */
@@ -462,49 +645,70 @@ export interface Water {
 }
 
 export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAnisotropy: number): Water {
-  const field = riverField(FIELD);
-  const wide = riverField(FIELD_WIDE);
+  const field = new FineField(0, 0);
+  const wide = fieldTexture(FIELD_WIDE);
+  const levels = levelTexture();
   const boat = new Vector4();
   const oar = new Vector4();
   const swirl = new Vector4(0, 0, 99, 0);
   const nets: NetRipples = { a: [new Vector4(), new Vector4()], b: [new Vector4(), new Vector4()] };
   const color = new Color();
   const ambient = new Color();
-  const material = new ShaderMaterial({
-    uniforms: {
-      ...G,
-      tRefl: { value: reflection },
-      uTexMatrix: { value: textureMatrix },
-      tNormal: { value: rippleNormals(maxAnisotropy) },
-      tField: { value: field.texture },
-      uField: { value: field.bounds },
-      tFieldWide: { value: wide.texture },
-      uFieldWide: { value: wide.bounds },
-      uBoat: { value: boat },
-      uOar: { value: oar },
-      uSwirl: { value: swirl },
-      uNetA0: { value: nets.a[0] },
-      uNetB0: { value: nets.b[0] },
-      uNetA1: { value: nets.a[1] },
-      uNetB1: { value: nets.b[1] },
-      uAmb: { value: ambient },
-      uBounds: { value: WATER_BOUNDS },
+  const uniforms = {
+    ...G,
+    tRefl: { value: reflection },
+    uTexMatrix: { value: textureMatrix },
+    tNormal: { value: rippleNormals(maxAnisotropy) },
+    tField: { value: field.texture },
+    uField: { value: field.bounds },
+    tFieldWide: { value: wide.texture },
+    uFieldWide: { value: wide.bounds },
+    tLevel: { value: levels.texture },
+    uLevelMap: { value: levels.map },
+    uBoat: { value: boat },
+    uOar: { value: oar },
+    uSwirl: { value: swirl },
+    uNetA0: { value: nets.a[0] },
+    uNetB0: { value: nets.b[0] },
+    uNetA1: { value: nets.a[1] },
+    uNetB1: { value: nets.b[1] },
+    uAmb: { value: ambient },
+    uBounds: { value: WATER_BOUNDS },
+  };
+  const grid = waterGrid();
+  const make = (inland: boolean) => {
+    const material = new ShaderMaterial({
+      uniforms: { ...uniforms, uInland: { value: inland ? 1 : 0 } },
+      vertexShader: VERT,
+      fragmentShader: FRAG,
+      transparent: true,
+      blending: CustomBlending,
+      blendEquation: AddEquation,
+      blendSrc: OneFactor,
+      blendDst: OneMinusSrcAlphaFactor,
+    });
+    const mesh = new Mesh(grid, material);
+    // the vertex shader lays the grid round the camera, so its bounds mean nothing to culling
+    mesh.frustumCulled = false;
+    mesh.layers.set(LAYER_WATER);
+    // first of the see-through things, so fireflies and motes over the river draw on top of it
+    mesh.renderOrder = -1;
+    mesh.name = inland ? 'water-inland' : 'water';
+    return mesh;
+  };
+  return {
+    mesh: make(false),
+    inland: make(true),
+    update: (x, z, now = false) => {
+      field.update(x, z, now);
+      G.uMirrorLevel.value = mirrorLevelAt(x, z);
     },
-    vertexShader: VERT,
-    fragmentShader: FRAG,
-    transparent: true,
-    blending: CustomBlending,
-    blendEquation: AddEquation,
-    blendSrc: OneFactor,
-    blendDst: OneMinusSrcAlphaFactor,
-  });
-  const mesh = new Mesh(waterGrid(), material);
-  // the vertex shader lays the grid round the camera, so its bounds mean nothing to culling
-  mesh.frustumCulled = false;
-  mesh.layers.set(LAYER_WATER);
-  // first of the see-through things, so fireflies and motes over the river draw on top of it
-  mesh.renderOrder = -1;
-  mesh.name = 'water';
-  return { mesh, boat, oar, swirl, nets, color, ambient };
+    boat,
+    oar,
+    swirl,
+    nets,
+    color,
+    ambient,
+  };
 }
 

@@ -38,6 +38,11 @@ export const G = {
   uSea: { value: new Vector2(0, 3) },
   /** Height of the water's surface (m): high in the monsoon, low in the dry season (see env/season.ts). */
   uWaterLevel: { value: 0 },
+  /**
+   * The plane the mirror pass reflects about (m): the level of the water nearest the eye, the sea's or a
+   * pond's, the bil's or the khal's (world/water.ts mirrorLevelAt); water at other levels shows the sky.
+   */
+  uMirrorLevel: { value: 0 },
   /** How fast the river runs, against its autumn pace. */
   uFlowScale: { value: 1 },
   /** The season on the land: x leafiness, y dryness, z share of trees in flower, w kash in plume. */

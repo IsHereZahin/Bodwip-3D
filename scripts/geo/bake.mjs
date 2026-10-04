@@ -39,6 +39,8 @@ const KIND = { land: 0, mangrove: 1, tidal: 2, sea: 3, inland: 4 };
 /** Open water that may be a river or creek of the sea, decided by the flood fill (never written out). */
 const CHANNEL = 5;
 const MODELLED = 0x80;
+/** Inland water on ground rising more than this (m) across the 3 × 3 cells round it is ground (bakeTerrain). */
+const INLAND_SLOPE = 3;
 
 const smoothstep = (a, b, x) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
@@ -294,26 +296,79 @@ async function bakeTerrain() {
         break;
       }
       default:
-        // inland water: the DEM measured its surface; its bed lies a little below
-        height[i] = dem[i] - 1.2;
+        // inland water: its surface and bed are set below, once all of it is known
         kind[i] |= MODELLED;
     }
   }
+  // 4. inland water lies level: the DEM's surface over a pond or a gher wanders by a metre or more (noise, the
+  // bunds between ghers), so each cell takes the median surface of the inland water round it (±2 cells), its
+  // bed 1.2 m under that. Water the DEM puts on a slope (more than INLAND_SLOPE m across the 3 × 3 cells round
+  // it: a hill stream, or a misread) cannot lie there and is ground.
+  const level = new Float32Array(W * H);
+  const isInland = (i) => (kind[i] & 0x7f) === KIND.inland;
+  const near = [];
+  for (let i = 0; i < W * H; i++) {
+    if (!isInland(i)) continue;
+    const c = i % W;
+    const r = (i - c) / W;
+    let lo = Infinity;
+    let hi = -Infinity;
+    near.length = 0;
+    for (let y = -2; y <= 2; y++)
+      for (let x = -2; x <= 2; x++) {
+        if (c + x < 0 || r + y < 0 || c + x >= W || r + y >= H) continue;
+        const j = (r + y) * W + c + x;
+        if (Math.abs(x) <= 1 && Math.abs(y) <= 1) (lo = Math.min(lo, dem[j])), (hi = Math.max(hi, dem[j]));
+        if (isInland(j)) near.push(dem[j]);
+      }
+    near.sort((a, b) => a - b);
+    level[i] = hi - lo > INLAND_SLOPE ? NaN : near[near.length >> 1];
+  }
+  for (let i = 0; i < W * H; i++) {
+    if (!isInland(i)) continue;
+    if (Number.isNaN(level[i])) {
+      kind[i] = KIND.land;
+      height[i] = dem[i];
+      level[i] = 0;
+    } else height[i] = level[i] - 1.2;
+  }
+  return { grid: g, kind, height, dem, level, lowWater: +lowWater.toFixed(2) };
+}
 
+/**
+ * Writes the ground's layers (terrain, kind, level), once the cover has settled which inland water is a salt
+ * pan (ground, its brine painted by the scene: GEOGRAPHY_PLAN.md) rather than standing water; and the preview.
+ */
+async function writeGround(t, cover) {
+  const { grid: g, kind, height, dem, level } = t;
+  const { width: W, height: H } = g;
+  for (let i = 0; i < W * H; i++) {
+    if ((kind[i] & 0x7f) !== KIND.inland || cover[i] !== COVER.saltpan) continue;
+    kind[i] = KIND.land;
+    height[i] = dem[i];
+    level[i] = 0;
+  }
   const terrain = new Int16Array(W * H);
   for (let i = 0; i < W * H; i++) terrain[i] = Math.round(Math.max(-3000, Math.min(3000, height[i] * 10)));
   await mkdir(OUT, { recursive: true });
   await writeFile(`${OUT}terrain.bin`, deflateRawSync(Buffer.from(terrain.buffer)));
   await writeFile(`${OUT}kind.bin`, deflateRawSync(Buffer.from(kind.buffer)));
+  // inland water's surface (its bed lies 1.2 m below); 0 elsewhere
+  const surface = new Int16Array(W * H);
+  for (let i = 0; i < W * H; i++) if ((kind[i] & 0x7f) === KIND.inland) surface[i] = Math.round(level[i] * 10);
+  await writeFile(`${OUT}level.bin`, deflateRawSync(Buffer.from(surface.buffer)));
 
   const counts = {};
   for (let i = 0; i < W * H; i++) {
     const name = Object.keys(KIND).find((k) => KIND[k] === (kind[i] & 0x7f));
     counts[name] = (counts[name] ?? 0) + 1;
   }
-  const km2 = Object.fromEntries(Object.entries(counts).map(([k, n]) => [k, +((n * SPACING * SPACING) / 1e6).toFixed(1)]));
   await preview(g, height, kind);
-  return { grid: g, kind, height, km2, lowWater: +lowWater.toFixed(2), highest: +height.reduce((a, v) => Math.max(a, v), -Infinity).toFixed(1), deepest: +height.reduce((a, v) => Math.min(a, v), Infinity).toFixed(1) };
+  return {
+    km2: Object.fromEntries(Object.entries(counts).map(([k, n]) => [k, +((n * SPACING * SPACING) / 1e6).toFixed(1)])),
+    highest: +height.reduce((a, v) => Math.max(a, v), -Infinity).toFixed(1),
+    deepest: +height.reduce((a, v) => Math.min(a, v), Infinity).toFixed(1),
+  };
 }
 
 /** A shaded relief with the kinds coloured, to look at (cache/view/terrain.png). */
@@ -461,7 +516,8 @@ async function bakeCover(g, kind) {
       else if (k === KIND.tidal) cls = sentinel.at(lat, lon) >= SAND_BRIGHTNESS ? COVER.sand : COVER.mud;
       else if (inSaltPan(lat, lon)) cls = COVER.saltpan;
       else if (cls === COVER.bare && sentinel.at(lat, lon) >= SAND_BRIGHTNESS) cls = COVER.sand;
-      else if (cls === COVER.water) cls = COVER.pond;
+      // WorldCover's water where the ground is not (a hill stream, a bed on a slope): wet ground
+      else if (cls === COVER.water) cls = COVER.marsh;
       cover[i] = cls;
       // trees: the canopy map's ≈5 m pixels in the cell
       const heights = [];
@@ -505,6 +561,169 @@ async function coverPreview(g, cover, canopy) {
     for (let j = 0; j < 3; j++) rgb[i * 3 + j] = col[j] * shade;
   }
   await writeFile(`${VIEW}cover.png`, encodePng(rgb, W, H, 3));
+}
+
+// ---------- the Moheshkhali channel's centre line ----------
+
+/** Where the channel meets the sea, between Sonadia and Cox's Bazar, and where it ends in the north by Badarkhali bridge. */
+const CHANNEL_ENDS = { south: { lat: 21.47, lon: 91.9633 }, north: { lat: 21.7162, lon: 91.9467 } };
+
+/** A small binary heap of [cost, index] for the path search. */
+class Heap {
+  constructor() {
+    this.cost = [];
+    this.item = [];
+  }
+  push(c, i) {
+    const a = this.cost;
+    const b = this.item;
+    a.push(c);
+    b.push(i);
+    let k = a.length - 1;
+    while (k > 0) {
+      const p = (k - 1) >> 1;
+      if (a[p] <= a[k]) break;
+      [a[p], a[k]] = [a[k], a[p]];
+      [b[p], b[k]] = [b[k], b[p]];
+      k = p;
+    }
+  }
+  pop() {
+    const a = this.cost;
+    const b = this.item;
+    const top = [a[0], b[0]];
+    const lc = a.pop();
+    const li = b.pop();
+    if (a.length) {
+      a[0] = lc;
+      b[0] = li;
+      let k = 0;
+      for (;;) {
+        const l = 2 * k + 1;
+        const r = l + 1;
+        let m = k;
+        if (l < a.length && a[l] < a[m]) m = l;
+        if (r < a.length && a[r] < a[m]) m = r;
+        if (m === k) break;
+        [a[m], a[k]] = [a[k], a[m]];
+        [b[m], b[k]] = [b[k], b[m]];
+        k = m;
+      }
+    }
+    return top;
+  }
+  get size() {
+    return this.cost.length;
+  }
+}
+
+/**
+ * The channel's middle from its mouth to Badarkhali: the cheapest path through water joined to the sea,
+ * where a step costs more the nearer it runs to a bank (so it keeps to the middle of the widest water),
+ * smoothed, then measured across to each bank. Written to public/geo/channel.json in world metres.
+ */
+async function bakeChannel(g, kind) {
+  const { width: W, height: H } = g;
+  const sea = new Uint8Array(W * H);
+  for (let i = 0; i < W * H; i++) sea[i] = (kind[i] & 0x7f) === KIND.sea ? 1 : 0;
+  const d2 = distanceToOutside(sea, W, H);
+  // tidal flats may carry the path where the channel narrows to a creek, at a price
+  const passable = (j) => sea[j] || (kind[j] & 0x7f) === KIND.tidal;
+  const cell = (lat, lon) => {
+    const q = toGround(lat, lon);
+    return Math.floor((g.north1 - q.north) / SPACING) * W + Math.floor((q.east - g.east0) / SPACING);
+  };
+  const nearestSea = (i) => {
+    let best = i;
+    let bd = Infinity;
+    const c0 = i % W;
+    const r0 = Math.floor(i / W);
+    for (let r = r0 - 30; r <= r0 + 30; r++)
+      for (let c = c0 - 30; c <= c0 + 30; c++) {
+        const j = r * W + c;
+        if (r < 0 || c < 0 || r >= H || c >= W || !sea[j]) continue;
+        const d = (r - r0) ** 2 + (c - c0) ** 2 - d2[j] * 0.01;
+        if (d < bd) (bd = d), (best = j);
+      }
+    return best;
+  };
+  const start = nearestSea(cell(CHANNEL_ENDS.south.lat, CHANNEL_ENDS.south.lon));
+  const goal = nearestSea(cell(CHANNEL_ENDS.north.lat, CHANNEL_ENDS.north.lon));
+  const cost = new Float64Array(W * H).fill(Infinity);
+  const from = new Int32Array(W * H).fill(-1);
+  const heap = new Heap();
+  cost[start] = 0;
+  heap.push(0, start);
+  while (heap.size) {
+    const [c, i] = heap.pop();
+    if (i === goal) break;
+    if (c > cost[i]) continue;
+    const ci = i % W;
+    for (const [dc, dr, len] of [[1, 0, 1], [-1, 0, 1], [0, 1, 1], [0, -1, 1], [1, 1, Math.SQRT2], [1, -1, Math.SQRT2], [-1, 1, Math.SQRT2], [-1, -1, Math.SQRT2]]) {
+      const cj = ci + dc;
+      const j = i + dr * W + dc;
+      if (cj < 0 || cj >= W || j < 0 || j >= W * H || !passable(j)) continue;
+      // near a bank a step costs far more: the path keeps to the middle
+      const nc = c + len * (1 + 400 / (d2[j] + 1)) * (sea[j] ? 1 : 3);
+      if (nc < cost[j]) {
+        cost[j] = nc;
+        from[j] = i;
+        heap.push(nc, j);
+      }
+    }
+  }
+  // if the north end is not reached, the path ends at the reached cell nearest it
+  let end = goal;
+  if (from[goal] < 0) {
+    let bd = Infinity;
+    for (let i = 0; i < W * H; i++) {
+      if (cost[i] === Infinity) continue;
+      const d = ((i % W) - (goal % W)) ** 2 + (Math.floor(i / W) - Math.floor(goal / W)) ** 2;
+      if (d < bd) (bd = d), (end = i);
+    }
+    console.warn(`channel: the north end is not joined by water; the path stops ${Math.round(Math.sqrt(bd) * SPACING)} m short`);
+  }
+  const path = [];
+  for (let i = end; i >= 0; i = from[i]) path.push({ east: g.east0 + ((i % W) + 0.5) * SPACING, north: g.north1 - (Math.floor(i / W) + 0.5) * SPACING });
+  path.reverse();
+  // smooth over ±300 m, then resample every 60 ground metres
+  const smooth = path.map((_, k) => {
+    let e = 0;
+    let n = 0;
+    let w = 0;
+    for (let j = Math.max(0, k - 10); j <= Math.min(path.length - 1, k + 10); j++) (e += path[j].east), (n += path[j].north), w++;
+    return { east: e / w, north: n / w };
+  });
+  const pts = [smooth[0]];
+  let acc = 0;
+  for (let k = 1; k < smooth.length; k++) {
+    acc += Math.hypot(smooth[k].east - smooth[k - 1].east, smooth[k].north - smooth[k - 1].north);
+    if (acc >= 60) (pts.push(smooth[k]), (acc = 0));
+  }
+  // across: from the middle to the first cell that is not open water, each way (ground metres)
+  const isSea = (east, north) => {
+    const c = Math.floor((east - g.east0) / SPACING);
+    const r = Math.floor((g.north1 - north) / SPACING);
+    return c >= 0 && r >= 0 && c < W && r < H && sea[r * W + c] === 1;
+  };
+  const out = pts.map((p, k) => {
+    const a = pts[Math.max(0, k - 1)];
+    const b = pts[Math.min(pts.length - 1, k + 1)];
+    const len = Math.hypot(b.east - a.east, b.north - a.north) || 1;
+    // the normal pointing west (world +x): rotate the along-channel direction
+    let nx = -(b.north - a.north) / len;
+    let ny = (b.east - a.east) / len;
+    if (nx > 0) (nx = -nx), (ny = -ny);
+    const reach = (sx, sy) => {
+      for (let s = 0; s < 4000; s += 10) if (!isSea(p.east + sx * s, p.north + sy * s)) return s;
+      return 4000;
+    };
+    // world: x = −east/3 (west positive), z = north/3
+    return [+(-p.east / MAP_SCALE).toFixed(1), +(p.north / MAP_SCALE).toFixed(1), +(reach(nx, ny) / MAP_SCALE).toFixed(1), +(reach(-nx, -ny) / MAP_SCALE).toFixed(1)];
+  });
+  await writeFile(`${OUT}channel.json`, JSON.stringify({ note: 'the Moheshkhali channel, mouth to Badarkhali: [x, z, westHalfWidth, eastHalfWidth] in world metres, every 20 m of the world', points: out }));
+  const lengthKm = (out.length * 60) / MAP_SCALE / 1000;
+  return { points: out.length, worldKm: +lengthKm.toFixed(1), medianHalfWidth: out.map((p) => p[2] + p[3]).sort((a, b) => a - b)[out.length >> 1] / 2 };
 }
 
 // ---------- lines from OpenStreetMap, and the landmarks ----------
@@ -579,7 +798,9 @@ const isSeasonal = (months) => months !== null && months >= 3 && months <= 9;
 
 const terrain = await bakeTerrain();
 const coverage = await bakeCover(terrain.grid, terrain.kind);
+Object.assign(terrain, await writeGround(terrain, coverage.cover));
 const vectors = await bakeVectors(terrain.grid);
+const channel = await bakeChannel(terrain.grid, terrain.kind);
 const places = await bakePlaces(terrain.grid, terrain.height, terrain.kind, coverage.cover);
 const manifest = {
   made: new Date().toISOString().slice(0, 10),
@@ -588,6 +809,7 @@ const manifest = {
   layers: {
     terrain: { file: 'terrain.bin', encoding: 'deflate-raw', type: 'int16', unit: 'decimetre', datum: 'mean sea level (EGM2008)' },
     kind: { file: 'kind.bin', encoding: 'deflate-raw', type: 'uint8', codes: KIND, modelledBit: MODELLED },
+    level: { file: 'level.bin', encoding: 'deflate-raw', type: 'int16', unit: 'decimetre', note: 'the surface of inland water (ponds, pans, tanks) as the DEM measured it; 0 elsewhere' },
     cover: {
       file: 'cover.bin',
       encoding: 'deflate-raw',
@@ -597,6 +819,7 @@ const manifest = {
       licence: 'ODbL (salt pans from OpenStreetMap), with CC BY 4.0 WorldCover',
     },
     vectors: { file: 'vectors.bin', encoding: 'deflate-raw', type: 'JSON', counts: vectors, licence: 'ODbL (OpenStreetMap)' },
+    channel: { file: 'channel.json', ...channel },
     places: { file: 'places.json', note: 'landmarks with sources (scripts/geo/places.mjs)' },
     canopy: { file: 'canopy.bin', encoding: 'deflate-raw', type: 'uint8 × 2', fields: ['tree height, metres (90th percentile of canopy pixels ≥ 3 m)', 'tree cover, 0..255'], licence: 'CC BY 4.0 (Meta/WRI)' },
   },
@@ -620,4 +843,4 @@ const manifest = {
 };
 await writeFile(`${OUT}manifest.json`, JSON.stringify(manifest, null, 2));
 for (const p of places) console.log(p.id.padEnd(26), String(p.ground).padStart(6), (p.kind ?? '-').padEnd(9), p.cover ?? '-');
-console.log(JSON.stringify({ grid: terrain.grid, km2: terrain.km2, cover: coverage.km2, vectors, lowWater: terrain.lowWater, highest: terrain.highest, deepest: terrain.deepest }, null, 1));
+console.log(JSON.stringify({ grid: terrain.grid, km2: terrain.km2, cover: coverage.km2, vectors, channel, lowWater: terrain.lowWater, highest: terrain.highest, deepest: terrain.deepest }, null, 1));

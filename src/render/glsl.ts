@@ -31,6 +31,7 @@ uniform vec4 uWaveC;
 uniform vec4 uWaveDir;
 uniform vec2 uSea;
 uniform float uWaterLevel;
+uniform float uMirrorLevel;
 uniform float uFlowScale;
 uniform vec4 uSeasonA;
 uniform vec4 uSeasonB;
@@ -138,17 +139,21 @@ vec3 applyAtmosphere(vec3 col, vec3 wpos) {
   rd /= max(dist, 1e-4);
   // the mirror pass fogs only the stretch from the water surface up to the object;
   // the water shader fogs the stretch from the camera down to the surface
-  if (uReflPass > 0.5 && ro.y < uWaterLevel && rd.y > 1e-4) {
-    float t0 = (uWaterLevel - ro.y) / rd.y;
+  if (uReflPass > 0.5 && ro.y < uMirrorLevel && rd.y > 1e-4) {
+    float t0 = (uMirrorLevel - ro.y) / rd.y;
     ro += rd * t0;
     dist = max(dist - t0, 0.0);
   }
   float y0 = max(ro.y, 0.0);
+  // each density integrated along the ray, written as a difference of the two ends' exponentials: the
+  // product form (exp(-y0 f) times a growing exp(dist |k|)) is 0 times infinity in fp32 once the eye is a
+  // few hundred metres up
+  float y1 = y0 + rd.y * dist;
   float k = rd.y * uFogFalloff;
-  float odF = uFogDensity * exp(-y0 * uFogFalloff) * (abs(k) > 1e-5 ? (1.0 - exp(-dist * k)) / k : dist);
+  float odF = uFogDensity * (abs(k) > 1e-5 ? (exp(-y0 * uFogFalloff) - exp(-y1 * uFogFalloff)) / k : dist * exp(-y0 * uFogFalloff));
   float km = rd.y * 0.45;
   float banks = 0.35 + 1.3 * vnoise(wpos.xz * 0.005 + vec2(uTime * 0.004, uTime * 0.0025));
-  float odM = uMist * banks * exp(-y0 * 0.45) * (abs(km) > 1e-5 ? (1.0 - exp(-dist * km)) / km : dist);
+  float odM = uMist * banks * (abs(km) > 1e-5 ? (exp(-y0 * 0.45) - exp(-y1 * 0.45)) / km : dist * exp(-y0 * 0.45));
   float od = odF + odM;
   vec3 hc = hazeColor(rd);
   vec3 mc = hc * 1.06 + uGlow * 0.05;

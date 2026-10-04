@@ -34,10 +34,10 @@ const PLASTER: RGB = [1, 1, 1];
 const DAMP: RGB = rgb('#6f6a58');
 const MOSS: RGB = rgb('#4f5a2c');
 
-/** The ground under a point of the bridge's frame. */
+/** The ground under a point of the bridge's frame, as a height above the khal's water (the frame's zero). */
 function groundAt(bx: number, bz: number): number {
   const w = bridgeToWorld(bx, bz);
-  return terrainHeight(w.x, w.z);
+  return terrainHeight(w.x, w.z) - BRIDGE.water;
 }
 
 /** How the years show at height y on the walls: moss at the water, damp to the flood line, the wash above. */
@@ -363,7 +363,7 @@ export function buildBridge(): Group {
   );
   group.add(fern);
 
-  group.position.set(BRIDGE.x, 0, BRIDGE.z);
+  group.position.set(BRIDGE.x, BRIDGE.water, BRIDGE.z);
   group.rotation.y = BRIDGE.angle;
   group.updateMatrixWorld(true);
   return group;

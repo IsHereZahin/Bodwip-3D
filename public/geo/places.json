@@ -379,8 +379,8 @@
    "x": -1119,
    "z": -376.3
   },
-  "ground": 1,
-  "kind": "inland",
+  "ground": 2.2,
+  "kind": "land",
   "cover": "saltpan"
  },
  {
@@ -411,8 +411,8 @@
    "x": 1733.6,
    "z": 240.2
   },
-  "ground": 0.2,
-  "kind": "inland",
+  "ground": 1.4,
+  "kind": "land",
   "cover": "saltpan"
  },
  {
@@ -459,8 +459,8 @@
    "x": 2744,
    "z": 3178.5
   },
-  "ground": 0.8,
-  "kind": "inland",
+  "ground": 2,
+  "kind": "land",
   "cover": "saltpan"
  },
  {
@@ -547,16 +547,16 @@
   "id": "shapla-bil",
   "expect": "land",
   "name": "শাপলা বিল",
-  "lat": 21.615,
-  "lon": 91.925,
-  "source": "low ground at the hills' west foot, fed by the \"Jiri\" hill streams",
+  "lat": 21.612,
+  "lon": 91.935,
+  "source": "a valley floor among the hills (11.5 m, a bowl 8 m below the ground round it in FABDEM), fed by the hill streams",
   "confidence": "model",
   "world": {
-   "x": 1608.3,
-   "z": 3573
+   "x": 1263.2,
+   "z": 3462.1
   },
-  "ground": 12.6,
+  "ground": 11.5,
   "kind": "land",
-  "cover": "tree"
+  "cover": "crop"
  }
 ]

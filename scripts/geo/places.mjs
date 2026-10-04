@@ -48,5 +48,5 @@ export const PLACES = [
   { id: 'dhalghata', expect: 'any', name: 'ধলঘাটা', lat: 21.6725, lon: 91.8717, source: 'bn.wikipedia', confidence: 'medium' },
   // where the scene's own features go (no real one found: D3)
   { id: 'arch-bridge', expect: 'land', name: 'পুরোনো খিলান সেতু (মেয়েটিসহ)', lat: 21.5313, lon: 91.9579, source: 'a real ≈25 m crossing of a khal in OSM; the arch itself is the scene\'s', confidence: 'model' },
-  { id: 'shapla-bil', expect: 'land', name: 'শাপলা বিল', lat: 21.615, lon: 91.925, source: 'low ground at the hills\' west foot, fed by the "Jiri" hill streams', confidence: 'model' },
+  { id: 'shapla-bil', expect: 'land', name: 'শাপলা বিল', lat: 21.612, lon: 91.935, source: 'a valley floor among the hills (11.5 m, a bowl 8 m below the ground round it in FABDEM), fed by the hill streams', confidence: 'model' },
 ];

@@ -9,8 +9,8 @@ import { PONDS, WETLANDS, terrainHeight, wetlandPoint, wetlandReach } from './ge
 // Shapla (water lilies) on the village ponds and the small wetlands: notched pads lying flat in loose
 // rafts toward the edges, and here and there a white or pink flower held just above the water. The
 // wetlands also have reeds (nol-khagra) standing round their rims, swaying in the wind, and rafts of water
-// hyacinth (kochuripana) afloat on their open water. Everything that floats rides the season's water
-// level; it is set only over beds that stay under water even in the driest months.
+// hyacinth (kochuripana) afloat on their open water. The lilies lie on each pond's own water (its level in
+// the map); the wetlands' hyacinth rides the season's. They are set only over beds that stay under water.
 
 const UP = new Vector3(0, 1, 0);
 
@@ -146,9 +146,10 @@ export function buildPondLife(): Group {
   const pink: Placement[] = [];
   // the ponds (dug deep: water all year almost to their edges) and the small wetlands (shallow: only their
   // middles stay wet through the dry months)
+  // (`bed`: how far under the water's surface a bed must lie for lilies)
   const waters = [
-    ...PONDS.map((p) => ({ ...p, reach: 0.8, rafts: rng.int(3, 4), bed: -0.25, inside: (x: number, z: number) => Math.hypot(x - p.x, z - p.z) < p.r * 0.92 })),
-    ...WETLANDS.map((w) => ({ ...w, reach: 0.5, rafts: rng.int(6, 8), bed: -0.75, inside: (x: number, z: number) => wetlandReach(w, x, z) < 0.9 })),
+    ...PONDS.map((p) => ({ ...p, reach: 0.8, rafts: rng.int(3, 4), bed: 0.25, inside: (x: number, z: number) => Math.hypot(x - p.x, z - p.z) < p.r * 0.92 })),
+    ...WETLANDS.map((w) => ({ ...w, level: 0, reach: 0.5, rafts: rng.int(6, 8), bed: 0.75, inside: (x: number, z: number) => wetlandReach(w, x, z) < 0.9 })),
   ];
   for (const p of waters) {
     // rafts of pads, each grown out from a point toward the edge of the open water
@@ -162,22 +163,21 @@ export function buildPondLife(): Group {
         const b = rng.range(0, Math.PI * 2);
         const x = cx + Math.cos(b) * d;
         const z = cz + Math.sin(b) * d;
-        if (!p.inside(x, z) || terrainHeight(x, z) > p.bed) continue;
+        if (!p.inside(x, z) || terrainHeight(x, z) > p.level - p.bed) continue;
         const s = rng.range(0.2, 0.36);
-        pads.push({ x, y: 0.01, z, ry: rng.range(0, Math.PI * 2), s, tx: rng.range(-0.03, 0.03), tz: rng.range(-0.03, 0.03) });
+        pads.push({ x, y: p.level + 0.01, z, ry: rng.range(0, Math.PI * 2), s, tx: rng.range(-0.03, 0.03), tz: rng.range(-0.03, 0.03) });
         if (rng.next() < 0.2) {
-          (rng.next() < 0.6 ? white : pink).push({ x: x + rng.range(-0.1, 0.1), y: 0.02, z: z + rng.range(-0.1, 0.1), ry: rng.range(0, 6.28), s: rng.range(1.3, 1.8) });
+          (rng.next() < 0.6 ? white : pink).push({ x: x + rng.range(-0.1, 0.1), y: p.level + 0.02, z: z + rng.range(-0.1, 0.1), ry: rng.range(0, 6.28), s: rng.range(1.3, 1.8) });
         }
       }
     }
   }
-  // they float on the pond's water, which rises and falls with the season's
-  const afloat = { key: 'afloat', pars: '', code: 'transformed.y += uWaterLevel / length(instanceMatrix[0].xyz);' };
-  const leafMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.32, side: DoubleSide }), { grime: 0.25, vertex: afloat });
+  const leafMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.32, side: DoubleSide }), { grime: 0.25 });
   const flowerMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.6, side: DoubleSide }), {
     translucency: 1.4,
-    vertex: afloat,
   });
+  // the wetlands' hyacinth floats on their water, which rises and falls with the season's
+  const afloat = { key: 'afloat', pars: '', code: 'transformed.y += uWaterLevel / length(instanceMatrix[0].xyz);' };
   const add = (g: BufferGeometry, mat: MeshStandardMaterial, items: Placement[]) => {
     if (!items.length) return;
     const mesh = instanced(g, mat, items, { receive: true, layer: LAYER_NO_REFLECT });

@@ -14,18 +14,15 @@ import {
   Vector3,
 } from 'three';
 import { Rng } from '../core/rng';
-import { MeshBuilder, rgb, taperedTube, type RGB } from '../render/builder';
+import { MeshBuilder, rgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
-import { netTexture, strawTexture, tinTexture } from '../render/textures';
+import { strawTexture, tinTexture } from '../render/textures';
 import {
-  CHARS,
-  KHALS,
   VILLAGES,
   VILLAGE_CENTERS,
   bankInfo,
   downstream,
   edgeHalfWidth,
-  khalPoint,
   landLevel,
   hillHeight,
   nearBackwater,
@@ -261,26 +258,6 @@ function mooredBoat(b: MeshBuilder, moorings: Mooring[], z: number, side: 1 | -1
   moor(b, moorings, hull, m);
 }
 
-/** A row of bamboo stakes in the shallows with a net strung between them. */
-function stakeRow(wood: MeshBuilder, net: MeshBuilder, start: Vector3, dir: Vector3, count: number, rng: Rng): void {
-  const tops: Vector3[] = [];
-  for (let i = 0; i < count; i++) {
-    const p = start.clone().addScaledVector(dir, i * 2.6);
-    const h = rng.range(2.6, 4.2);
-    const lean = new Vector3(rng.range(-0.15, 0.15), 0, rng.range(-0.15, 0.15));
-    const top = p.clone().add(new Vector3(0, h, 0)).add(lean);
-    taperedTube(wood, [p.clone().setY(-2), top], [0.06, 0.04], 5, rgb('#7a6c48'));
-    tops.push(top);
-  }
-  const s = net.vertexCount;
-  const n = new Vector3().crossVectors(dir, new Vector3(0, 1, 0)).normalize();
-  tops.forEach((t, i) => {
-    net.vertex(new Vector3(t.x, -0.6, t.z), n, i * 1.7, 0);
-    net.vertex(new Vector3(t.x, 1.4, t.z), n, i * 1.7, 1.3);
-  });
-  for (let i = 0; i < tops.length - 1; i++) net.quad(s + i * 2, s + i * 2 + 2, s + i * 2 + 3, s + i * 2 + 1);
-}
-
 // ---------- assembly ----------
 
 export function buildVillages(huts: readonly HutPlan[]): Group {
@@ -293,7 +270,6 @@ export function buildVillages(huts: readonly HutPlan[]): Group {
   const afloat = new MeshBuilder();
   const moorings: Mooring[] = [];
   const hay = new MeshBuilder();
-  const nets = new MeshBuilder();
 
   for (const h of huts) addHut(walls, h.roof === 'thatch' ? thatchRoofs : tinRoofs, h, rng);
 
@@ -310,27 +286,6 @@ export function buildVillages(huts: readonly HutPlan[]): Group {
     if (i % 2 === 0) mooredBoat(afloat, moorings, v.z - v.radius * 0.4, v.side, rng);
   });
 
-  // a dinghy tied up in each khal, against one bank
-  KHALS.forEach((_, k) => {
-    const c = khalPoint(k, rng.range(0.25, 0.5));
-    const side = rng.sign();
-    const off = Math.max(0, c.halfWidth - 1.1);
-    const hull = new MeshBuilder();
-    buildHull(hull, SMALL_BOAT, { tar: rgb('#2a2018'), top: rgb('#5a4a38') });
-    const m = new Matrix4().compose(
-      new Vector3(c.x + Math.cos(c.heading) * side * off, 0.05, c.z - Math.sin(c.heading) * side * off),
-      new Quaternion().setFromEuler(new Euler(rng.range(-0.03, 0.03), c.heading + rng.range(-0.15, 0.15), side * rng.range(0.02, 0.06))),
-      new Vector3(1, 1, 1),
-    );
-    moor(afloat, moorings, hull, m);
-  });
-
-  for (const ch of CHARS) {
-    const z = ch.z + ch.halfLen * 0.75;
-    const x = riverX(z) + ch.u + Math.sign(ch.u) * (ch.halfWid * 0.4);
-    const [dx, dz] = downstream(z);
-    stakeRow(wood, nets, new Vector3(x, 0, z), new Vector3(dx, 0, dz), rng.int(9, 14), rng);
-  }
 
   const group = new Group();
   group.name = 'villages';
@@ -345,10 +300,6 @@ export function buildVillages(huts: readonly HutPlan[]): Group {
   );
   const woodMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), { grime: 0.35 });
   const hayMat = patchMaterial(new MeshStandardMaterial({ map: strawTexture(43), roughness: 0.95 }), { grime: 0.25 });
-  const netMat = patchMaterial(
-    new MeshStandardMaterial({ map: netTexture(), alphaTest: 0.35, alphaToCoverage: true, side: DoubleSide, roughness: 0.9 }),
-    {},
-  );
   const add = (b: MeshBuilder, mat: MeshStandardMaterial, cast = true) => {
     if (!b.vertexCount) return;
     const mesh = new Mesh(b.build(), mat);
@@ -385,6 +336,5 @@ export function buildVillages(huts: readonly HutPlan[]): Group {
   moored.receiveShadow = true;
   group.add(moored);
   add(hay, hayMat);
-  add(nets, netMat, false);
   return group;
 }

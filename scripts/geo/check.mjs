@@ -149,6 +149,12 @@ function drawLines(rgb, vectors) {
       for (let s = 0; s <= steps; s++) plot(e0 + ((e1 - e0) * s) / steps, n0 + ((n1 - n0) * s) / steps, col);
     }
   }
+  // the channel's baked centre line, and its banks either side
+  for (const [x, z, west, east] of channel.points) {
+    plot(-x * MAP_SCALE, z * MAP_SCALE, [0, 255, 0]);
+    plot(-(x + west) * MAP_SCALE, z * MAP_SCALE, [0, 160, 0]);
+    plot(-(x - east) * MAP_SCALE, z * MAP_SCALE, [0, 160, 0]);
+  }
   for (const p of PLACES) {
     const q = toGround(p.lat, p.lon);
     for (let d = -3; d <= 3; d++) {
@@ -191,6 +197,7 @@ function crop(rgb, lat, lon, size, zoom) {
 }
 
 const vectors = JSON.parse(inflateRawSync(await readFile(`${GEO}vectors.bin`)).toString());
+const channel = JSON.parse(await readFile(`${GEO}channel.json`, 'utf8'));
 const shore = await shoreline();
 const marks = landmarks();
 const satellite = await sentinelOnGrid();

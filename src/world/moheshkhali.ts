@@ -231,44 +231,57 @@ function stair(s: Sets): void {
 function jetty(s: Sets): void {
   const j = GORAKGHATA.jetty;
   const deckY = 2.45;
-  // it runs out toward the channel's middle (world −x), from the top of the bank
-  const start = j.x + 14;
-  const end = j.x - j.length;
+  // in the jetty's frame: `a` out from its landward end toward its head (OSM's line), `c` across it
+  const ry = Math.atan2(j.toZ - j.z, -(j.toX - j.x));
+  const at = frame(j.x, j.z, ry);
+  const A = (a: number, c: number) => at(-a, c);
+  const box = (b: MeshBuilder, a: number, y: number, c: number, along: number, h: number, across: number, col: RGB, tile?: number) => {
+    const [x, z] = A(a, c);
+    slab(b, x, y, z, along, h, across, ry, col, tile);
+  };
+  const post = (b: MeshBuilder, g: CylinderGeometry, a: number, y: number, c: number, col: RGB) => {
+    const [x, z] = A(a, c);
+    part(b, g, x, y, z, ry, col);
+  };
+  // from the top of the bank, 14 m inland of where OSM's line leaves it, to its head
+  const start = -14;
+  const end = j.length;
   const mid = (start + end) / 2;
-  slab(s.concrete, mid, deckY - 0.18, j.z, start - end, 0.36, j.width, 0, rgb('#b8b4aa'), 2);
-  for (let x = start - 3; x > end; x -= 5) {
+  box(s.concrete, mid, deckY - 0.18, 0, end - start, 0.36, j.width, rgb('#b8b4aa'), 2);
+  for (let a = start + 3; a < end; a += 5) {
     for (const side of [-1, 1]) {
-      const bed = Math.min(terrainHeight(x, j.z + side * 1.3), deckY - 1);
+      const [x, z] = A(a, side * 1.3);
+      const bed = Math.min(terrainHeight(x, z), deckY - 1);
       const h = deckY - 0.36 - bed + 0.5;
-      part(s.concrete, new CylinderGeometry(0.22, 0.24, h, 8), x, bed - 0.5 + h / 2, j.z + side * 1.3, 0, rgb('#9e9a90'));
+      post(s.concrete, new CylinderGeometry(0.22, 0.24, h, 8), a, bed - 0.5 + h / 2, side * 1.3, rgb('#9e9a90'));
     }
     // a cross beam under the deck
-    slab(s.concrete, x, deckY - 0.55, j.z, 0.35, 0.4, j.width + 0.3, 0, rgb('#a29e94'), 2);
+    box(s.concrete, a, deckY - 0.55, 0, 0.35, 0.4, j.width + 0.3, rgb('#a29e94'), 2);
   }
   // railings: posts and two rails a side; lamp posts every so often
-  for (let x = start - 1; x > end + 1; x -= 2) {
-    for (const side of [-1, 1]) slab(s.paint, x, deckY + 0.5, j.z + side * (j.width / 2 - 0.06), 0.08, 1.0, 0.08, 0, rgb('#d8d4c8'), 1);
+  for (let a = start + 1; a < end - 1; a += 2) {
+    for (const side of [-1, 1]) box(s.paint, a, deckY + 0.5, side * (j.width / 2 - 0.06), 0.08, 1.0, 0.08, rgb('#d8d4c8'), 1);
   }
   for (const side of [-1, 1]) {
-    for (const h of [0.55, 0.98]) slab(s.paint, mid, deckY + h, j.z + side * (j.width / 2 - 0.06), start - end, 0.06, 0.07, 0, rgb('#d8d4c8'), 1);
+    for (const h of [0.55, 0.98]) box(s.paint, mid, deckY + h, side * (j.width / 2 - 0.06), end - start, 0.06, 0.07, rgb('#d8d4c8'), 1);
   }
-  for (let x = start - 6; x > end; x -= 15) {
-    part(s.concrete, new CylinderGeometry(0.06, 0.08, 4.2, 6), x, deckY + 2.1, j.z + j.width / 2 + 0.15, 0, rgb('#6a6a6a'));
-    slab(s.paint, x, deckY + 4.25, j.z + j.width / 2 - 0.3, 0.3, 0.14, 0.9, 0, rgb('#e8e2c8'), 1);
+  for (let a = start + 6; a < end; a += 15) {
+    post(s.concrete, new CylinderGeometry(0.06, 0.08, 4.2, 6), a, deckY + 2.1, j.width / 2 + 0.15, rgb('#6a6a6a'));
+    box(s.paint, a, deckY + 4.25, j.width / 2 - 0.3, 0.3, 0.14, 0.9, rgb('#e8e2c8'), 1);
   }
   // the head: a broader landing, a tin-roofed shed for those waiting for the boats, steps down to the water
-  slab(s.concrete, end - 3, deckY - 0.18, j.z, 6.5, 0.36, 9, 0, rgb('#b8b4aa'), 2);
-  for (const [ox, oz] of [
-    [-5.2, -3.6],
-    [-0.8, -3.6],
-    [-5.2, 3.6],
-    [-0.8, 3.6],
+  box(s.concrete, end + 3, deckY - 0.18, 0, 6.5, 0.36, 9, rgb('#b8b4aa'), 2);
+  for (const [oa, oc] of [
+    [5.2, -3.6],
+    [0.8, -3.6],
+    [5.2, 3.6],
+    [0.8, 3.6],
   ]) {
-    part(s.concrete, new CylinderGeometry(0.22, 0.24, 4, 8), end + ox, deckY - 2.2, j.z + oz, 0, rgb('#9e9a90'));
-    slab(s.paint, end + ox, deckY + 1.3, j.z + oz, 0.14, 2.6, 0.14, 0, rgb('#3e5a6a'), 1);
+    post(s.concrete, new CylinderGeometry(0.22, 0.24, 4, 8), end + oa, deckY - 2.2, oc, rgb('#9e9a90'));
+    box(s.paint, end + oa, deckY + 1.3, oc, 0.14, 2.6, 0.14, rgb('#3e5a6a'), 1);
   }
-  slab(s.tin, end - 3, deckY + 2.68, j.z, 5.6, 0.1, 8.4, 0, rgb('#c8c2b8'), 2);
-  for (let k = 0; k < 9; k++) slab(s.concrete, end - 6.6 - k * 0.0, deckY - 0.3 - k * 0.32, j.z - 3 + k * 0.0, 0.9, 0.3, 2.4, 0, rgb('#a8a49a'), 1);
+  box(s.tin, end + 3, deckY + 2.68, 0, 5.6, 0.1, 8.4, rgb('#c8c2b8'), 2);
+  for (let k = 0; k < 9; k++) box(s.concrete, end + 6.6, deckY - 0.3 - k * 0.32, -3, 0.9, 0.3, 2.4, rgb('#a8a49a'), 1);
 }
 
 /** The bank road's brick buildings by the jetty: shops below, flat roofs and parapets above, faded paint; and the mosque. */
@@ -347,7 +360,8 @@ function pagoda(s: Sets): void {
 function betelGardens(sets: Map<number, Sets>, rng: Rng): void {
   let placed = 0;
   for (let k = 0; k < 4000 && placed < 16; k++) {
-    const z = rng.range(-3100, -200);
+    // along the island's hills, from Gorakghata north past Shaplapur
+    const z = rng.range(-200, 3600);
     const x = riverX(z) + edgeHalfWidth(z, 1) + rng.range(110, 950);
     const hh = hillHeight(x, z);
     if (hh < 0.6 || hh > 7 || villageDistance(x, z) < 1.4 || nearBackwater(x, z, 10) || onLandmark(x, z, 12) || saltPan(x, z) > 0.1) continue;

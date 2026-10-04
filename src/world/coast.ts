@@ -5,7 +5,13 @@ import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
 import { instanced, type Placement } from '../render/instancing';
 import { patchMaterial } from '../render/patch';
-import { WORLD_U, WORLD_Z0, WORLD_Z1, riverX, saltPan, terrainHeight } from './geography';
+import { CHANNEL_SPAN, riverX, saltPan, terrainHeight } from './geography';
+
+/**
+ * How far either side of the channel the works' bunds, heaps and sheds are built (m). The map's pans reach
+ * far beyond (≈14 km² of the world); the terrain paints them all, and only these, seen from the water, stand.
+ */
+const REACH = 1500;
 
 // The salt works on Moheshkhali's low tract and the mainland's flats toward Cox's Bazar. The ground of each
 // block is painted by the terrain (render/patch.ts):
@@ -157,8 +163,8 @@ export function buildSaltWorks(): Group {
     if (!b) slabs.set(k, (b = new MeshBuilder()));
     return b;
   };
-  const z0 = WORLD_Z1;
-  const z1 = WORLD_Z0;
+  const z0 = CHANNEL_SPAN.south;
+  const z1 = CHANNEL_SPAN.north;
   for (let band = Math.floor(z0 / LAYOUT.band); band <= Math.floor(z1 / LAYOUT.band); band++) {
     const a = blockAngle(band * LAYOUT.band);
     const c = Math.cos(a);
@@ -166,7 +172,7 @@ export function buildSaltWorks(): Group {
     const toWorld = (qx: number, qy: number): [number, number] => [c * qx - s * qy, s * qx + c * qy];
     const inBand = (z: number) => Math.floor(z / LAYOUT.band) === band;
     // the blocks that can touch this band of the coast
-    const xs = [riverX(band * LAYOUT.band) - WORLD_U, riverX(band * LAYOUT.band) + WORLD_U];
+    const xs = [riverX(band * LAYOUT.band) - REACH, riverX(band * LAYOUT.band) + REACH];
     const zs = [band * LAYOUT.band, (band + 1) * LAYOUT.band];
     const qxs = xs.flatMap((x) => zs.map((z) => c * x + s * z));
     const qys = xs.flatMap((x) => zs.map((z) => -s * x + c * z));

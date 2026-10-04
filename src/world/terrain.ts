@@ -1,31 +1,16 @@
-import { BufferAttribute, BufferGeometry, Group, Mesh, MeshStandardMaterial } from 'three';
+import { BufferAttribute, BufferGeometry, Group, Mesh, MeshStandardMaterial, type Vector3 } from 'three';
 import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
+import { COVER, GRID_H, GRID_W, LAYERS, fcol, frow } from '../geo/data';
 import { mixRgb, rgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import type { GroundSet } from '../render/surfaces';
-import {
-  WORLD_U,
-  WORLD_Z0,
-  WORLD_Z1,
-  bilMarsh,
-  charHeight,
-  coastal,
-  edgeHalfWidth,
-  landLevel,
-  riverX,
-  bridgePath,
-  forestCover,
-  mangroveZone,
-  sandCover,
-  saltPan,
-  terrainHeight,
-  villageDistance,
-  wetlandMarsh,
-} from './geography';
+import { WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, bilMarsh, bridgePath, riverX, terrainHeight, villageDistance, waterLevelAt } from './geography';
 
-const Z_STEP = 5;
-const CHUNKS = 8;
+// The ground: the baked map's heights (geography.ts terrainHeight) and covers (geo/data.ts), drawn as a
+// quadtree of square patches round the camera, fine near it (≈2 m between vertices) and coarse far off. Each
+// patch is a 64 × 64 grid with a skirt hanging from its edges, so where patches of different sizes meet no
+// crack shows. Patches are built when first needed, a few milliseconds' worth a frame, and kept.
 
 const COLORS = {
   bedDeep: rgb('#2a241a'),
@@ -43,43 +28,16 @@ const COLORS = {
   laterite: rgb('#7a4a30'),
   /** Tidal mud where the mangroves stand. */
   tidalMud: rgb('#4a4236'),
-  /** The coastal flats: grey, salty clay with a thin, wiry grass. */
+  /** The salt pans' grey, salty clay. */
   saltClay: rgb('#8a8170'),
   coastGrass: rgb('#6d7442'),
 };
 
 /**
- * Columns are laid out across the river from its centre line, so the grid is dense where
- * the banks and khals are (and follows them round every bend), still fine over the bil behind
- * the left bank and over the island's hills on the right, and coarser out in the fields and the sea.
- */
-function columnOffsets(): number[] {
-  const near: number[] = [];
-  for (let u = -460; u < -240; u += 4) near.push(u);
-  for (let u = -240; u <= 260; u += 3) near.push(u);
-  // the estuary's right bank, where the river is widest, then the island's hills
-  for (let u = 264; u <= 420; u += 4) near.push(u);
-  for (let u = 428; u <= 1080; u += 8) near.push(u);
-  const far = (from: number, step: number, most: number): number[] => {
-    const out: number[] = [];
-    let u = from;
-    let d = step;
-    while (u < WORLD_U) {
-      d = Math.min(d * 1.09, most);
-      u = Math.min(u + d, WORLD_U);
-      out.push(u);
-    }
-    return out;
-  };
-  const left = far(-near[0], 4, 30).map((v) => -v).reverse();
-  return [...left, ...near, ...far(near[near.length - 1], 8, 40)];
-}
-
-/**
  * What covers the ground at a point: the painted colour, the field zone (paddy plots as 0..1, salt pans as
  * 0..−1), and the weights of the photo layers (grass, dirt, sand, and whether pebbles may gather here; mud
- * takes whatever is left).
- * The terrain mesh and the near-field grass both read it, so grass grows where the ground is grassy.
+ * takes whatever is left). The terrain mesh and the near-field grass both read it, so grass grows where the
+ * ground is grassy.
  */
 export interface Cover {
   color: RGB;
@@ -90,69 +48,114 @@ export interface Cover {
   pebbles: number;
 }
 
-function cover(x: number, z: number, u: number, h: number): Cover {
-  const ch = charHeight(z, u);
-  if (ch >= h - 0.02 && ch > -1.5) {
-    const color =
-      h < -0.1
-        ? mixRgb(COLORS.bedDeep, COLORS.sandWet, smoothstep(-1.8, -0.1, h))
-        : mixRgb(COLORS.sandWet, COLORS.sand, smoothstep(0.0, 0.55, h));
-    return { color, zone: 0, grass: 0, dirt: 0, sand: 1, pebbles: 0 };
-  }
-  const side = u >= 0 ? 1 : -1;
-  const inland = Math.abs(u) - edgeHalfWidth(z, side);
-  if (h < -0.15) {
-    const color = mixRgb(COLORS.bedDeep, COLORS.wetMud, smoothstep(-4, -0.15, h));
-    // gravel only along the river; khals and the bil keep a soft muddy bed
-    return { color, zone: 0, grass: 0, dirt: 0, sand: 0, pebbles: h > -1.3 && inland < 6 ? 1 : 0 };
-  }
+/** Each cover class's own colour, zone and layer weights before the local touches. */
+interface ClassLook {
+  color: RGB;
+  zone: number;
+  grass: number;
+  dirt: number;
+  sand: number;
+}
 
-  const land = landLevel(x, z);
-  // the low rims of the bil and the small wetlands are wet meadow, grassy almost down to the water
-  const marsh = Math.max(bilMarsh(z, u), wetlandMarsh(x, z));
-  const top = Math.max(smoothstep(land - 0.8, land - 0.1, h), marsh * smoothstep(-0.02, 0.2, h));
-  const mud = mixRgb(COLORS.wetMud, COLORS.dryMud, smoothstep(-0.1, 1.0, h));
-  let ground = mixRgb(COLORS.grassA, COLORS.grassB, fbm(x * 0.012, z * 0.012, 3, 21));
-  // on the coast the grass is thin and the clay grey with salt
-  const coast = coastal(z);
-  if (coast > 0) ground = mixRgb(ground, mixRgb(COLORS.coastGrass, COLORS.saltClay, smoothstep(0.4, 0.7, fbm(x * 0.02, z * 0.02, 2, 63))), coast * 0.8);
-  const dry = smoothstep(0.6, 0.8, fbm(x * 0.004, z * 0.004, 2, 33));
-  ground = mixRgb(ground, COLORS.grassDry, dry);
-  const vd = villageDistance(x, z);
-  const yard = smoothstep(1.0, 0.35, vd);
-  ground = mixRgb(ground, COLORS.dust, yard * 0.6);
-  // the footpath over the old bridge, worn to bare earth
-  const path = bridgePath(x, z);
-  ground = mixRgb(ground, COLORS.dust, path * 0.85);
-  // the hills under their forest, red earth showing in patches and down the steepest gullies
-  const forest = forestCover(x, z);
-  if (forest > 0) {
-    const canopy = mixRgb(COLORS.forest, COLORS.forestLight, fbm(x * 0.02, z * 0.02, 3, 121));
-    const bare = smoothstep(0.72, 0.85, fbm(x * 0.03 + 9, z * 0.03, 2, 123));
-    ground = mixRgb(ground, mixRgb(canopy, COLORS.laterite, bare * 0.8), forest);
+const LOOK: Record<number, ClassLook> = {
+  [COVER.none]: { color: COLORS.grassA, zone: 0, grass: 0.8, dirt: 0.1, sand: 0 },
+  [COVER.tree]: { color: COLORS.forestLight, zone: 0, grass: 0.45, dirt: 0.3, sand: 0 },
+  [COVER.shrub]: { color: mixRgb(COLORS.grassB, COLORS.forestLight, 0.5), zone: 0, grass: 0.6, dirt: 0.25, sand: 0 },
+  [COVER.grass]: { color: COLORS.grassB, zone: 0, grass: 0.9, dirt: 0.05, sand: 0 },
+  [COVER.crop]: { color: COLORS.grassA, zone: 1, grass: 0.75, dirt: 0.15, sand: 0 },
+  [COVER.built]: { color: COLORS.dust, zone: 0, grass: 0.15, dirt: 0.85, sand: 0 },
+  [COVER.bare]: { color: COLORS.dryMud, zone: 0, grass: 0.05, dirt: 0.9, sand: 0.05 },
+  [COVER.sand]: { color: COLORS.sand, zone: 0, grass: 0, dirt: 0, sand: 1 },
+  [COVER.mud]: { color: COLORS.tidalMud, zone: 0, grass: 0, dirt: 0.1, sand: 0 },
+  [COVER.marsh]: { color: mixRgb(COLORS.grassA, COLORS.coastGrass, 0.5), zone: 0, grass: 0.85, dirt: 0, sand: 0 },
+  [COVER.mangrove]: { color: COLORS.tidalMud, zone: 0, grass: 0, dirt: 0.05, sand: 0 },
+  [COVER.saltpan]: { color: COLORS.saltClay, zone: -1, grass: 0, dirt: 0.6, sand: 0 },
+  [COVER.pond]: { color: COLORS.wetMud, zone: 0, grass: 0, dirt: 0, sand: 0 },
+  [COVER.water]: { color: COLORS.wetMud, zone: 0, grass: 0, dirt: 0, sand: 0 },
+};
+
+const blend: ClassLook = { color: [0, 0, 0], zone: 0, grass: 0, dirt: 0, sand: 0 };
+
+/** The four cells round a point, their looks blended bilinearly, so class edges are soft rather than 10 m steps. */
+function blendedLook(x: number, z: number): ClassLook {
+  const fc = Math.min(GRID_W - 1.0001, Math.max(0, fcol(x)));
+  const fr = Math.min(GRID_H - 1.0001, Math.max(0, frow(z)));
+  const c = Math.floor(fc);
+  const r = Math.floor(fr);
+  const tx = fc - c;
+  const ty = fr - r;
+  const cells = LAYERS.cover;
+  const i = r * GRID_W + c;
+  const w = [(1 - tx) * (1 - ty), tx * (1 - ty), (1 - tx) * ty, tx * ty];
+  const ids = [i, i + 1, i + GRID_W, i + GRID_W + 1];
+  let r0 = 0;
+  let g0 = 0;
+  let b0 = 0;
+  blend.zone = 0;
+  blend.grass = 0;
+  blend.dirt = 0;
+  blend.sand = 0;
+  for (let k = 0; k < 4; k++) {
+    const look = LOOK[cells[ids[k]]] ?? LOOK[COVER.none];
+    const wk = w[k];
+    r0 += look.color[0] * wk;
+    g0 += look.color[1] * wk;
+    b0 += look.color[2] * wk;
+    // a field or a pan is one or the other: the zone takes the cells' own sign
+    blend.zone += look.zone * wk;
+    blend.grass += look.grass * wk;
+    blend.dirt += look.dirt * wk;
+    blend.sand += look.sand * wk;
   }
-  // beaches and Sonadia's dunes, and the tidal mud of the mangroves
-  const sand = sandCover(x, z);
-  ground = mixRgb(ground, mixRgb(COLORS.sand, COLORS.sandWet, smoothstep(1.2, 0.3, h)), sand);
-  const mangrove = mangroveZone(x, z, h);
-  ground = mixRgb(ground, COLORS.tidalMud, mangrove * 0.8);
-  const fields = smoothstep(0.3, 0.42, fbm(x * 0.0025 + 5, z * 0.0025, 2, 44));
-  // paddy inland (not up the hills, on the beaches or in the mangroves); on the coast, salt pans
-  const salt = top * saltPan(x, z);
-  const paddy = top * smoothstep(38, 75, inland) * smoothstep(1.25, 1.9, vd) * fields * (1 - coast) * (1 - forest) * (1 - sand) * (1 - mangrove);
-  const zone = salt > 0.01 ? -salt : paddy;
-  // trodden earth round the houses, and bare patches where the grass has dried out; the pans are bare clay
-  const dirt = Math.min(1, yard * 0.9 + dry * 0.35 + 0.25 * smoothstep(0.62, 0.78, fbm(x * 0.05, z * 0.05, 2, 71)) + salt + coast * 0.25 + path);
-  // pebbles only along the river; the ponds keep muddy banks
-  const pebbles = (1 - top) * smoothstep(30, 14, inland);
-  const sandW = top * sand;
-  return { color: mixRgb(mud, ground, top), zone, grass: top * (1 - dirt) * (1 - sand * 0.8) * (1 - mangrove) * (1 - forest * 0.5), dirt: top * dirt * (1 - sand), sand: sandW, pebbles };
+  blend.color = [r0, g0, b0];
+  return blend;
+}
+
+function cover(x: number, z: number, h: number): Cover {
+  const look = blendedLook(x, z);
+  const level = waterLevelAt(x, z);
+  // under water (the sea's or a pond's): the bed, darker with depth
+  if (h < level - 0.15) {
+    const color = mixRgb(COLORS.bedDeep, COLORS.wetMud, smoothstep(-4, -0.15, h - level));
+    return { color, zone: 0, grass: 0, dirt: 0, sand: look.sand, pebbles: 0 };
+  }
+  let ground = look.color;
+  // some variety: greener and drier patches, and on the hills red earth showing through the forest
+  ground = mixRgb(ground, COLORS.grassB, (fbm(x * 0.012, z * 0.012, 2, 21) - 0.5) * 0.6 * look.grass);
+  const dry = smoothstep(0.6, 0.8, fbm(x * 0.004, z * 0.004, 2, 33));
+  ground = mixRgb(ground, COLORS.grassDry, dry * look.grass * 0.7);
+  if (h > 10) {
+    const canopy = mixRgb(COLORS.forest, COLORS.forestLight, fbm(x * 0.02, z * 0.02, 2, 121));
+    const bare = smoothstep(0.72, 0.85, fbm(x * 0.03 + 9, z * 0.03, 2, 123));
+    ground = mixRgb(ground, mixRgb(canopy, COLORS.laterite, bare * 0.8), smoothstep(10, 18, h) * (1 - look.sand));
+  }
+  // round the houses the ground is trodden bare; the footpath over the old bridge is worn to earth
+  const yard = smoothstep(1.0, 0.35, villageDistance(x, z));
+  const path = bridgePath(x, z);
+  ground = mixRgb(ground, COLORS.dust, Math.max(yard * 0.6, path * 0.85));
+  // the bil's low rim is wet meadow, grassy almost to the water
+  const marsh = bilMarsh(z, x - riverX(z));
+  // the strip the water wets: mud, darker toward the water's edge (beaches keep their sand)
+  const wetBand = smoothstep(level + 0.9, level + 0.05, h) * (1 - marsh) * (1 - look.sand);
+  ground = mixRgb(ground, mixRgb(COLORS.wetMud, COLORS.dryMud, smoothstep(level, level + 0.9, h)), wetBand);
+  if (look.sand > 0) ground = mixRgb(ground, mixRgb(COLORS.sandWet, COLORS.sand, smoothstep(level + 0.1, level + 1.2, h)), look.sand);
+  const dirt = Math.min(1, look.dirt + yard * 0.9 + path + dry * 0.35 * look.grass);
+  const top = 1 - wetBand;
+  return {
+    color: ground,
+    // paddy plots and salt pans only on their own ground above the water
+    zone: look.zone * top,
+    grass: Math.max(0, look.grass * top * (1 - dirt) + marsh * 0.8),
+    dirt: dirt * top * (1 - look.sand),
+    sand: look.sand,
+    pebbles: 0,
+  };
 }
 
 /** Ground cover at a point of the world (see `Cover`), with the terrain height there. */
 export function groundAt(x: number, z: number): Cover & { h: number } {
   const h = terrainHeight(x, z);
-  return { ...cover(x, z, x - riverX(z), h), h };
+  return { ...cover(x, z, h), h };
 }
 
 /**
@@ -186,103 +189,213 @@ export function groundLattice(x0: number, z0: number, size: number, step: number
   };
 }
 
-/** `ground`: the photo layers; without them the terrain keeps its painted colours. */
-export function buildTerrain(ground: GroundSet | null): Group {
-  const cols = columnOffsets();
-  const C = cols.length;
-  const R = Math.ceil((WORLD_Z0 - WORLD_Z1) / Z_STEP) + 1;
-  const pos = new Float32Array(R * C * 3);
-  const col = new Float32Array(R * C * 3);
-  const zone = new Float32Array(R * C);
-  const splat = new Float32Array(R * C * 4);
+// ---------- the quadtree of patches ----------
 
-  for (let r = 0; r < R; r++) {
-    const z = Math.max(WORLD_Z0 - r * Z_STEP, WORLD_Z1);
-    const cx = riverX(z);
-    for (let c = 0; c < C; c++) {
-      const u = cols[c];
-      const x = cx + u;
-      const h = terrainHeight(x, z);
-      const i = r * C + c;
-      pos[i * 3] = x;
-      pos[i * 3 + 1] = h;
-      pos[i * 3 + 2] = z;
-      const vc = cover(x, z, u, h);
-      col[i * 3] = vc.color[0];
-      col[i * 3 + 1] = vc.color[1];
-      col[i * 3 + 2] = vc.color[2];
-      zone[i] = vc.zone;
-      splat.set([vc.grass, vc.dirt, vc.sand, vc.pebbles], i * 4);
+/** Quads along a patch's side. */
+const N = 64;
+/** The smallest patch (m): ≈2 m between vertices. */
+const LEAF = 128;
+/** A patch splits while the camera is nearer its centre than this many times its size. */
+const SPLIT = 1.5;
+/** Most patch-building time spent in one frame (ms) once running; the first frame builds all it needs. */
+const BUDGET_MS = 6;
+/** Patches kept built beyond those in view, oldest dropped first. */
+const KEEP = 500;
+
+interface Node {
+  key: string;
+  x: number;
+  z: number;
+  size: number;
+}
+
+/** One patch's geometry: a 64 × 64 grid of the ground plus a skirt round it, normals from a ring of neighbours. */
+function patchGeometry(n: Node): BufferGeometry {
+  const step = n.size / N;
+  const x0 = n.x - n.size / 2;
+  const z0 = n.z - n.size / 2;
+  const S = N + 3; // heights with a one-sample border for the normals
+  const hs = new Float32Array(S * S);
+  for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) hs[j * S + i] = terrainHeight(x0 + (i - 1) * step, z0 + (j - 1) * step);
+  const V = (N + 1) * (N + 1);
+  const skirt = 4 * (N + 1);
+  const pos = new Float32Array((V + skirt) * 3);
+  const nrm = new Float32Array((V + skirt) * 3);
+  const col = new Float32Array((V + skirt) * 3);
+  const zone = new Float32Array(V + skirt);
+  const splat = new Float32Array((V + skirt) * 4);
+  const write = (k: number, x: number, y: number, z: number, nx: number, ny: number, nz: number, c: Cover) => {
+    pos.set([x, y, z], k * 3);
+    nrm.set([nx, ny, nz], k * 3);
+    col.set(c.color, k * 3);
+    zone[k] = c.zone;
+    splat.set([c.grass, c.dirt, c.sand, c.pebbles], k * 4);
+  };
+  const covers: Cover[] = [];
+  const normals: [number, number, number][] = [];
+  for (let j = 0; j <= N; j++) {
+    for (let i = 0; i <= N; i++) {
+      const x = x0 + i * step;
+      const z = z0 + j * step;
+      const h = hs[(j + 1) * S + i + 1];
+      // normal from the neighbours' heights (x along i, z along j)
+      const dx = (hs[(j + 1) * S + i + 2] - hs[(j + 1) * S + i]) / (2 * step);
+      const dz = (hs[(j + 2) * S + i + 1] - hs[j * S + i + 1]) / (2 * step);
+      const l = Math.hypot(dx, 1, dz);
+      const c = cover(x, z, h);
+      covers.push(c);
+      normals.push([-dx / l, 1 / l, -dz / l]);
+      write(j * (N + 1) + i, x, h, z, -dx / l, 1 / l, -dz / l, c);
     }
   }
-
-  // normals from the whole grid, so chunk seams light identically
-  const nrm = new Float32Array(R * C * 3);
-  for (let r = 0; r < R; r++) {
-    for (let c = 0; c < C; c++) {
-      const l = (r * C + Math.max(c - 1, 0)) * 3;
-      const rt = (r * C + Math.min(c + 1, C - 1)) * 3;
-      const up = (Math.max(r - 1, 0) * C + c) * 3;
-      const dn = (Math.min(r + 1, R - 1) * C + c) * 3;
-      const ax = pos[rt] - pos[l];
-      const ay = pos[rt + 1] - pos[l + 1];
-      const az = pos[rt + 2] - pos[l + 2];
-      const bx = pos[dn] - pos[up];
-      const by = pos[dn + 1] - pos[up + 1];
-      const bz = pos[dn + 2] - pos[up + 2];
-      let nx = ay * bz - az * by;
-      let ny = az * bx - ax * bz;
-      let nz = ax * by - ay * bx;
-      const len = Math.hypot(nx, ny, nz) || 1;
-      nx /= len;
-      ny /= len;
-      nz /= len;
-      const i = (r * C + c) * 3;
-      nrm[i] = nx;
-      nrm[i + 1] = ny;
-      nrm[i + 2] = nz;
-    }
-  }
-
-  const material = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.94, metalness: 0 }), {
-    terrain: true,
-    splat: ground ?? undefined,
+  // the skirt: each edge vertex again, hung below so a coarser neighbour's edge cannot show a gap
+  const drop = step * 2 + 1;
+  const edge: number[] = [];
+  for (let i = 0; i <= N; i++) edge.push(i);
+  for (let j = 0; j <= N; j++) edge.push(j * (N + 1) + N);
+  for (let i = N; i >= 0; i--) edge.push(N * (N + 1) + i);
+  for (let j = N; j >= 0; j--) edge.push(j * (N + 1));
+  edge.forEach((v, k) => {
+    const n3 = normals[v];
+    write(V + k, pos[v * 3], pos[v * 3 + 1] - drop, pos[v * 3 + 2], n3[0], n3[1], n3[2], covers[v]);
   });
-  const group = new Group();
-  group.name = 'terrain';
-  const rowsPer = Math.ceil((R - 1) / CHUNKS);
-  for (let r0 = 0; r0 < R - 1; r0 += rowsPer) {
-    const r1 = Math.min(R - 1, r0 + rowsPer);
-    const rows = r1 - r0 + 1;
-    const from = r0 * C;
-    const to = (r1 + 1) * C;
-    const g = new BufferGeometry();
-    g.setAttribute('position', new BufferAttribute(pos.slice(from * 3, to * 3), 3));
-    g.setAttribute('normal', new BufferAttribute(nrm.slice(from * 3, to * 3), 3));
-    g.setAttribute('color', new BufferAttribute(col.slice(from * 3, to * 3), 3));
-    g.setAttribute('aZone', new BufferAttribute(zone.slice(from, to), 1));
-    g.setAttribute('aSplat', new BufferAttribute(splat.slice(from * 4, to * 4), 4));
-    const idx = new Uint32Array((rows - 1) * (C - 1) * 6);
-    let k = 0;
-    for (let r = 0; r < rows - 1; r++) {
-      for (let c = 0; c < C - 1; c++) {
-        const a = r * C + c;
-        const b = a + 1;
-        const d = a + C;
-        const e = d + 1;
-        idx[k++] = a;
-        idx[k++] = b;
-        idx[k++] = d;
-        idx[k++] = b;
-        idx[k++] = e;
-        idx[k++] = d;
+  const idx = new Uint32Array(N * N * 6 + edge.length * 6);
+  let q = 0;
+  for (let j = 0; j < N; j++) {
+    for (let i = 0; i < N; i++) {
+      const a = j * (N + 1) + i;
+      const b = a + 1;
+      const d = a + N + 1;
+      const e = d + 1;
+      idx[q++] = a;
+      idx[q++] = d;
+      idx[q++] = b;
+      idx[q++] = b;
+      idx[q++] = d;
+      idx[q++] = e;
+    }
+  }
+  for (let k = 0; k + 1 < edge.length; k++) {
+    const a = edge[k];
+    const b = edge[k + 1];
+    const sa = V + k;
+    const sb = V + k + 1;
+    // wound to face outward (the edge runs round the patch anticlockwise seen from above): a gap shows
+    // from outside the patch, where the neighbour is
+    idx[q++] = a;
+    idx[q++] = b;
+    idx[q++] = sa;
+    idx[q++] = b;
+    idx[q++] = sb;
+    idx[q++] = sa;
+  }
+  const g = new BufferGeometry();
+  g.setAttribute('position', new BufferAttribute(pos, 3));
+  g.setAttribute('normal', new BufferAttribute(nrm, 3));
+  g.setAttribute('color', new BufferAttribute(col, 3));
+  g.setAttribute('aZone', new BufferAttribute(zone, 1));
+  g.setAttribute('aSplat', new BufferAttribute(splat, 4));
+  g.setIndex(new BufferAttribute(idx.subarray(0, q), 1));
+  g.computeBoundingSphere();
+  return g;
+}
+
+export class Terrain {
+  readonly group = new Group();
+  private readonly material: MeshStandardMaterial;
+  private readonly built = new Map<string, Mesh>();
+  private readonly lastUsed = new Map<string, number>();
+  private frame = 0;
+  private readonly root: Node;
+
+  /** `ground`: the photo layers; without them the terrain keeps its painted colours. */
+  constructor(ground: GroundSet | null) {
+    this.group.name = 'terrain';
+    this.material = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.94, metalness: 0 }), {
+      terrain: true,
+      splat: ground ?? undefined,
+    });
+    // the map and a margin of sea floor round it (heights fade to the deep there)
+    const size = Math.max(WORLD_X1 - WORLD_X0, WORLD_Z0 - WORLD_Z1) + 800;
+    let s = LEAF;
+    while (s < size) s *= 2;
+    this.root = { key: '', x: (WORLD_X0 + WORLD_X1) / 2, z: (WORLD_Z0 + WORLD_Z1) / 2, size: s };
+  }
+
+  /** Shows the patches the camera needs, building those not yet made; `all` builds every one now (for stills and the first frame). */
+  update(eye: Vector3, all = false): void {
+    this.frame++;
+    const want: Node[] = [];
+    this.select(this.root, eye, want);
+    const start = performance.now();
+    const show = new Set<Mesh>();
+    for (const n of want) {
+      let mesh = this.built.get(n.key);
+      if (!mesh && (all || performance.now() - start < BUDGET_MS)) mesh = this.build(n);
+      if (mesh) {
+        show.add(mesh);
+        this.lastUsed.set(n.key, this.frame);
+        continue;
+      }
+      // not built yet: its nearest built ancestor stands in for it
+      for (let key = n.key.slice(0, -1); ; key = key.slice(0, -1)) {
+        const parent = this.built.get(key);
+        if (parent) {
+          show.add(parent);
+          this.lastUsed.set(key, this.frame);
+          break;
+        }
+        if (key === '') {
+          show.add(this.build(this.root));
+          break;
+        }
       }
     }
-    g.setIndex(new BufferAttribute(idx, 1));
-    g.computeBoundingSphere();
-    const mesh = new Mesh(g, material);
-    mesh.receiveShadow = true;
-    group.add(mesh);
+    for (const mesh of this.built.values()) mesh.visible = show.has(mesh);
+    this.evict();
   }
-  return group;
+
+  private select(n: Node, eye: Vector3, out: Node[]): void {
+    const d = Math.hypot(eye.x - n.x, eye.z - n.z, Math.max(0, eye.y - 20));
+    if (n.size <= LEAF || d > n.size * SPLIT) {
+      // patches wholly off the map's margin of sea floor are not drawn
+      if (n.x + n.size / 2 < WORLD_X0 - 800 || n.x - n.size / 2 > WORLD_X1 + 800 || n.z + n.size / 2 < WORLD_Z1 - 800 || n.z - n.size / 2 > WORLD_Z0 + 800) return;
+      out.push(n);
+      return;
+    }
+    const q = n.size / 4;
+    let k = 0;
+    for (const [dx, dz] of [
+      [-1, -1],
+      [1, -1],
+      [-1, 1],
+      [1, 1],
+    ]) {
+      this.select({ key: n.key + k++, x: n.x + dx * q, z: n.z + dz * q, size: n.size / 2 }, eye, out);
+    }
+  }
+
+  private build(n: Node): Mesh {
+    const mesh = new Mesh(patchGeometry(n), this.material);
+    mesh.receiveShadow = true;
+    mesh.name = 'terrain';
+    this.built.set(n.key, mesh);
+    this.group.add(mesh);
+    return mesh;
+  }
+
+  /** Drops the patches unused longest once more than KEEP are built. */
+  private evict(): void {
+    if (this.built.size <= KEEP) return;
+    const old = [...this.lastUsed.entries()].sort((a, b) => a[1] - b[1]);
+    for (const [key, used] of old) {
+      if (this.built.size <= KEEP || used === this.frame || key === '') break;
+      const mesh = this.built.get(key);
+      if (!mesh) continue;
+      this.group.remove(mesh);
+      mesh.geometry.dispose();
+      this.built.delete(key);
+      this.lastUsed.delete(key);
+    }
+  }
 }

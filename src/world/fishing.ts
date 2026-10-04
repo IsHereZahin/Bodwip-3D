@@ -39,18 +39,22 @@ import { hullWaves, type HullWaves } from './waves';
 // the boat dips her bow under its load. In the dry months, when the water under the bank's net is too
 // shallow, it stays hoisted and idle.
 
-/** The bank nets, at the deep narrows where the current runs close under the bank (also framed by the film tour). */
+/**
+ * The bank nets along the boat's way down the channel, clear of the villages and the jetties (also framed by
+ * the film tour). Where the channel's fishermen really set theirs is not mapped: the plan's fishing step
+ * places them again.
+ */
 export const LIFT_NETS: readonly { z: number; side: 1 | -1 }[] = [
-  { z: -222, side: -1 },
-  { z: -884, side: 1 },
-  { z: -1505, side: -1 },
-  { z: -2795, side: 1 },
+  { z: 6100, side: -1 },
+  { z: 4700, side: 1 },
+  { z: 2300, side: -1 },
+  { z: -700, side: 1 },
 ];
 
 /** Where the fishing boats ride at anchor: near which z, and on which side of the river's lane they prefer. */
 const NET_BOATS: readonly { z: number; prefer: 1 | -1 }[] = [
-  { z: -395, prefer: -1 },
-  { z: -1745, prefer: 1 },
+  { z: 5300, prefer: -1 },
+  { z: 1600, prefer: 1 },
 ];
 
 const SHORE: LiftNetSpec = {

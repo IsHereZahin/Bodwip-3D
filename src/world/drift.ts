@@ -6,7 +6,7 @@ import { patchMaterial } from '../render/patch';
 import { hyacinthLeafTexture } from '../render/textures';
 import { windAt } from '../env/wind';
 import { currentAt, type BoatBody } from './boatPhysics';
-import { CHARS, charHeight, halfWidth, riverX, terrainHeight } from './geography';
+import { halfWidth, riverX, terrainHeight } from './geography';
 import { HERO_HULL, heroBeamAtWater, hullHalfWidthAt, type HullShape } from './hull';
 import type { LiftNet } from './liftNet';
 import { wakeHeight } from './wake';
@@ -507,7 +507,8 @@ export class Drift {
           ? viewZ - this.rng.range(AHEAD * 0.45, AHEAD * 0.98)
           : viewZ + this.rng.range(BEHIND * 0.5, BEHIND * 0.95);
       const u = this.rng.sign() * halfWidth(z) * this.rng.range(0.03, 0.85);
-      if (charHeight(z, u) > G.uWaterLevel.value - 0.8 || CHARS.some((c) => Math.abs(z - c.z) < c.halfLen && Math.abs(u - c.u) < c.halfWid + 6)) continue;
+      // only where the water stays deep enough (off the shoals and flats)
+      if (terrainHeight(riverX(z) + u, z) > G.uWaterLevel.value - 0.8) continue;
       return [riverX(z) + u, z];
     }
     const z = viewZ - AHEAD * 0.5;
