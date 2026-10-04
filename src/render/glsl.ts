@@ -149,10 +149,14 @@ float waterSurface(vec2 p) {
 // length of water the eye looks through it; the surface itself adds only reflection, glitter and foam
 vec3 underwater(vec3 col, vec3 wpos) {
   if (uReflPass > 0.5) return col;
-  float level = waterSurface(wpos.xz);
+  vec3 lv = waterLevels(wpos.xz);
+  float level = lv.g > 0.5 ? uWaterLevel : lv.b > 0.5 ? lv.r : -1e4;
   if (wpos.y >= level || uCamPos.y <= level) return col;
   float path = length(wpos - uCamPos) * (level - wpos.y) / (uCamPos.y - wpos.y);
-  return mix(uWaterBody, col * vec3(0.78, 0.86, 0.72), exp(-path * 2.8));
+  // out toward the open Bay the sea is clearer and greener-blue than the channel's silt
+  float open = lv.g > 0.5 ? seaExposure(wpos.xz) : 0.0;
+  vec3 body = mix(uWaterBody, uWaterBody * vec3(0.62, 0.98, 1.2), open);
+  return mix(body, col * vec3(0.78, 0.86, 0.72), exp(-path * mix(2.8, 1.5, open)));
 }
 
 // Aerial perspective: analytic exponential height fog plus a thin river mist that hugs the water

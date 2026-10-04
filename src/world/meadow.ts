@@ -17,6 +17,8 @@ import { fbm, valueNoise } from '../core/noise';
 import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
+import { COVER, KIND, coverAt, kindAt } from '../geo/data';
+import { exposureAt } from './exposure';
 import { bankInfo, onBridge, onLandmark } from './geography';
 import { groundLattice } from './terrain';
 import { GHATS, type HutPlan } from './village';
@@ -142,6 +144,65 @@ function flowerClump(seed: number, kind: FlowerKind): BufferGeometry {
   return b.build();
 }
 
+/**
+ * Beach morning glory (Ipomoea pes-caprae), the creeper of the Bay's dunes: runners lying on the sand, a
+ * leathery two-lobed leaf every hand's breadth along them, now and then a pink funnel of a flower.
+ */
+function creeperClump(seed: number): BufferGeometry {
+  const rng = new Rng(seed);
+  const b = new MeshBuilder();
+  const runnerC = rgb('#5a4a2c');
+  const leafC = rgb('#2f5a24');
+  const leafLight = rgb('#4f7a2e');
+  const flowerC = rgb('#c4529a');
+  const throatC = rgb('#6e1f4f');
+  const runners = rng.int(3, 5);
+  for (let r = 0; r < runners; r++) {
+    let a = rng.range(0, Math.PI * 2);
+    const len = rng.range(0.6, 1.2);
+    const p = new Vector3(0, 0.02, 0);
+    for (let s = 0; s < len; s += 0.12) {
+      a += rng.range(-0.25, 0.25);
+      const dir = new Vector3(Math.cos(a), 0, Math.sin(a));
+      const next = p.clone().addScaledVector(dir, 0.12);
+      // the runner: a thin ribbon on the sand
+      const side = new Vector3(-dir.z, 0, dir.x).multiplyScalar(0.006);
+      const r0 = b.vertex(p.clone().sub(side), UP, 0, 0, runnerC);
+      b.vertex(p.clone().add(side), UP, 1, 0, runnerC);
+      b.vertex(next.clone().add(side), UP, 1, 1, runnerC);
+      b.vertex(next.clone().sub(side), UP, 0, 1, runnerC);
+      b.quad(r0, r0 + 1, r0 + 2, r0 + 3);
+      // a leaf on its stalk, raised off the sand, folded a little along its midrib, notched at the tip
+      const off = new Vector3(-dir.z, 0, dir.x).multiplyScalar(rng.next() < 0.5 ? -1 : 1);
+      const base = next.clone().addScaledVector(off, 0.03).setY(rng.range(0.04, 0.09));
+      const size = rng.range(0.045, 0.07);
+      const up = new Vector3(rng.range(-0.3, 0.3), 1, rng.range(-0.3, 0.3)).normalize();
+      const u = off.clone().addScaledVector(dir, 0.4).normalize();
+      const v = new Vector3().crossVectors(up, u).normalize();
+      const col = mixRgb(leafC, leafLight, rng.next());
+      const c = b.vertex(base.clone().addScaledVector(u, size), up, 0.5, 0.5, col);
+      const ring = [0, 0.9, 1.7, 2.6, 3.3, 3.9, 4.6, 5.4].map((t) => {
+        const ang = (t / 6.28) * Math.PI * 2;
+        const rr = size * (1 - 0.35 * Math.max(0, Math.cos(ang)) ** 8);
+        return b.vertex(base.clone().addScaledVector(u, size + Math.cos(ang) * rr).addScaledVector(v, Math.sin(ang) * rr).addScaledVector(up, 0.01 * Math.abs(Math.sin(ang))), up, 0, 0, col);
+      });
+      for (let k = 0; k < ring.length; k++) b.tri(c, ring[k], ring[(k + 1) % ring.length]);
+      // now and then a flower: a pink funnel facing the sky
+      if (rng.next() < 0.12) {
+        const f = next.clone().addScaledVector(off, -0.04).setY(0.1);
+        const fc = b.vertex(f.clone().setY(0.06), UP, 0.5, 0.5, throatC);
+        const lip = Array.from({ length: 6 }, (_, k) => {
+          const ang = (k / 6) * Math.PI * 2;
+          return b.vertex(f.clone().add(new Vector3(Math.cos(ang) * 0.035, 0, Math.sin(ang) * 0.035)), UP, 0, 0, flowerC);
+        });
+        for (let k = 0; k < 6; k++) b.tri(fc, lip[k], lip[(k + 1) % 6]);
+      }
+      p.copy(next);
+    }
+  }
+  return b.build();
+}
+
 /** A river pebble: a lumpy, flattened ball. */
 function pebble(seed: number): BufferGeometry {
   const g = new IcosahedronGeometry(1, 1);
@@ -173,7 +234,10 @@ interface ChunkData {
   used: number;
 }
 
-const LAYERS = ['grassNear', 'grassFar', 'white', 'yellow', 'lilac', 'pebbles'] as const;
+const LAYERS = ['grassNear', 'grassFar', 'white', 'yellow', 'lilac', 'pebbles', 'creeper'] as const;
+/** The creeper grows above the tide's reach within this of a beach open to the Bay (m), on sandy ground. */
+const DUNE_REACH = 60;
+const DUNE_ABOVE = 0.3;
 type LayerName = (typeof LAYERS)[number];
 
 /** Dense grass, flowers and pebbles round the viewer, rebuilt chunk by chunk as the view moves. */
@@ -223,6 +287,7 @@ export class Meadow {
       yellow: make(flowerClump(4, 'yellow'), flowerMat, 1200),
       lilac: make(flowerClump(5, 'lilac'), flowerMat, 1200),
       pebbles: make(pebble(6), stoneMat, 3000),
+      creeper: make(creeperClump(7), flowerMat, 4000),
     };
   }
 
@@ -323,6 +388,8 @@ export class Meadow {
       out[layer].list.push(...m.elements);
       out[layer].col.push(color[0], color[1], color[2]);
     };
+    // a dune behind a beach open to the Bay: the creeper covers the sand there, and the grass thins
+    const dune = nearOpenBeach(x0 + CHUNK / 2, z0 + CHUNK / 2);
     const step = STEP[lod];
     const n = Math.round(CHUNK / step);
     for (let j = 0; j < n; j++) {
@@ -342,6 +409,15 @@ export class Meadow {
         if (ghats.some((gh) => Math.abs(gh.z - z) < 3.2 && bankInfo(x, z).side === gh.side && bankInfo(x, z).inland < 21)) continue;
         // grass where the ground is grassy, in drifts, thinning on trodden earth and in the paddy
         const drift = smoothstep(0.28, 0.62, fbm(x * 0.07, z * 0.07, 2, 91));
+        // on the dunes the creeper lies over most of the sand, the grass in thin tussocks between
+        const onDune = dune && g.h > DUNE_ABOVE && kindAt(x, z) === KIND.land;
+        if (onDune) {
+          if (rng.next() < (0.45 + 0.4 * g.sand) * (0.5 + 0.5 * drift)) {
+            push(6, x, g.h - 0.01, z, rng.range(0.9, 1.4), 1, scaleRgb([1, 1, 1], rng.range(0.85, 1.1)), 0.05);
+            continue;
+          }
+          if (rng.next() > 0.3) continue;
+        }
         // none in the paddy plots (zone > 0) or the salt pans (zone < 0)
         const density = (g.grass * (0.45 + 0.55 * drift) + g.dirt * 0.12 * drift) * (1 - Math.abs(g.zone));
         if (rng.next() > density) continue;
@@ -364,4 +440,16 @@ export class Meadow {
     };
   }
 
+}
+
+/** Whether a beach of sand open to the Bay lies within DUNE_REACH of (x, z): sampled on a 10 m grid round it. */
+function nearOpenBeach(x: number, z: number): boolean {
+  for (let dz = -DUNE_REACH; dz <= DUNE_REACH; dz += 10) {
+    for (let dx = -DUNE_REACH; dx <= DUNE_REACH; dx += 10) {
+      const px = x + dx;
+      const pz = z + dz;
+      if (coverAt(px, pz) === COVER.sand && kindAt(px, pz) === KIND.tidal && exposureAt(px, pz) > 0.2) return true;
+    }
+  }
+  return false;
 }

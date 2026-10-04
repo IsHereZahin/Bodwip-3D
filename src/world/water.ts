@@ -360,6 +360,12 @@ ${wakeGlsl()}
 ${shipWakeGlsl()}
 ${SHIP_WAVES}
 ${swellGlsl()}
+// how far above the sea's level the swash's sheet runs up the beach now (m): the broken swell's run-up (about
+// half its height at the shore), rising as each crest comes in and draining back between them
+float swashRun(vec2 p, float open) {
+  float s = swellHeight(p) / max(uSwell.w, 1e-3);
+  return 0.6 * uSwell.w * min(open * 2.0, 1.0) * pow(smoothstep(-0.3, 1.0, s), 0.7);
+}
 void main() {
   // the grid round the camera, laid on the world and kept to the water's extent
   vec2 local = position.xz;
@@ -381,6 +387,9 @@ void main() {
     // the swell lifts the grid only where its vertices lie close enough to draw it (its shortest wave is ≈90 m;
     // farther off, sampled too coarsely, it would ring round the camera): its slopes shade the water beyond
     h += swellHeight(xz) * swellFactor(open, depth) * smoothstep(40.0, 18.0, spacing);
+    // the swash: a thin sheet running up the beach's face over the surf's last metre of depth (drawn only where
+    // the grid is fine enough for a band a few metres wide)
+    if (open > 0.05) h += swashRun(xz, open) * (1.0 - smoothstep(0.0, 1.2, level - fld.r)) * smoothstep(6.0, 2.5, spacing);
   }
   vWave = h;
   // the water the boat pushes aside
@@ -569,9 +578,23 @@ void main() {
     slope *= 1.0 + ${OPEN_SEA.toFixed(2)} * open;
     float sf = swellFactor(open, depth);
     slope += swellSlope(wp.xz) * sf;
-    // white water on the faces of the breaking crests, and a ragged band of it left behind them
-    float swellCrest = swellHeight(wp.xz) / max(uSwell.w, 1e-3);
-    surf = swellBreaking(open, depth) * (smoothstep(0.1, 0.7, swellCrest) * 0.9 + 0.35 * smoothstep(0.4, 0.75, vnoise(wp.xz * 0.6 + vec2(uTime * 0.3, -uTime * 0.2))));
+    // white water on the fronts of the breaking crests, and the lace of foam they leave behind them (a ridged
+    // noise: veins, not patches)
+    float breaking = swellBreaking(open, depth);
+    if (breaking > 0.01) {
+      float swellCrest = swellHeight(wp.xz) / max(uSwell.w, 1e-3);
+      float lace = smoothstep(0.9, 0.98, 1.0 - abs(fbm3(wp.xz * 0.5 + vec2(uTime * 0.05, -uTime * 0.04)) * 2.0 - 1.0));
+      surf = breaking * (smoothstep(0.82, 0.97, swellCrest) * 0.85 + lace * 0.45 * smoothstep(-0.6, 0.4, swellCrest));
+    }
+  }
+  // the swash's sheet over the sand: thin and all but clear, its leading edge a line of froth, the white water
+  // thinning over the beach's face
+  float film = wp.y - fld.r;
+  float sheet = 1.0;
+  if (uInland < 0.5 && open > 0.05 && film < 0.3) {
+    sheet = smoothstep(0.0, 0.08, film);
+    surf *= mix(0.4, 1.0, smoothstep(0.0, 0.3, level - fld.r));
+    surf += smoothstep(0.09, 0.025, film) * smoothstep(0.0, 0.012, film) * min(open * 1.5, 1.0) * (0.55 + 0.45 * vnoise(wp.xz * 2.0 + uTime * 0.5));
   }
   slope += nB * 0.1 * uWind.z * max(windGust(wp.xz) - 1.0, 0.0) * far;
   // rain: every drop rings the surface (the chop it raises comes with the waves above)
@@ -670,6 +693,8 @@ void main() {
   vec3 H = normalize(uKeyDir + V);
   float nh = max(dot(N, H), 0.0);
   col += uKeyColor * (pow(nh, 1100.0) * 26.0 + pow(nh, 160.0) * 0.7) * step(0.0, uKeyDir.y) * (1.0 - uOvercast);
+  col *= sheet;
+  alpha *= sheet;
 
   // a lapping line where the river meets the bank, faint round still water
   float shore = smoothstep(0.5, 0.06, depth) * smoothstep(0.0, 0.04, depth) * (0.35 + 0.65 * smoothstep(0.03, 0.25, spd));
