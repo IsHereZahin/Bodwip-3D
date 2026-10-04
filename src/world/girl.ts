@@ -439,9 +439,7 @@ export class Girl {
     out.ax.set(1, 0, 0).applyQuaternion(q);
     out.az.set(0, 0, 1).applyQuaternion(q);
     out.a = a;
-    // ClothTube lays a ring's depth on twice over (a known slip in cloth.ts, left for the boatman's sake),
-    // so the depth asked of it is half the depth wanted; keepOffBody holds the true shape
-    out.b = b / 2;
+    out.b = b;
     return out;
   };
 
