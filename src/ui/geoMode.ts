@@ -1,10 +1,10 @@
-import { BufferGeometry, Float32BufferAttribute, Group, LineBasicMaterial, LineSegments, Raycaster, Vector2, Vector3 } from 'three';
+import { BufferGeometry, Float32BufferAttribute, Group, LineBasicMaterial, LineSegments, Points, PointsMaterial, Raycaster, Vector2, Vector3 } from 'three';
 import type { PerspectiveCamera, Scene } from 'three';
 import { BUILDINGS, CELL, COVER, GRID_H, GRID_W, KIND, LAYERS, LINES, PLACES, cellCentre, coverAt, heightAt, kindAt, modelledAt, type Place } from '../geo/data';
 import { MAP_SCALE, toLatLon, toUtm } from '../geo/project';
 import { onPlant } from '../world/plantSite';
 import { onPort } from '../world/portSite';
-import { terrainHeight, waterLevelAt } from '../world/geography';
+import { BRIDGE, bilReach, riverX, terrainHeight, waterLevelAt } from '../world/geography';
 
 // The GIS reference mode (`?debug&geo`, GEOGRAPHY_PLAN.md §11): what the map says against what is drawn. A
 // readout of the camera and the cursor (WGS84 and UTM, the ground as drawn and as the DEM has it, what covers
@@ -33,6 +33,12 @@ const PIECE = 15;
 const LABEL_REACH = 2500;
 /** The readout refreshes this often (s). */
 const EVERY = 0.25;
+/** The sources' dots: their spacing and the square they cover round the camera (m), and when they are laid again. */
+const SOURCE_STEP = 30;
+const SOURCE_SPAN = 3000;
+const SOURCE_MOVE = 600;
+/** Where the ground's shape comes from, by colour: measured, modelled, imagined (the plan's [মাপা], [মডেল], [কাল্পনিক]). */
+const SOURCE_COLOURS = { measured: [0.25, 0.85, 0.35], modelled: [1.0, 0.6, 0.15], imagined: [0.95, 0.25, 0.85] } as const;
 
 export interface GeoReadings {
   /** The sea's level now (m), the tide's flow (+ ebb, − flood), and its words. */
@@ -53,12 +59,16 @@ export class GeoMode {
   private wait = 0;
   private readonly camera: PerspectiveCamera;
   private readonly readings: () => GeoReadings;
+  private readonly sources: Points;
+  private readonly sourcesAt = new Vector3(Infinity, 0, Infinity);
 
   constructor(scene: Scene, camera: PerspectiveCamera, canvas: HTMLCanvasElement, readings: () => GeoReadings) {
     this.camera = camera;
     this.readings = readings;
     this.group.name = 'geo-overlay';
-    this.group.add(this.lines(), this.pins());
+    this.sources = new Points(new BufferGeometry(), new PointsMaterial({ size: 5, sizeAttenuation: false, vertexColors: true, transparent: true, opacity: 0.75, depthWrite: false }));
+    this.sources.frustumCulled = false;
+    this.group.add(this.lines(), this.pins(), this.sources);
     scene.add(this.group);
     const hud = (this.hud = document.createElement('pre'));
     hud.style.cssText =
@@ -74,6 +84,7 @@ export class GeoMode {
   /** Every frame: the labels follow the camera; the readout refreshes a few times a second. */
   update(dt: number): void {
     this.placeLabels();
+    if (Math.hypot(this.camera.position.x - this.sourcesAt.x, this.camera.position.z - this.sourcesAt.z) > SOURCE_MOVE) this.laySources();
     this.wait -= dt;
     if (this.wait > 0) return;
     this.wait = EVERY;
@@ -184,6 +195,25 @@ export class GeoMode {
     }
   }
 
+  /** A dot every SOURCE_STEP m round the camera on the ground, coloured by where its shape comes from. */
+  private laySources(): void {
+    const c = this.camera.position;
+    this.sourcesAt.copy(c);
+    const pos: number[] = [];
+    const col: number[] = [];
+    const half = SOURCE_SPAN / 2;
+    for (let z = Math.round((c.z - half) / SOURCE_STEP) * SOURCE_STEP; z <= c.z + half; z += SOURCE_STEP) {
+      for (let x = Math.round((c.x - half) / SOURCE_STEP) * SOURCE_STEP; x <= c.x + half; x += SOURCE_STEP) {
+        const tint = SOURCE_COLOURS[sourceOf(x, z)];
+        pos.push(x, surfaceAt(x, z) + LIFT, z);
+        col.push(tint[0], tint[1], tint[2]);
+      }
+    }
+    const g = this.sources.geometry;
+    g.setAttribute('position', new Float32BufferAttribute(pos, 3));
+    g.setAttribute('color', new Float32BufferAttribute(col, 3));
+  }
+
   // ---------- the readout ----------
 
   /** Where the cursor's ray meets the ground or the water, marched out and then halved down; null if it doesn't. */
@@ -236,11 +266,21 @@ function where(x: number, z: number): string {
 const KIND_NAMES = Object.fromEntries(Object.entries(KIND).map(([k, v]) => [v, k]));
 const COVER_NAMES = Object.fromEntries(Object.entries(COVER).map(([k, v]) => [v, k]));
 
+/** Where the shape of the ground at (x, z) comes from: measured (the DEMs), modelled, or imagined (D3's features). */
+function sourceOf(x: number, z: number): keyof typeof SOURCE_COLOURS {
+  // the shapla bil's bowl and the old bridge are the plan's imagined features, set at real places
+  if (bilReach(z, x - riverX(z)) < 1.2 || Math.hypot(x - BRIDGE.x, z - BRIDGE.z) < 60) return 'imagined';
+  if (onPlant(x, z) || onPort(x, z) || modelledAt(x, z)) return 'modelled';
+  return 'measured';
+}
+
 /** The ground at a point: drawn against the DEM, what covers it, and where its height comes from. */
 function ground(x: number, z: number): string {
   const drawn = terrainHeight(x, z);
   const dem = heightAt(x, z);
-  const source = onPlant(x, z) ? '[মডেল] the plant’s fill' : onPort(x, z) ? '[মডেল] the port’s fill or dredging' : modelledAt(x, z) ? '[মডেল] modelled depth' : '[মাপা] DEM';
+  const kind = sourceOf(x, z);
+  const source =
+    kind === 'imagined' ? '[কাল্পনিক] a feature set here (D3)' : onPlant(x, z) ? '[মডেল] the plant’s fill' : onPort(x, z) ? '[মডেল] the port’s fill or dredging' : modelledAt(x, z) ? '[মডেল] modelled depth' : '[মাপা] DEM';
   return `ground ${drawn.toFixed(1)} m drawn, ${dem.toFixed(1)} m baked · ${KIND_NAMES[kindAt(x, z)]}, ${COVER_NAMES[coverAt(x, z)]} · ${source}`;
 }
 
