@@ -3,9 +3,11 @@ import { Rng } from '../core/rng';
 import { MeshBuilder, rgb, scaleRgb, slab, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { plasterTexture, strawTexture, tinTexture } from '../render/textures';
+import { BEACON, type Beacon } from './beacons';
 import {
   ADINATH,
   GORAKGHATA,
+  LIGHTHOUSE,
   SHUTKI_YARDS,
   edgeHalfWidth,
   hillHeight,
@@ -469,7 +471,50 @@ const newSets = (): Sets => ({
  * The landmarks, as groups: `seen` (Adinath temple and its stair, Gorakghata's jetty and the pagoda, which show
  * from afar), and `near` (the betel gardens and dry-fish yards, small things left undrawn far off; see cull.ts).
  */
-export function buildMoheshkhali(): { seen: Group; near: Group } {
+/**
+ * Cox's Bazar's lighthouse, the new one (≈2023, Rowlett's Lighthouse Directory): a 34 m octagonal concrete tower
+ * in red and white bands with its watch room, gallery and lantern, on the top of its ridge (the light 74 m over
+ * the sea), a walkway across to a three-storey block beside it [মডেল: which side, and the block's size]. Its
+ * light, a white flash every 15 s, goes into `lights`.
+ */
+function lighthouse(s: Sets, lights: Beacon[]): void {
+  const { x, z } = LIGHTHOUSE;
+  const y = terrainHeight(x, z) - 0.5;
+  const H = 34;
+  const RED: RGB = rgb('#b3261e');
+  const SHAFT = H - 6;
+  const BANDS = 8;
+  const radius = (h: number) => 3.1 - (0.9 * h) / SHAFT;
+  for (let i = 0; i < BANDS; i++) {
+    const h0 = (SHAFT * i) / BANDS;
+    const h1 = (SHAFT * (i + 1)) / BANDS;
+    part(s.paint, new CylinderGeometry(radius(h1), radius(h0), h1 - h0, 8), x, y + (h0 + h1) / 2, z, Math.PI / 8, i % 2 ? RED : WHITE);
+  }
+  // the watch room, the gallery round it with its railing, the lantern's glass, its dome and vent
+  part(s.paint, new CylinderGeometry(2.2, 2.2, 2.6, 8), x, y + SHAFT + 1.3, z, Math.PI / 8, WHITE);
+  part(s.concrete, new CylinderGeometry(3.1, 3.0, 0.3, 8), x, y + SHAFT + 2.75, z, Math.PI / 8, WHITE);
+  for (let k = 0; k < 16; k++) {
+    const a = (k / 16) * Math.PI * 2;
+    part(s.concrete, new CylinderGeometry(0.04, 0.04, 1.0, 4), x + Math.cos(a) * 2.95, y + SHAFT + 3.4, z + Math.sin(a) * 2.95, 0, WHITE);
+  }
+  part(s.concrete, new CylinderGeometry(2.97, 2.97, 0.06, 16), x, y + SHAFT + 3.9, z, 0, WHITE);
+  // the lantern: glass between eight thin mullions (left open, so its light shows through), the lamp inside
+  for (let k = 0; k < 8; k++) {
+    const a = ((k + 0.5) / 8) * Math.PI * 2;
+    part(s.concrete, new CylinderGeometry(0.06, 0.06, 2.4, 4), x + Math.cos(a) * 1.5, y + SHAFT + 4.1, z + Math.sin(a) * 1.5, 0, rgb('#3a3f42'));
+  }
+  part(s.concrete, new SphereGeometry(0.35, 8, 6), x, y + SHAFT + 4.1, z, 0, rgb('#e8e2c8'));
+  part(s.paint, new SphereGeometry(1.6, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), x, y + SHAFT + 5.3, z, 0, RED);
+  part(s.paint, new CylinderGeometry(0.15, 0.25, 0.9, 6), x, y + SHAFT + 7.1, z, 0, RED);
+  // the three-storey block beside it and the walkway across at its second floor
+  const bx = x - 12;
+  slab(s.white, bx, y + 5.4, z, 9, 10.8, 12, 0, WHITE);
+  slab(s.concrete, bx, y + 10.9, z, 9.4, 0.25, 12.4, 0, WHITE);
+  slab(s.concrete, x - 5.4, y + 7.4, z, 5.2, 0.3, 1.8, 0, WHITE);
+  lights.push({ x, y: y + SHAFT + 4.1, z, kind: BEACON.lighthouse });
+}
+
+export function buildMoheshkhali(): { seen: Group; near: Group; lights: Beacon[] } {
   const seen = new Group();
   seen.name = 'moheshkhali';
   const near = new Group();
@@ -480,6 +525,8 @@ export function buildMoheshkhali(): { seen: Group; near: Group } {
   stair(town);
   for (const j of jetties()) jetty(town, j);
   pagoda(town);
+  const lights: Beacon[] = [];
+  lighthouse(town, lights);
   const gardens = new Map<number, Sets>();
   betelGardens(gardens, rng);
   const yards = SHUTKI_YARDS.map((y) => {
@@ -512,5 +559,5 @@ export function buildMoheshkhali(): { seen: Group; near: Group } {
   add(town, seen);
   for (const g of gardens.values()) add(g, near);
   for (const y of yards) add(y, near);
-  return { seen, near };
+  return { seen, near, lights };
 }

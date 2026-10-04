@@ -10,7 +10,7 @@ import { GLSL_COMMON } from '../render/glsl';
 // marks flash red to port and green to starboard as a ship comes in from the sea (IALA region A). Things that
 // move (buoys, ships) move their lights each frame (`move`).
 
-export const BEACON = { flashing: 0, red: 1, sodium: 2, white: 3, green: 4 } as const;
+export const BEACON = { flashing: 0, red: 1, sodium: 2, white: 3, green: 4, lighthouse: 5 } as const;
 export type BeaconKind = (typeof BEACON)[keyof typeof BEACON];
 
 export interface Beacon {
@@ -30,13 +30,16 @@ void main() {
   vec4 mv = viewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mv;
   float d = -mv.z;
-  vCol = aKind < 1.5 ? vec3(1.0, 0.07, 0.03) : aKind < 2.5 ? vec3(1.0, 0.56, 0.2) : aKind < 3.5 ? vec3(0.88, 0.94, 1.0) : vec3(0.1, 1.0, 0.35);
-  // about forty flashes a minute, all together; the green marks a flash every four seconds
-  float on = aKind < 0.5 ? step(fract(uTime * 0.667), 0.3) : aKind > 3.5 ? step(fract(uTime * 0.25 + position.x * 0.013), 0.12) : 1.0;
+  vCol = aKind < 1.5 ? vec3(1.0, 0.07, 0.03) : aKind < 2.5 ? vec3(1.0, 0.56, 0.2) : aKind < 3.5 ? vec3(0.88, 0.94, 1.0) : aKind < 4.5 ? vec3(0.1, 1.0, 0.35) : vec3(1.0, 0.97, 0.9);
+  // about forty flashes a minute, all together; the green marks a flash every four seconds; the lighthouse a
+  // white flash every fifteen, the lens's beam sweeping past (half a second, brightest in its middle)
+  float sweep = fract(uTime / 15.0);
+  float on = aKind < 0.5 ? step(fract(uTime * 0.667), 0.3) : aKind > 4.5 ? smoothstep(0.035, 0.0, abs(sweep - 0.02)) : aKind > 3.5 ? step(fract(uTime * 0.25 + position.x * 0.013), 0.12) : 1.0;
   // lit from dusk; the haze swallows them with distance
   vA = on * smoothstep(0.2, 0.65, uNight) * exp(-d * uFogDensity * 0.45) * (1.0 - 0.5 * smoothstep(0.3, 0.9, uRain));
-  vCol *= aKind < 1.5 ? 1.0 : aKind < 2.5 ? 0.45 : aKind < 3.5 ? 0.6 : 1.0;
-  gl_PointSize = uPR * clamp(1600.0 / max(d, 1.0), 2.5, 14.0);
+  vCol *= aKind < 1.5 ? 1.0 : aKind < 2.5 ? 0.45 : aKind < 3.5 ? 0.6 : aKind < 4.5 ? 1.0 : 2.5;
+  // a lighthouse is seen 21 nautical miles off: it keeps its size far beyond the others
+  gl_PointSize = uPR * (aKind > 4.5 ? clamp(9000.0 / max(d, 1.0), 6.0, 34.0) : clamp(1600.0 / max(d, 1.0), 2.5, 14.0));
 }`;
 
 const FRAG = /* glsl */ `

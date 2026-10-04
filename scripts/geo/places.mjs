@@ -37,6 +37,7 @@ export const PLACES = [
   { id: 'nazirartek', expect: 'land', name: 'নাজিরারটেক শুঁটকি', lat: 21.4234, lon: 91.9798, source: 'OSM "Shutki (Dry Fish) Market"', confidence: 'medium' },
   { id: 'wind-farm', expect: 'any', name: 'খুরুশকুল বায়ুবিদ্যুৎকেন্দ্র', lat: 21.508, lon: 92.004, source: 'OSM power=plant', confidence: 'medium' },
   { id: 'coxs-bazar-station', expect: 'land', name: 'কক্সবাজার রেলস্টেশন', lat: 21.4288, lon: 92.015, source: 'OSM', confidence: 'medium' },
+  { id: 'coxs-bazar-lighthouse', expect: 'land', name: 'কক্সবাজার বাতিঘর', lat: 21.43117, lon: 91.97893, source: 'OSM way 1551487784; Rowlett, Lighthouse Directory (34 m tower, focal plane 74 m, Fl W 15 s)', confidence: 'high' },
   // unions (Bangla Wikipedia's points; OSM differs for some, see GEOGRAPHY_PLAN.md §4)
   { id: 'kutubjom', expect: 'any', name: 'কুতুবজোম', lat: 21.5247, lon: 91.9214, source: 'bn.wikipedia', confidence: 'medium' },
   { id: 'bara-moheshkhali', expect: 'land', name: 'বড় মহেশখালী', lat: 21.5464, lon: 91.9417, source: 'bn.wikipedia', confidence: 'medium' },

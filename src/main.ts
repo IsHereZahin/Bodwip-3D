@@ -170,7 +170,7 @@ async function main(hud: Hud): Promise<void> {
   scene.add(port.group);
   const ships = new Ships();
   scene.add(ships.group);
-  const beacons = new Beacons([...plant.lights, ...windFarm.lights, ...port.lights]);
+  const beacons = new Beacons([...plant.lights, ...windFarm.lights, ...port.lights, ...landmarks.lights]);
   scene.add(beacons.points);
   // the light the plant's and the port's lamps throw on their grounds at night
   const lightPools = buildLightPools([...plant.lights, ...port.lights]);
@@ -1145,7 +1145,7 @@ async function main(hud: Hud): Promise<void> {
         },
         info() {
           const cam = camera.position.toArray().map((v) => Math.round(v * 10) / 10);
-          return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, scale: perf.scale, ms: Math.round(perf.ms * 10) / 10, programs: renderer.info.programs?.length, camera: cam, mode: director.active ? 'film' : rig.mode, quality, hour: Math.round(clock.hour * 100) / 100, driftMs: Math.round(perf.driftMs * 100) / 100, fishMs: Math.round(perf.fishMs * 100) / 100, rain: Math.round(G.uRain.value * 100) / 100, rainShown: rain.visible, wind: Math.round(G.uWind.value.z * 100) / 100, seaWind: Math.round(sea.wind * 10) / 10, waveHeight: Math.round(sea.height * 100) / 100, wavePeak: Math.round(sea.peak * 10) / 10, chop: Math.round(sea.chop * 100) / 100 };
+          return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, scale: perf.scale, ms: Math.round(perf.ms * 10) / 10, programs: renderer.info.programs?.length, camera: cam, mode: director.active ? 'film' : rig.mode, quality, time: Math.round(G.uTime.value * 100) / 100, hour: Math.round(clock.hour * 100) / 100, driftMs: Math.round(perf.driftMs * 100) / 100, fishMs: Math.round(perf.fishMs * 100) / 100, rain: Math.round(G.uRain.value * 100) / 100, rainShown: rain.visible, wind: Math.round(G.uWind.value.z * 100) / 100, seaWind: Math.round(sea.wind * 10) / 10, waveHeight: Math.round(sea.height * 100) / 100, wavePeak: Math.round(sea.peak * 10) / 10, chop: Math.round(sea.chop * 100) / 100 };
         },
       },
     });

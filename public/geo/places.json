@@ -400,6 +400,22 @@
   "cover": "sand"
  },
  {
+  "id": "coxs-bazar-lighthouse",
+  "expect": "land",
+  "name": "কক্সবাজার বাতিঘর",
+  "lat": 21.43117,
+  "lon": 91.97893,
+  "source": "OSM way 1551487784; Rowlett, Lighthouse Directory (34 m tower, focal plane 74 m, Fl W 15 s)",
+  "confidence": "high",
+  "world": {
+   "x": -253.3,
+   "z": -3212.1
+  },
+  "ground": 35.9,
+  "kind": "land",
+  "cover": "tree"
+ },
+ {
   "id": "kutubjom",
   "expect": "any",
   "name": "কুতুবজোম",

@@ -709,6 +709,12 @@ export const GORAKGHATA = (() => {
   };
 })();
 
+/** Cox's Bazar's lighthouse on its ridge (OSM way 1551487784): where it stands, and the ground kept clear round it (m). */
+export const LIGHTHOUSE = (() => {
+  const p = place('coxs-bazar-lighthouse').world;
+  return { x: p.x, z: p.z, r: 16 };
+})();
+
 /** The dry-fish yards: Nazirartek at Cox's Bazar (OSM's shutki market). */
 export const SHUTKI_YARDS: readonly { x: number; z: number; ry: number; rows: number }[] = (() => {
   const n = place('nazirartek').world;
@@ -727,6 +733,7 @@ export function onLandmark(x: number, z: number, margin = 0): boolean {
   const g = GORAKGHATA;
   if (Math.hypot(x - g.pagoda.x, z - g.pagoda.z) < g.pagoda.r + margin) return true;
   for (const y of SHUTKI_YARDS) if (Math.hypot(x - y.x, z - y.z) < 14 + margin) return true;
+  if (Math.hypot(x - LIGHTHOUSE.x, z - LIGHTHOUSE.z) < LIGHTHOUSE.r + margin) return true;
   if (Math.hypot(x - TEMPLE.x, z - TEMPLE.z) < TEMPLE.r + 3 + margin) return true;
   // along the jetty and the stair
   const nearSegment = (a: Point2, b: Point2, w: number) => {
