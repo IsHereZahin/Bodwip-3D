@@ -1,6 +1,7 @@
 [
  {
   "id": "gorakghata-jetty-land",
+  "expect": "land",
   "name": "গোরকঘাটা জেটি (ডাঙার মাথা)",
   "lat": 21.5182,
   "lon": 91.9716,
@@ -16,6 +17,7 @@
  },
  {
   "id": "gorakghata-jetty-head",
+  "expect": "wet",
   "name": "গোরকঘাটা জেটি (পানির মাথা)",
   "lat": 21.5172,
   "lon": 91.9786,
@@ -31,6 +33,7 @@
  },
  {
   "id": "adinath-jetty-land",
+  "expect": "land",
   "name": "আদিনাথ জেটি (ডাঙার মাথা)",
   "lat": 21.5266,
   "lon": 91.9742,
@@ -46,6 +49,7 @@
  },
  {
   "id": "adinath-jetty-head",
+  "expect": "wet",
   "name": "আদিনাথ জেটি (পানির মাথা)",
   "lat": 21.5247,
   "lon": 91.9808,
@@ -61,6 +65,7 @@
  },
  {
   "id": "adinath-temple",
+  "expect": "land",
   "name": "আদিনাথ মন্দির",
   "lat": 21.528118,
   "lon": 91.974811,
@@ -76,6 +81,7 @@
  },
  {
   "id": "mainak-top",
+  "expect": "land",
   "name": "মৈনাক পাহাড়ের চূড়া",
   "lat": 21.52736,
   "lon": 91.97377,
@@ -91,6 +97,7 @@
  },
  {
   "id": "gorakghata-town",
+  "expect": "land",
   "name": "গোরকঘাটা (মহেশখালী শহর)",
   "lat": 21.5197,
   "lon": 91.9678,
@@ -106,6 +113,7 @@
  },
  {
   "id": "upazila-parishad",
+  "expect": "any",
   "name": "উপজেলা পরিষদ",
   "lat": 21.5194,
   "lon": 91.9646,
@@ -121,6 +129,7 @@
  },
  {
   "id": "upazila-pond",
+  "expect": "water",
   "name": "উপজেলা পুকুর",
   "lat": 21.5191,
   "lon": 91.9656,
@@ -136,6 +145,7 @@
  },
  {
   "id": "hills-highest",
+  "expect": "land",
   "name": "পাহাড়সারির সর্বোচ্চ বিন্দু",
   "lat": 21.5986,
   "lon": 91.9556,
@@ -151,6 +161,7 @@
  },
  {
   "id": "kastura-ghat",
+  "expect": "any",
   "name": "কস্তুরা ঘাট",
   "lat": 21.4462,
   "lon": 91.9736,
@@ -166,6 +177,7 @@
  },
  {
   "id": "jetty-6",
+  "expect": "any",
   "name": "৬ নম্বর জেটি",
   "lat": 21.44815,
   "lon": 91.97248,
@@ -181,6 +193,7 @@
  },
  {
   "id": "badarkhali-bridge",
+  "expect": "water",
   "name": "বদরখালী–জনতা বাজার সেতু",
   "lat": 21.71615,
   "lon": 91.94665,
@@ -196,6 +209,7 @@
  },
  {
   "id": "kohelia-port-road-bridge",
+  "expect": "water",
   "name": "কোহেলিয়ার ওপর বন্দর সড়কের সেতু",
   "lat": 21.70935,
   "lon": 91.9149,
@@ -211,6 +225,7 @@
  },
  {
   "id": "matarbari-plant",
+  "expect": "land",
   "name": "মাতারবাড়ী বিদ্যুৎকেন্দ্র",
   "lat": 21.701,
   "lon": 91.8821,
@@ -226,6 +241,7 @@
  },
  {
   "id": "matarbari-stack",
+  "expect": "land",
   "name": "চিমনি (২৭৫ m)",
   "lat": 21.70065,
   "lon": 91.88483,
@@ -241,6 +257,7 @@
  },
  {
   "id": "matarbari-switchyard",
+  "expect": "land",
   "name": "400 kV switchyard",
   "lat": 21.701,
   "lon": 91.8897,
@@ -256,6 +273,7 @@
  },
  {
   "id": "matarbari-coal-berth",
+  "expect": "wet",
   "name": "কয়লার জেটি",
   "lat": 21.7,
   "lon": 91.8757,
@@ -271,6 +289,7 @@
  },
  {
   "id": "matarbari-port",
+  "expect": "any",
   "name": "মাতারবাড়ী গভীর সমুদ্রবন্দর",
   "lat": 21.6914,
   "lon": 91.8589,
@@ -286,6 +305,7 @@
  },
  {
   "id": "summit-fsru",
+  "expect": "water",
   "name": "ভাসমান LNG টার্মিনাল",
   "lat": 21.557,
   "lon": 91.816,
@@ -301,6 +321,7 @@
  },
  {
   "id": "sonadia",
+  "expect": "any",
   "name": "সোনাদিয়া",
   "lat": 21.496,
   "lon": 91.884,
@@ -316,21 +337,23 @@
  },
  {
   "id": "sonadia-beach",
+  "expect": "any",
   "name": "সোনাদিয়ার সৈকত",
-  "lat": 21.4843,
-  "lon": 91.882,
-  "source": "on OSM natural=beach (79.9 ha), the south-west shore, read off Sentinel-2 2026-02-26",
+  "lat": 21.48715,
+  "lon": 91.87969,
+  "source": "the baked sand cell nearest the middle of OSM natural=beach (79.9 ha; 57 % of its cells bake as sand)",
   "confidence": "high",
   "world": {
-   "x": 3095.1,
-   "z": -1250.3
+   "x": 3174.9,
+   "z": -1145.1
   },
-  "ground": -2.5,
-  "kind": "sea",
-  "cover": "water"
+  "ground": 0,
+  "kind": "land",
+  "cover": "sand"
  },
  {
   "id": "nazirartek",
+  "expect": "land",
   "name": "নাজিরারটেক শুঁটকি",
   "lat": 21.4234,
   "lon": 91.9798,
@@ -346,6 +369,7 @@
  },
  {
   "id": "wind-farm",
+  "expect": "any",
   "name": "খুরুশকুল বায়ুবিদ্যুৎকেন্দ্র",
   "lat": 21.508,
   "lon": 92.004,
@@ -361,6 +385,7 @@
  },
  {
   "id": "coxs-bazar-station",
+  "expect": "land",
   "name": "কক্সবাজার রেলস্টেশন",
   "lat": 21.4288,
   "lon": 92.015,
@@ -376,6 +401,7 @@
  },
  {
   "id": "kutubjom",
+  "expect": "any",
   "name": "কুতুবজোম",
   "lat": 21.5247,
   "lon": 91.9214,
@@ -391,6 +417,7 @@
  },
  {
   "id": "bara-moheshkhali",
+  "expect": "land",
   "name": "বড় মহেশখালী",
   "lat": 21.5464,
   "lon": 91.9417,
@@ -406,6 +433,7 @@
  },
  {
   "id": "chhota-moheshkhali",
+  "expect": "land",
   "name": "ছোট মহেশখালী",
   "lat": 21.5478,
   "lon": 91.9567,
@@ -421,6 +449,7 @@
  },
  {
   "id": "hoanak",
+  "expect": "any",
   "name": "হোয়ানক",
   "lat": 21.6043,
   "lon": 91.8921,
@@ -436,6 +465,7 @@
  },
  {
   "id": "shaplapur",
+  "expect": "land",
   "name": "শাপলাপুর",
   "lat": 21.6048,
   "lon": 91.9561,
@@ -451,6 +481,7 @@
  },
  {
   "id": "kalarmarchhara",
+  "expect": "land",
   "name": "কালারমারছড়া",
   "lat": 21.6725,
   "lon": 91.9297,
@@ -466,6 +497,7 @@
  },
  {
   "id": "matarbari",
+  "expect": "land",
   "name": "মাতারবাড়ী",
   "lat": 21.729,
   "lon": 91.8896,
@@ -481,6 +513,7 @@
  },
  {
   "id": "dhalghata",
+  "expect": "any",
   "name": "ধলঘাটা",
   "lat": 21.6725,
   "lon": 91.8717,
@@ -496,6 +529,7 @@
  },
  {
   "id": "arch-bridge",
+  "expect": "land",
   "name": "পুরোনো খিলান সেতু (মেয়েটিসহ)",
   "lat": 21.5313,
   "lon": 91.9579,
@@ -511,6 +545,7 @@
  },
  {
   "id": "shapla-bil",
+  "expect": "land",
   "name": "শাপলা বিল",
   "lat": 21.615,
   "lon": 91.925,

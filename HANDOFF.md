@@ -79,7 +79,11 @@
    - তারপর "yes start": P0 (ডেটা নিরীক্ষা) হয়েছে, `geo-foundation` শাখায়।
      - যোগ হয়েছে: `geotiff` আর `proj4` (devDependency), `scripts/geo/` (fetch, tide-fit, audit, lib), `.gitignore`-এ cache।
      - ডেটা নামানো হয়েছে ≈৩২০ MB। ফল `GEO_AUDIT.md`-এ।
-     - জগৎ বদলায়নি, typecheck বা build চালানো হয়নি (src বদলায়নি)। কিছু commit হয়নি।
+     - জগৎ বদলায়নি, typecheck বা build চালানো হয়নি (src বদলায়নি)।
+   - তারপর "continue and each task commit also, for commit use only one line message, dont use your name on commit": প্রতিটা কাজ শেষে এক লাইনের commit, কোনো AI-এর নাম ছাড়া।
+     - P1 হয়েছে: `src/geo/project.ts`, `scripts/geo/bake.mjs` → `public/geo/` (≈২ MB), `scripts/geo/check.mjs`।
+     - ফল `GEO_AUDIT.md` §৮-এ: তীর OSM থেকে মধ্যমা ৩০ m দূরে, ৩৫টা landmark-এর সবগুলো ঠিক জমিতে।
+     - typecheck প্রতিটা commit-এর আগে চালানো হয়েছে (অনুমতি নিয়ে), পাস। জগৎ এখনো বদলায়নি।
 
 প্রথম সেশনে ব্যবহারকারী উত্তর বাংলায় চেয়েছিলেন।
 

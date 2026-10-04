@@ -23,6 +23,8 @@ Standalone site: Vite 8 + TypeScript 7 + three r186. Almost everything (terrain,
   - `node scripts/geo/fetch.mjs [ids…] [--force]` downloads the open data into `scripts/geo/cache/` (≈320 MB, git-ignored). Sources and licences are in `scripts/geo/config.mjs`; each file's checksum and date go into `cache/manifest.json`. Some hosts need the User-Agent (`lib/http.mjs`); big COGs are read in strips (`lib/raster.mjs`); tiles inside multi-GB zips are taken by range requests (`lib/zip.mjs`).
   - `node scripts/geo/tide-fit.mjs <years…>` fits the Cox's Bazar tide harmonics.
   - `node scripts/geo/audit.mjs` prints the P0 audit and writes satellite crops to `cache/audit/`. The findings are in `GEO_AUDIT.md`.
+  - `node scripts/geo/bake.mjs` writes `public/geo/`: terrain (dm, 30 m ground grid), kind, cover, canopy, OSM lines, `places.json`, `manifest.json`. Layers are deflate-raw (decompress with `DecompressionStream('deflate-raw')`). The world projection is `src/geo/project.ts` (the scripts import it; Node strips the types). Landmarks and what ground they must stand on are in `scripts/geo/places.mjs`.
+  - `node scripts/geo/check.mjs` checks the bake against OSM's coastline and the landmarks, and draws OSM's lines over the bake and Sentinel-2 in `cache/view/`.
 - The build warns that the bundle is over 500 kB. That is expected: three.js is a large share of it (the whole bundle is ≈896 kB, ≈265 kB gzipped).
 
 ## Architecture (`src/`)
