@@ -6,6 +6,7 @@ import { MeshBuilder, mixRgb, rgb, type RGB } from '../render/builder';
 import { CROP_REACH } from '../render/glsl';
 import { patchMaterial } from '../render/patch';
 import { mustardCanopyTexture, mustardTexture, riceCanopyTexture, riceRowTexture } from '../render/textures';
+import { onRoad } from './geography';
 import { groundLattice } from './terrain';
 
 // The crops in the paddy plots, standing in 3D round the camera (out to CROP_REACH; beyond, the terrain
@@ -509,6 +510,8 @@ export class Crops {
               if (x < x0 || x >= x0 + CHUNK || z < z0 || z >= z0 + CHUNK || Math.floor(z / PLOT.band) !== band) continue;
               const g = lattice(x, z);
               if (g.zone < ZONE_MIN) continue;
+              // no patch reaches over a road or a footpath through the fields (the lattice misses a narrow one)
+              if (onRoad(x, z, Math.max(px, py) * 0.6 + 0.2)) continue;
               mat.compose(pos.set(x, g.h - 0.02, z), q, scl.set(px / size, 1, py / size));
               m.push(...mat.elements);
               const tint = rng.range(0.86, 1.08);

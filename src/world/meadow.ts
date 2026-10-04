@@ -19,7 +19,7 @@ import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder'
 import { patchMaterial } from '../render/patch';
 import { COVER, KIND, coverAt, kindAt } from '../geo/data';
 import { exposureAt } from './exposure';
-import { bankInfo, onBridge, onLandmark } from './geography';
+import { bankInfo, bridgePath, onBridge, onLandmark, onRoad } from './geography';
 import { groundLattice } from './terrain';
 import { GHATS, type HutPlan } from './village';
 
@@ -406,6 +406,9 @@ export class Meadow {
         }
         if (huts.some((h) => Math.hypot(h.x - x, h.z - z) < Math.max(h.l, h.w) * 0.6 + 0.4)) continue;
         if (onBridge(x, z) || onLandmark(x, z)) continue;
+        // nothing grows on a road, a footpath or the bridge's worn way: they stay trodden and clear (the
+        // lattice is too coarse to see a footpath's metre, so each is asked here)
+        if (onRoad(x, z, 0.25) || bridgePath(x, z) > 0.3) continue;
         if (ghats.some((gh) => Math.abs(gh.z - z) < 3.2 && bankInfo(x, z).side === gh.side && bankInfo(x, z).inland < 21)) continue;
         // grass where the ground is grassy, in drifts, thinning on trodden earth and in the paddy
         const drift = smoothstep(0.28, 0.62, fbm(x * 0.07, z * 0.07, 2, 91));

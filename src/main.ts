@@ -798,7 +798,7 @@ async function main(hud: Hud): Promise<void> {
     }
     const simStart = performance.now();
     // the hyacinth meets the hero's hull and blade, and the fishermen's boats, poles and nets
-    drift.update(dt, t, camera.position.z, b, hero.blade, fishing.obstacles());
+    drift.update(dt, t, camera.position, b, hero.blade, fishing.obstacles());
     // the bil's lilies give way to her hull and blade and are drawn back by their stems
     bil.update(dt, t, b, hero.blade, hero.bladeWet);
     perf.driftMs += (performance.now() - simStart - perf.driftMs) * 0.1;
