@@ -979,11 +979,12 @@ export function brickTexture(seed: number): { map: DataTexture; normal: DataText
  * dark by years of rain running down, cracked, and fallen away in patches to the brick beneath. Tiles
  * (≈2.5 m). With a normal map: the cracks and the edges of the fallen patches stand in relief.
  */
-export function plasterTexture(seed: number): { map: DataTexture; normal: DataTexture } {
+export function plasterTexture(seed: number, options: { white?: boolean; fallen?: boolean } = {}): { map: DataTexture; normal: DataTexture } {
   const S = 512;
   const rng = new Rng(seed);
-  // two fallen patches a tile, ragged-edged, so the repeat does not show as a pattern
-  const patches = Array.from({ length: 2 }, () => {
+  const white = options.white === true;
+  // two fallen patches a tile, ragged-edged, so the repeat does not show as a pattern (none on a wall kept up)
+  const patches = Array.from({ length: options.fallen === false ? 0 : 2 }, () => {
     const cx = rng.range(60, S - 60);
     const cy = rng.range(60, S - 60);
     const r = rng.range(26, 54);
@@ -1003,13 +1004,16 @@ export function plasterTexture(seed: number): { map: DataTexture; normal: DataTe
   });
   const streaks = Array.from({ length: 70 }, () => ({ x: rng.range(0, S), y: rng.range(-S * 0.2, S * 0.6), w: rng.range(2, 14), l: rng.range(40, 260), a: rng.range(0.04, 0.16) }));
   const draw = (c: Ctx, height: boolean) => {
-    c.fillStyle = height ? '#9a9a9a' : '#d9c9a6';
+    c.fillStyle = height ? '#9a9a9a' : white ? '#f0ede4' : '#d9c9a6';
     c.fillRect(0, 0, S, S);
     if (!height) {
-      // the wash worn unevenly
+      // the wash worn unevenly (a fresh whitewash only a little)
       const r2 = new Rng(seed + 3);
+      const tones = white
+        ? ['rgba(226,222,212,0.22)', 'rgba(250,248,242,0.25)', 'rgba(214,210,200,0.15)', 'rgba(236,232,222,0.25)']
+        : ['rgba(196,176,140,0.25)', 'rgba(232,220,196,0.25)', 'rgba(180,160,128,0.2)', 'rgba(205,190,160,0.3)'];
       for (let i = 0; i < 260; i++) {
-        c.fillStyle = r2.pick(['rgba(196,176,140,0.25)', 'rgba(232,220,196,0.25)', 'rgba(180,160,128,0.2)', 'rgba(205,190,160,0.3)']);
+        c.fillStyle = r2.pick(tones);
         c.beginPath();
         c.ellipse(r2.range(0, S), r2.range(0, S), r2.range(10, 50), r2.range(8, 40), r2.range(0, 3), 0, Math.PI * 2);
         c.fill();
@@ -1017,7 +1021,7 @@ export function plasterTexture(seed: number): { map: DataTexture; normal: DataTe
       // rain stains running down from the coping
       for (const s of streaks) {
         const g = c.createLinearGradient(0, s.y, 0, s.y + s.l);
-        g.addColorStop(0, `rgba(60,58,48,${s.a})`);
+        g.addColorStop(0, `rgba(60,58,48,${white ? s.a * 0.5 : s.a})`);
         g.addColorStop(1, 'rgba(60,58,48,0)');
         c.fillStyle = g;
         c.fillRect(s.x, s.y, s.w, s.l);

@@ -3,7 +3,7 @@ import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, slab, taperedTube, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { brickTexture, plasterTexture, strawTexture, tinTexture, weaveTexture } from '../render/textures';
-import { HOMESTEAD_MOUNDS, WATER_LEVEL, bankAt, nearBackwater, onRoad, shapePoint, terrainHeight, type Mound } from './geography';
+import { HOMESTEAD_MOUNDS, PONDS, WATER_LEVEL, bankAt, nearBackwater, onRoad, pondReach, shapePoint, terrainHeight, type Mound, type Pond } from './geography';
 import { buildHouse, haystack, type HouseParts, type HouseStyle } from './houses';
 import { HUB_GHAT } from './plan';
 import { buildHull, type HullShape } from './hull';
@@ -116,16 +116,14 @@ const DAMP: RGB = rgb('#5a4a3a');
  * bank's own slope (so the flight follows the bank as it steepens toward the water), between low walls that
  * run down with them; damp and dark where the water reaches.
  */
-function brickGhat(b: MeshBuilder, g: Ghat, rng: Rng): void {
+function brickGhat(b: MeshBuilder, g: { x: number; z: number; up: number }, rng: Rng, level = WATER_LEVEL, width = 2.4, reach = 8, seats = false): void {
   const ux = Math.sin(g.up);
   const uz = Math.cos(g.up);
   const cx = Math.cos(g.up);
   const cz = -Math.sin(g.up);
   const at = (d: number, s = 0) => ({ x: g.x + ux * d + cx * s, z: g.z + uz * d + cz * s });
-  const width = 2.4;
-  const reach = 8;
   const tread = 0.42;
-  const tone = (y: number) => scaleRgb(mixRgb(BRICK, DAMP, 1 - Math.min(1, Math.max(0, (y - WATER_LEVEL + 0.2) / 0.9))), rng.range(0.9, 1.05));
+  const tone = (y: number) => scaleRgb(mixRgb(BRICK, DAMP, 1 - Math.min(1, Math.max(0, (y - level + 0.2) / 0.9))), rng.range(0.9, 1.05));
   // the treads, down from the top of the bank into the water: each at the highest ground under it
   const n = Math.round((reach + 1.4) / tread);
   for (let i = 0; i < n; i++) {
@@ -135,7 +133,7 @@ function brickGhat(b: MeshBuilder, g: Ghat, rng: Rng): void {
       const p = at(d, s);
       y = Math.max(y, terrainHeight(p.x, p.z));
     }
-    y = Math.max(y + 0.06, WATER_LEVEL - 0.45);
+    y = Math.max(y + 0.06, level - 0.45);
     const p = at(d);
     slab(b, p.x, y - 0.4, p.z, width, 0.8, tread + 0.04, g.up, tone(y), 0.6);
     // the walls either side, a little above the treads
@@ -151,7 +149,24 @@ function brickGhat(b: MeshBuilder, g: Ghat, rng: Rng): void {
   for (const side of [-1, 1]) {
     const pz = at(reach + 0.2, side * (width / 2 + 0.17));
     slab(b, pz.x, ty + 0.2, pz.z, 0.42, 0.7, 0.42, g.up, tone(ty), 0.6);
+    // the village's ghat has its rowak: a plastered bench each side at the top, where people sit by the water
+    if (seats) {
+      const r = at(reach + 0.4, side * (width / 2 + 1.5));
+      slab(b, r.x, terrainHeight(r.x, r.z) + 0.22, r.z, 1.9, 0.7, 2.6, g.up, tone(ty + 1), 0.6);
+    }
   }
+}
+
+/** A pond's ghat: brick steps down its bank from the point on the rim the design gives, square to the bank. */
+function pondGhat(b: MeshBuilder, pond: Pond, at: { x: number; z: number }, rng: Rng): void {
+  // walk in from the rim toward the middle to the water's edge
+  let x = at.x;
+  let z = at.z;
+  for (let k = 0; k < 60 && pondReach(pond, x, z) > 1; k++) {
+    x += (pond.x - x) * 0.04;
+    z += (pond.z - z) * 0.04;
+  }
+  brickGhat(b, { x, z, up: Math.atan2(at.x - pond.x, at.z - pond.z) }, rng, pond.level, 1.8, 3.2);
 }
 
 /**
@@ -247,11 +262,14 @@ export function buildVillages(huts: readonly HutPlan[], ghats: readonly Ghat[]):
   }
   // the ghats, a boat tied up at every other one and a second at the village's
   ghats.forEach((g, i) => {
-    if (g.kind === 'brick') brickGhat(bricks, g, rng);
+    if (g.kind === 'brick') brickGhat(bricks, g, rng, WATER_LEVEL, i === 0 ? 5 : 2.4, 8, i === 0);
     else bambooGhat(bamboo, g, rng);
     if (i % 2 === 0) mooredBoat(afloat, moorings, g, rng);
     if (i === 0) mooredBoat(afloat, moorings, g, rng);
   });
+
+  // the ponds' ghats
+  for (const pond of PONDS) if (pond.ghat) pondGhat(bricks, pond, pond.ghat, rng);
 
   const group = new Group();
   group.name = 'villages';

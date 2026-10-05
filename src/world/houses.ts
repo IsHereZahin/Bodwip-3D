@@ -40,7 +40,7 @@ export interface HouseParts {
 }
 
 /** A house's frame: its centre on the ground, its yaw (its door looks along local +z). */
-class Frame {
+export class Frame {
   readonly x: number;
   readonly y: number;
   readonly z: number;

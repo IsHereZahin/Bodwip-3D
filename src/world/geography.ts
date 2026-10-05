@@ -433,7 +433,10 @@ export function landUse(x: number, z: number): LandUse {
       const yv = m.hv * 0.42;
       const k = Math.hypot(Math.max(0, Math.abs(u - m.hu * 0.08) - yu), Math.max(0, Math.abs(v) - yv));
       yard = Math.max(yard, smoothstep(2.5, 0.5, k));
-    } else yard = Math.max(yard, smoothstep(1, -3, d));
+    } else if (m.id === 'banyan') {
+      // the hub's ground is trodden bare round the banyan's platform and in front of the tea stall
+      yard = Math.max(yard, smoothstep(13, 6, Math.hypot(x - BANYAN.x, z - BANYAN.z)), smoothstep(7, 3, Math.hypot(x - TEA_STALL.x, z - TEA_STALL.z)));
+    }
   }
   let verge = bankStrip(x, z);
   const n = pondNear(x, z);

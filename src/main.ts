@@ -42,6 +42,8 @@ import { buildVegetation } from './world/vegetation';
 import { buildVillages, planGhats, planHuts } from './world/village';
 import { buildSanko } from './world/sanko';
 import { buildYards } from './world/yard';
+import { BANYAN_CLEARING, buildBanyan } from './world/banyan';
+import { buildLandmarks } from './world/landmarks';
 import { buildWater } from './world/water';
 
 const BLACK = new Color(0, 0, 0);
@@ -121,12 +123,15 @@ async function main(hud: Hud): Promise<void> {
   const villages = buildVillages(huts, ghats);
   scene.add(villages);
   scene.add(buildYards(huts));
+  // the banyan at the hub, the zamindar house, its ghat and temple, the mosque, the tea stall
+  scene.add(buildBanyan(surfaces.bark));
+  scene.add(buildLandmarks());
   // everything standing, for the trees and the grass to keep clear of
   const standing = huts;
   hud.progress(0.52);
   await nextTask();
   // the trees (left undrawn beyond the haze: render/cull.ts)
-  const vegetation = buildVegetation(standing, surfaces.bark, [BRIDGE_CLEARING], bridgeTrees());
+  const vegetation = buildVegetation(standing, surfaces.bark, [BRIDGE_CLEARING, BANYAN_CLEARING], bridgeTrees());
   scene.add(vegetation);
   cullBeyond(vegetation, 1900);
   // the ways, in 1.3 km cells: the far ones are left undrawn

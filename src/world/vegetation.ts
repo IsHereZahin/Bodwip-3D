@@ -635,6 +635,37 @@ export function buildVegetation(
     }
   }
 
+  // the old trees of the zamindar's compound round its back and sides (its lawn and its ghat stay open to the
+  // river), a bel by the temple; coconuts flanking the mosque's forecourt and a big tree behind its hall
+  for (const m of MOUNDS) {
+    if (m.id === 'zamindar') {
+      for (let v = -m.hv - 2; v <= m.hv + 2; v += rng.range(7, 10)) {
+        const p = shapePoint(m, -m.hu - rng.range(1, 6), v);
+        plant(rng.next() < 0.5 ? B.rain : B.mango, p.x, p.z, 4, rng.range(1.0, 1.3));
+      }
+      for (const side of [-1, 1]) {
+        for (let u = -m.hu + 4; u <= m.hu * 0.2; u += rng.range(8, 11)) {
+          const p = shapePoint(m, u, side * (m.hv + rng.range(1, 5)));
+          const r = rng.next();
+          plant(r < 0.35 ? B.mango : r < 0.6 ? B.coconut : r < 0.8 ? B.rain : B.date, p.x, p.z, 3, rng.range(0.95, 1.25));
+        }
+      }
+      const bel = shapePoint(m, 9, m.hv * 0.62 + 6);
+      plant(B.akashmoni, bel.x, bel.z, 3, 0.9);
+    } else if (m.id === 'mosque') {
+      for (const side of [-1, 1]) {
+        const p = shapePoint(m, m.hu + 3, side * 7.5);
+        plant(B.coconut, p.x, p.z, 2, rng.range(0.95, 1.1), 1);
+      }
+      const back = shapePoint(m, -m.hu - 4, rng.range(-4, 4));
+      plant(B.rain, back.x, back.z, 5, 1.25);
+      for (const side of [-1, 1]) {
+        const p = shapePoint(m, -m.hu * 0.4, side * (m.hv + 3));
+        plant(rng.next() < 0.5 ? B.mango : B.akashmoni, p.x, p.z, 3, rng.range(0.9, 1.15));
+      }
+    }
+  }
+
   // the gaps between neighbouring homesteads of a para fill with trees: the village reads as one grove
   for (let i = 0; i < HOMESTEAD_MOUNDS.length; i++) {
     for (let j = i + 1; j < HOMESTEAD_MOUNDS.length; j++) {
