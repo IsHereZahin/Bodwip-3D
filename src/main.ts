@@ -1076,6 +1076,13 @@ async function main(hud: Hud): Promise<void> {
           });
           step(0);
         },
+        /** Shows again every object with this name (after `hide`, or the walker seen from the free camera). */
+        show(name: string) {
+          scene.traverse((o) => {
+            if (o.name === name) o.visible = true;
+          });
+          step(0);
+        },
         /** On foot at (x, z) facing `heading` (the boat tied up where she is); returns where he stands. */
         walk(x: number, z: number, heading = 0) {
           rig.walkFrom(x, z, heading);
@@ -1116,6 +1123,21 @@ async function main(hud: Hud): Promise<void> {
         birds(ahead = 40) {
           life.launchAll(rig.boat.pos, rig.boat.heading, ahead);
           step(0.016);
+        },
+        /** Where the people's heads are (world) and the boat's heading, for framing them close. */
+        people() {
+          const at = (o: { getWorldPosition(v: Vector3): Vector3 }) => {
+            const p = o.getWorldPosition(new Vector3());
+            return [Math.round(p.x * 1000) / 1000, Math.round(p.y * 1000) / 1000, Math.round(p.z * 1000) / 1000];
+          };
+          return {
+            boatman: at(hero.man.body.bone('head')),
+            girl: at(girl.body.bone('head')),
+            walker: at(rig.walker.body.bone('head')),
+            heading: rig.boat.heading,
+            girlYaw: girl.group.rotation.y,
+            walkerHeading: rig.walker.heading,
+          };
         },
         resume() {
           debug.freeze = false;

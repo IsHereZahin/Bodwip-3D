@@ -486,6 +486,9 @@ body.ui-off #ui-restore:focus-visible {
   margin: 0;
   padding-left: 18px;
 }
+#help .help-sources ul + p {
+  margin-top: 6px;
+}
 #help .help-sources a {
   color: inherit;
 }

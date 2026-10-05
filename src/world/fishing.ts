@@ -380,7 +380,7 @@ function angleFor(spec: LiftNetSpec, pivotY: number, rise: number): number {
 }
 
 function fisherman(stance: Vector3, radius: number, outfit: Outfit): Boatman {
-  const man = new Boatman(stance, [radius, radius], outfit);
+  const man = new Boatman(stance, [radius, radius], outfit, 'jele');
   man.group.name = 'fisherman';
   return man;
 }

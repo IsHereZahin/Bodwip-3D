@@ -10,7 +10,6 @@ import {
   MeshStandardMaterial,
   PlaneGeometry,
   Quaternion,
-  SphereGeometry,
   TorusGeometry,
   Vector2,
   Vector3,
@@ -21,78 +20,58 @@ import { windAt } from '../env/wind';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { clothTexture, printTexture, softSpotTexture } from '../render/textures';
-import { ellipticLimb, handGeometry, limbGeometry, type HandShape } from './anatomy';
-import { SKIN_TONE, aim, aimRolled, solveTwoBone } from './boatman';
+import { solveTwoBone } from './boatman';
 import { ClothRibbon, ClothTube, type Ring } from './cloth';
 import { BRIDGE, bridgeDeck, bridgeToWorld } from './geography';
+import { Human, enclosing, radiusAt, type Grip } from './human';
+import type { RadiusMap } from './humanData';
 
-// The girl on the old bridge: she stands at the crown by the parapet on the river's side in a
-// salwar-kameez, an orna round her shoulders, a coloured umbrella over her, looking out over the water.
-// Faceless and stylised, as the boatmen are, and built to the same proportions and the same parts (limbs,
-// hands closed round what they hold, cloth). She is not still: she breathes, shifts her weight from foot to
-// foot, lets her gaze wander over the river and the fields, and turns to watch the boat come toward her and
-// pass beneath. The one wind (env/wind.ts) moves all of her that is loose: her kameez's hem, the long ends
-// of her orna streaming behind her, her braid, and the umbrella, which the gusts push and she holds against
-// them, tilting it into the wind when the rain drives. She keeps the rain off what is under it.
-// She faces +z in her own frame (her right is −x), as the boatman does.
+// The girl on the old bridge: she stands at the crown by the parapet on the river's side in a salwar-kameez,
+// an orna round her shoulders, a red umbrella over her, looking out over the water. She is a person as games
+// make one (human.ts), slight and young, her hair drawn back into a long plait. She is not still: she
+// breathes, shifts her weight from foot to foot, lets her gaze wander over the river and the fields (her eyes
+// leading, her head following), blinks, and turns to watch the boat come toward her and pass beneath. The one
+// wind (env/wind.ts) moves all of her that is loose: her kameez's skirt, the long ends of her orna streaming
+// behind her, her plait (a chain of bones swinging from the nape), and the umbrella, which the gusts push and
+// she holds against them, tilting it into the wind when the rain drives. She keeps the rain off what is under
+// it. Her kameez's bodice and sleeves and her salwar are fitted to her (scripts/humans/build.mjs). She faces
+// +z in her own frame (her right is −x), as the boatman does.
 
 /** Where she stands, in the bridge's frame: by the parapet on the river's (−z) side, just off the crown. */
 const STAND = { x: -1.1, z: -(BRIDGE.width / 2 - 0.34) };
-
-const ANKLE = 0.07;
-const SHIN = 0.38;
-const THIGH = 0.4;
-const PELVIS_HEIGHT = 0.83;
-const HIP_HALF = 0.085;
-/** From the hip joints up to the chest's base. */
-const SPINE = 0.08;
-const SHOULDER = new Vector3(0.158, 0.375, -0.012);
-const NECK_BASE = new Vector3(0, 0.43, 0.005);
-const UPPER_ARM = 0.265;
-const FOREARM = 0.23;
+/** Her feet from the middle of her stance: [across, along, turned out]. */
+const FEET = [
+  [-0.1, 0.03, -0.18],
+  [0.09, -0.04, 0.25],
+] as const;
 const UP = new Vector3(0, 1, 0);
 
-/** Her kameez from its neckline to the waist, on the chest: [t, height on the chest, half-width, half-depth]. */
-const KAMEEZ_TOP: readonly (readonly [number, number, number, number])[] = [
-  [0.0, 0.445, 0.052, 0.046],
-  [0.04, 0.42, 0.13, 0.088],
-  [0.08, 0.385, 0.182, 0.104],
-  [0.18, 0.28, 0.163, 0.118],
-  [0.3, 0.15, 0.138, 0.104],
-  [0.42, 0.04, 0.133, 0.098],
-];
-/** From the waist to the hem at her knees, on the pelvis: [t, height above the hip joints, half-width, half-depth]. */
-const KAMEEZ_LOW: readonly (readonly [number, number, number, number])[] = [
-  [0.42, SPINE + 0.04, 0.133, 0.098],
-  [0.55, 0.0, 0.178, 0.128],
-  [0.7, -0.14, 0.192, 0.136],
-  [0.85, -0.28, 0.208, 0.146],
-  [1.0, -0.42, 0.232, 0.158],
-];
-
-/** The forearm, elbow to wrist: [height, half-width across the wrist, half-depth] (slighter than the boatman's). */
-const FOREARM_RINGS: readonly (readonly [number, number, number])[] = [
-  [0, 0.034, 0.032],
-  [0.05, 0.037, 0.033],
-  [0.11, 0.033, 0.028],
-  [0.18, 0.028, 0.022],
-  [FOREARM, 0.025, 0.018],
-];
+/** The kameez's skirt from the hips (over the bodice's hem) to the knees, on the hips: its top height from spine05's head. */
+const SKIRT_TOP = 0.05;
+/** How far below spine05's head its hem hangs, and how much it flares there (m). */
+const SKIRT_DROP = 0.38;
+const SKIRT_FLARE = 0.07;
+/** How far the bodice and the salwar stand off her skin (as built). */
+const BODICE_OFF = 0.012;
+const SALWAR_OFF = 0.04;
 
 /** The orna, folded to a hand's width and a half: 23 particles 0.1 m apart; 7 to 15 lie round her neck and over her shoulders, the ends hang down her back. */
 const ORNA_COUNT = 23;
 const ORNA_PINS = [7, 8, 9, 10, 11, 12, 13, 14, 15];
-/** Where those pins lie on her chest (chest frame): from behind her left shoulder, over it, across her front, over the right. */
-const ORNA_AT: readonly (readonly [number, number, number])[] = [
-  [0.11, 0.395, -0.085],
-  [0.13, 0.43, 0.0],
-  [0.11, 0.37, 0.1],
-  [0.065, 0.29, 0.13],
-  [0.0, 0.26, 0.135],
-  [-0.065, 0.29, 0.13],
-  [-0.11, 0.37, 0.1],
-  [-0.13, 0.43, 0.0],
-  [-0.11, 0.395, -0.085],
+/**
+ * Where those pins lie on her (from behind her left shoulder, over it, across her front, over the right): a
+ * point inside her [across, below the neck's base, forward of her middle] and the way out from it to her skin.
+ */
+const ORNA_RAYS: readonly (readonly [number, number, number, number, number])[] = [
+  [0.105, 0.06, 0, 0.45, -1],
+  [0.12, 0.06, 0, 1, 0],
+  [0.105, 0.06, 0, 0.6, 1],
+  [0.065, 0.13, 0, 0, 1],
+  [0.0, 0.16, 0, 0, 1],
+  [-0.065, 0.13, 0, 0, 1],
+  [-0.105, 0.06, 0, 0.6, 1],
+  [-0.12, 0.06, 0, 1, 0],
+  [-0.105, 0.06, 0, 0.45, -1],
 ];
 
 /** The umbrella: from her grip up the shaft to the canopy's crown (m), the canopy's radius and depth, and the handle below. */
@@ -104,20 +83,19 @@ const RIBS = 8;
 const REST = new Vector3(0.08, 1, -0.28).normalize();
 /** Its tilt answers the wind as a damped spring (Hz, damping); how far she lets it go (rad). */
 const TILT = { f: 1.15, zeta: 0.32, max: 0.55 };
-
-/** Linear interpolation in the kameez tables, by t. */
-function kameezRow(table: readonly (readonly [number, number, number, number])[], t: number): [number, number, number] {
-  let i = 0;
-  while (i < table.length - 2 && t > table[i + 1][0]) i++;
-  const [t0, y0, a0, b0] = table[i];
-  const [t1, y1, a1, b1] = table[i + 1];
-  const f = Math.min(1, Math.max(0, (t - t0) / (t1 - t0)));
-  return [y0 + (y1 - y0) * f, a0 + (a1 - a0) * f, b0 + (b1 - b0) * f];
-}
+/** Her plait: how much the air drags it, how much it keeps its swing each step. */
+const PLAIT = { drag: 0.6, keep: 0.985 };
 
 function smooth(a: number, b: number, x: number): number {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
   return t * t * (3 - 2 * t);
+}
+
+/** Linear interpolation in a table of values at even steps from 0 to 1, clamped. */
+function along(table: readonly number[], f: number): number {
+  const x = Math.min(table.length - 1.0001, Math.max(0, f * (table.length - 1)));
+  const k = Math.floor(x);
+  return table[k] + (table[k + 1] - table[k]) * (x - k);
 }
 
 /** A damped spring step toward `target`, for the eased angles of her gaze. */
@@ -183,14 +161,11 @@ function umbrella(canopy: RGB): { canopy: MeshBuilder; frame: MeshBuilder } {
 
 interface Arm {
   side: number;
-  upper: Mesh;
-  fore: Mesh;
-  elbow: Mesh;
-  hand: Mesh;
-  shape: HandShape;
+  grip: Grip;
   shoulder: Vector3;
   wrist: Vector3;
-  across: Vector3;
+  hold: Vector3;
+  barQ: Quaternion;
   elbowAt: Vector3;
   roll: Vector3;
 }
@@ -199,28 +174,36 @@ export class Girl {
   readonly group = new Group();
   /** The canopy's middle and radius (world), so the rain can leave dry what is under it. */
   readonly shelter = new Vector4(0, -99, 0, 0);
+  readonly body: Human;
 
   private readonly feet: Vector3[] = [];
-  private readonly legs: { thigh: Mesh; shin: Mesh; knee: Mesh; side: number }[] = [];
   private readonly arms: Arm[] = [];
-  private readonly chest = new Group();
-  private readonly head = new Group();
-  private readonly neck: Mesh;
-  private readonly kameez: ClothTube;
+  private readonly skirt: ClothTube;
   private readonly orna: ClothRibbon;
-  private readonly braid: ClothRibbon;
+  private readonly ornaAt: Vector3[] = [];
+  private readonly ornaNormal: Vector3[] = [];
+  /** The plait's joints (her frame), where they were, and their bind; the first is held at her nape. */
+  private readonly plait: Vector3[];
+  private readonly plaitPrev: Vector3[];
+  private readonly plaitBind: Vector3[];
+  private readonly plaitBones: number[];
+  private plaitStarted = false;
   private readonly brolly = new Group();
   private readonly footShadow: Mesh;
   private readonly brollyShadow: Mesh;
   private readonly yaw = BRIDGE.angle + Math.PI;
   private readonly inverse = new Quaternion();
+  /** The skirt's top row round her hips (pelvis frame). */
+  private readonly hips: { zc: number; a: number; b: number };
+  /** Where her right hand holds the umbrella (chest frame, from spine01's head in the bind). */
+  private readonly gripAt: Vector3;
   // her body's frames this instant
   private readonly pelvis = new Vector3();
   private readonly pelvisQ = new Quaternion();
   private readonly chestQ = new Quaternion();
   private readonly chestInv = new Quaternion();
   private readonly headQ = new Quaternion();
-  private readonly hips = [new Vector3(), new Vector3()];
+  private readonly hipAt = [new Vector3(), new Vector3()];
   private readonly knees = [new Vector3(), new Vector3()];
   private readonly ankles = [new Vector3(), new Vector3()];
   // her gaze (eased) and the umbrella's tilt (a damped spring), with their rates
@@ -234,6 +217,7 @@ export class Girl {
   // scratch
   private readonly e = new Euler();
   private readonly q = new Quaternion();
+  private readonly q2 = new Quaternion();
   private readonly v = new Vector3();
   private readonly v2 = new Vector3();
   private readonly v3 = new Vector3();
@@ -244,122 +228,98 @@ export class Girl {
   private readonly air = { x: 0, z: 0 };
   private readonly grip = new Vector3();
   private readonly shaftDir = new Vector3();
-  private readonly basis = new Matrix4();
-  private readonly by = new Vector3();
-  private readonly bz = new Vector3();
+  private readonly look = new Vector3();
 
   constructor() {
     this.group.name = 'girl';
-    const skin = patchMaterial(new MeshStandardMaterial({ color: SKIN_TONE, roughness: 0.55 }), { translucency: 0.35 });
-    const handSkin = patchMaterial(new MeshStandardMaterial({ color: SKIN_TONE, roughness: 0.55, vertexColors: true }), { translucency: 0.35 });
     const fabric = (map: ReturnType<typeof printTexture>, roughness: number, translucency: number) =>
       patchMaterial(new MeshStandardMaterial({ map, vertexColors: true, roughness, side: DoubleSide }), { translucency });
     // a powder-blue kameez with a small white sprig, white salwar, a rose-pink orna bordered in gold
-    const kameezMat = fabric(printTexture('#8fb8cf', '#f4f1e8', '#5f8a6a', 41), 0.9, 0.35);
+    const sprig = printTexture('#8fb8cf', '#f4f1e8', '#5f8a6a', 41);
+    const kameezMat = fabric(sprig, 0.9, 0.35);
+    // the bodice and sleeves wear the print over the body's own layout; the skirt is a tube of it
+    const bodicePrint = sprig.clone();
+    bodicePrint.repeat.set(16, 16);
+    bodicePrint.needsUpdate = true;
+    const bodiceMat = fabric(bodicePrint, 0.9, 0.35);
     const salwarWeave = clothTexture('#ece6da', '#e4ddcd', '#dcd4c2', 42, true);
+    salwarWeave.map.repeat.set(10, 10);
     const salwarMat = patchMaterial(new MeshStandardMaterial({ map: salwarWeave.map, roughness: 0.92, side: DoubleSide, vertexColors: true }), { translucency: 0.3 });
     const ornaMat = patchMaterial(
       new MeshStandardMaterial({ map: printTexture('#d65a7a', '#f2b8c6', '#c2486a', 44), vertexColors: true, roughness: 0.85, side: DoubleSide }),
       { translucency: 1.2 },
     );
-    const hairMat = patchMaterial(new MeshStandardMaterial({ color: '#130e0b', roughness: 0.6 }), {});
-    // the braid is a ribbon, whose vertex colours carry its shading
-    const braidMat = patchMaterial(new MeshStandardMaterial({ color: '#130e0b', roughness: 0.6, vertexColors: true, side: DoubleSide }), {});
     const sandal = new MeshStandardMaterial({ color: '#4a2e1c', roughness: 0.7 });
     const g = this.group;
 
-    // feet in sandals, one a little ahead and turned out
-    for (const [dx, dz, turn] of [
-      [-0.1, 0.03, -0.18],
-      [0.09, -0.04, 0.25],
-    ] as const) {
-      const holder = new Group();
-      const foot = new Mesh(new CapsuleGeometry(0.036, 0.15, 4, 10), skin);
-      foot.rotation.set(Math.PI / 2, 0, 0);
-      foot.geometry.scale(1.05, 1, 0.55);
-      foot.position.set(0, 0.024, 0.045);
+    const body = (this.body = new Human('meye', { kameez: bodiceMat, salwar: salwarMat }));
+    g.add(body.group);
+    for (const [dx, dz] of FEET) this.feet.push(new Vector3(dx, 0, dz));
+    // sandals under her soles, on the feet's bones
+    for (const s of ['R', 'L']) {
+      const ankle = body.bindOf(`foot.${s}`);
       const sole = new Mesh(new CapsuleGeometry(0.042, 0.16, 2, 10), sandal);
       sole.rotation.set(Math.PI / 2, 0, 0);
       sole.geometry.scale(1.1, 1, 0.12);
-      sole.position.set(0, 0.006, 0.045);
-      holder.add(foot, sole);
-      holder.position.set(dx, 0, dz);
-      holder.rotation.y = turn;
-      g.add(holder);
-      this.feet.push(holder.position.clone());
+      sole.position.set(0, 0.004 - ankle.y, 0.05);
+      const strap = new Mesh(new TorusGeometry(0.036, 0.005, 4, 12, Math.PI), sandal);
+      strap.position.set(0, 0.012 - ankle.y, 0.085);
+      strap.scale.set(1, 0.55, 1);
+      body.bone(`foot.${s}`).add(sole, strap);
     }
-    // legs in the loose salwar, gathered at the ankle
-    for (const side of [-1, 1]) {
-      const thigh = new Mesh(limbGeometry(THIGH, [0.088, 0.094, 0.09, 0.084, 0.078]), salwarMat);
-      const shin = new Mesh(limbGeometry(SHIN, [0.078, 0.08, 0.074, 0.062, 0.042]), salwarMat);
-      const knee = new Mesh(new SphereGeometry(0.08, 10, 8), salwarMat);
-      g.add(thigh, shin, knee);
-      this.legs.push({ thigh, shin, knee, side });
-    }
-    g.add(this.chest);
-    this.neck = new Mesh(limbGeometry(0.11, [0.045, 0.042, 0.041]), skin);
-    g.add(this.neck);
 
-    // head: no face; black hair drawn back smoothly to the braid
-    const skull = new Mesh(new SphereGeometry(0.092, 18, 14), skin);
-    skull.scale.set(0.86, 1.1, 0.98);
-    const hair = new Mesh(new SphereGeometry(0.097, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.6), hairMat);
-    // her hair comes forward to a hairline over the brow, parted in the middle
-    hair.position.set(0, 0.01, -0.008);
-    hair.rotation.x = -0.22;
-    hair.scale.set(0.9, 1.07, 1.03);
-    const knot = new Mesh(new SphereGeometry(0.03, 10, 8), hairMat);
-    knot.position.set(0, -0.045, -0.085);
-    this.head.add(skull, hair, knot);
-    for (const side of [-1, 1]) {
-      const ear = new Mesh(new SphereGeometry(0.022, 8, 6), skin);
-      ear.scale.set(0.38, 1, 0.68);
-      ear.position.set(side * 0.079, -0.008, -0.006);
-      this.head.add(ear);
-    }
-    g.add(this.head);
-
-    // arms: elbow-length sleeves of the kameez, bare forearms, hands closed on the umbrella's shaft and loosely at her side
-    const sleeve = kameezMat;
+    // the hands: her right closed round the umbrella's cane, her left hanging easy, loosely curled
     [-1, 1].forEach((side) => {
-      const shape = handGeometry(side < 0 ? 0.0125 : 0.009, side > 0);
-      shape.geometry.scale(0.88, 0.88, 0.88);
-      shape.wrist.multiplyScalar(0.88);
-      const upper = new Mesh(limbGeometry(UPPER_ARM, [0.05, 0.05, 0.047, 0.046, 0.048], 0.05), sleeve);
-      const fore = new Mesh(ellipticLimb(FOREARM_RINGS), skin);
-      const elbow = new Mesh(new SphereGeometry(0.03, 10, 8), skin);
-      const hand = new Mesh(shape.geometry, handSkin);
-      g.add(upper, fore, elbow, hand);
       this.arms.push({
         side,
-        upper,
-        fore,
-        elbow,
-        hand,
-        shape,
+        grip: body.grip(side, side < 0 ? 0.0125 : 0.016),
         shoulder: new Vector3(),
         wrist: new Vector3(),
-        across: new Vector3(1, 0, 0),
+        hold: new Vector3(),
+        barQ: new Quaternion(),
         elbowAt: new Vector3(side * 0.25, 1.0, 0.05),
         roll: new Vector3(0, -1, 0),
       });
     });
+    const chestMap = body.data.sections.chest;
+    this.gripAt = new Vector3(-0.15, 0.04, radiusAt(chestMap, 0.04, 0).zc + 0.2);
 
-    // the kameez: held to her from the neckline to the hips, swinging free below them to its hem at the knees
-    this.kameez = new ClothTube(kameezMat, {
-      segments: 26,
-      rings: 22,
-      fold: (t, th) => ({ r: (0.004 * Math.sin(th * 8 + 0.5) + 0.01 * (0.5 + 0.5 * Math.sin(th * 5 + 1))) * smooth(0.5, 1, t), y: 0 }),
-      freedom: (t) => 0.85 * smooth(0.5, 1, t),
-      shade: (t) => 0.95 + 0.05 * smooth(0.9, 1, t),
+    // the kameez's skirt: held to her at the hips over the bodice's hem, swinging free toward its hem at the knees
+    const e = enclosing(body.data.sections.pelvis, SKIRT_TOP);
+    this.hips = { zc: e.zc, a: e.a + BODICE_OFF + 0.01, b: e.b + BODICE_OFF + 0.01 };
+    this.skirt = new ClothTube(kameezMat, {
+      segments: 28,
+      rings: 14,
+      fold: (t, th) => ({ r: (0.004 * Math.sin(th * 8 + 0.5) + 0.01 * (0.5 + 0.5 * Math.sin(th * 5 + 1))) * smooth(0.15, 1, t), y: 0 }),
+      freedom: (t) => 0.85 * smooth(0.12, 1, t),
+      shade: (t) => (t < 0.03 ? 0.9 : 0.95 + 0.05 * smooth(0.85, 1, t)),
       uRepeat: 7,
-      vRepeat: 4,
+      vRepeat: 2.4,
     });
-    g.add(this.kameez.mesh);
-    this.orna = new ClothRibbon(ornaMat, ORNA_COUNT, 0.1, 0.3, ORNA_PINS, 2, 8);
+    g.add(this.skirt.mesh);
+
+    // the orna: round her neck and over her shoulders, its ends down her back
+    this.orna = new ClothRibbon(ornaMat, ORNA_COUNT, 0.1, 0.11, ORNA_PINS, 0.8, 8);
+    const neck = body.bindOf('neck01');
+    for (const [x, below, fwd, up, out] of ORNA_RAYS) {
+      const y = neck.y - below;
+      const from = new Vector3(x, y, body.bindOf('spine01').z + radiusAt(chestMap, y - body.bindOf('spine01').y, 0).zc + fwd);
+      const dir = new Vector3(0, up, out).normalize();
+      const hit = body.cast(from, dir);
+      const p = hit ? hit.point : from.clone().addScaledVector(dir, 0.1);
+      const n = hit ? hit.normal : dir;
+      this.ornaAt.push(p.addScaledVector(n, 0.012));
+      this.ornaNormal.push(n.clone());
+    }
     g.add(this.orna.mesh);
-    this.braid = new ClothRibbon(braidMat, 9, 0.055, 0.036, [0, 1], 1, 1);
-    g.add(this.braid.mesh);
+
+    // her plait: a chain of bones from her nape
+    this.plaitBones = body.data.names.map((n, i) => (n.startsWith('braid') ? i : -1)).filter((i) => i >= 0);
+    this.plaitBind = this.plaitBones.map((i) => new Vector3(...body.data.bones[i].head));
+    const last = this.plaitBones[this.plaitBones.length - 1];
+    this.plaitBind.push(new Vector3(...body.data.bones[last].tail));
+    this.plait = this.plaitBind.map((p) => p.clone());
+    this.plaitPrev = this.plaitBind.map((p) => p.clone());
 
     // the umbrella, and the soft shadows she and it lay on the deck (moving things stay out of the shadow map)
     const parts = umbrella(rgb('#c33a33'));
@@ -393,11 +353,12 @@ export class Girl {
   }
 
   /** Where she would look now: over the river and the fields, or at the boat while it comes near and passes under her. */
-  private gaze(t: number, boat: Vector3, out: { yaw: number; pitch: number }): void {
+  private gaze(t: number, boat: Vector3, out: { yaw: number; pitch: number; at: Vector3 | null }): void {
     out.yaw = 0.42 * Math.sin(t * 0.11) + 0.22 * Math.sin(t * 0.047 + 2.0);
     out.pitch = -0.08 + 0.06 * Math.sin(t * 0.09 + 0.7);
+    out.at = null;
     // the boat, in her frame, from her eyes
-    const eyes = this.v.copy(this.head.position).applyQuaternion(this.group.quaternion).add(this.group.position);
+    const eyes = this.v.copy(this.body.head).applyQuaternion(this.group.quaternion).add(this.group.position);
     const d = this.v2.subVectors(boat, eyes).applyQuaternion(this.inverse);
     const dist = d.length();
     if (dist > 45) return;
@@ -407,47 +368,39 @@ export class Girl {
     const pitch = Math.max(-0.8, Math.min(0.15, Math.atan2(d.y, Math.hypot(d.x, d.z))));
     out.yaw += (yaw - out.yaw) * near;
     out.pitch += (pitch - out.pitch) * near;
+    // her eyes on the boat itself while she watches it
+    if (near > 0.3) out.at = this.look.copy(boat).sub(this.group.position).applyQuaternion(this.inverse);
   }
 
-  /** Closes a hand on what it holds: the bar through the palm, turned about it until the wrist faces the forearm. */
+  /** Closes a hand on what it holds (see `Human.holdBar`). */
   private placeHand(arm: Arm, at: Vector3, thumb: Vector3): void {
-    const { shape } = arm;
-    const a = this.v3.copy(thumb).multiplyScalar(arm.side < 0 ? 1 : -1).normalize();
-    const f = this.v2.set(0, shape.fore.y, shape.fore.z).normalize();
-    arm.roll.addScaledVector(a, -arm.roll.dot(a));
-    if (arm.roll.lengthSq() < 1e-6) arm.roll.set(0, -1, 0).addScaledVector(a, -a.y);
-    arm.roll.normalize();
-    for (let pass = 0; pass < 2; pass++) {
-      const d = this.v.subVectors(pass === 0 ? at : arm.wrist, arm.elbowAt);
-      d.addScaledVector(a, -d.dot(a));
-      if (d.lengthSq() > 1e-6) arm.roll.copy(d.normalize());
-      const ad = this.end.crossVectors(a, arm.roll);
-      this.by.copy(arm.roll).multiplyScalar(f.y).addScaledVector(ad, -f.z);
-      this.bz.copy(arm.roll).multiplyScalar(f.z).addScaledVector(ad, f.y);
-      arm.hand.quaternion.setFromRotationMatrix(this.basis.makeBasis(a, this.by, this.bz));
-      arm.wrist.copy(shape.wrist).applyQuaternion(arm.hand.quaternion).add(at);
-    }
-    arm.hand.position.copy(at);
-    arm.across.copy(shape.across).applyQuaternion(arm.hand.quaternion);
+    this.body.holdBar(arm.side, arm.grip, at, thumb, arm.elbowAt, arm.roll, arm.barQ, arm.wrist);
+    arm.hold.copy(at);
   }
 
-  private readonly kameezRing = (t: number, out: Ring): Ring => {
-    const top = t < 0.42;
-    const [y, a, b] = kameezRow(top ? KAMEEZ_TOP : KAMEEZ_LOW, t);
-    const q = top ? this.chestQ : this.pelvisQ;
-    out.c.set(0, y, 0).applyQuaternion(q).add(top ? this.chest.position : this.pelvis);
-    out.ax.set(1, 0, 0).applyQuaternion(q);
-    out.az.set(0, 0, 1).applyQuaternion(q);
-    out.a = a;
-    out.b = b;
+  /** The skirt's ring at `t` (0 its top at her hips .. 1 its hem below her knees). */
+  private readonly skirtRing = (t: number, out: Ring): Ring => {
+    const ax = this.v.set(1, 0, 0).applyQuaternion(this.pelvisQ);
+    const az = this.v2.set(0, 0, 1).applyQuaternion(this.pelvisQ);
+    const h = SKIRT_TOP - t * SKIRT_DROP;
+    out.c.set(0, h, this.hips.zc * (1 - t)).applyQuaternion(this.pelvisQ).add(this.pelvis);
+    // lower down it hangs round both legs (in their salwar), clear of them, a little flared
+    const legs = smooth(0.15, 0.6, t);
+    const half = this.hipAt[0].distanceTo(this.hipAt[1]) / 2;
+    const thigh = along(this.body.data.sections.thigh, Math.min(1, t * 1.1)) + SALWAR_OFF;
+    out.ax.copy(ax);
+    out.az.copy(az);
+    out.a = Math.max(this.hips.a, half + thigh * legs + 0.01) + SKIRT_FLARE * t * t;
+    out.b = Math.max(this.hips.b * (1 - 0.4 * legs), thigh + 0.02) + SKIRT_FLARE * 0.7 * t * t;
     return out;
   };
 
-  /** Keeps the swinging hem off her legs (inside the salwar's width) when the wind blows it back against them. */
-  private readonly keepOffBody = (p: Vector3): void => {
+  /** Keeps the swinging skirt off her legs (in the salwar's width) when the wind blows it back against them. */
+  private readonly keepOffLegs = (p: Vector3): void => {
+    const { thigh, shin } = this.body.data.sections;
     for (let i = 0; i < 2; i++) {
-      this.pushOff(p, this.hips[i], this.knees[i], 0.105);
-      this.pushOff(p, this.knees[i], this.ankles[i], 0.09);
+      this.pushOff(p, this.hipAt[i], this.knees[i], along(thigh, 0.5) + SALWAR_OFF + 0.01);
+      this.pushOff(p, this.knees[i], this.ankles[i], along(shin, 0.2) + SALWAR_OFF);
     }
   };
 
@@ -460,44 +413,97 @@ export class Girl {
   }
 
   private readonly ornaPin = (i: number, p: Vector3, n: Vector3): void => {
-    const [x, y, z] = ORNA_AT[i - ORNA_PINS[0]];
-    p.set(x, y, z).applyQuaternion(this.chestQ).add(this.chest.position);
-    n.set(x, 0.25, z).normalize().applyQuaternion(this.chestQ);
+    const k = i - ORNA_PINS[0];
+    this.body.onChest(this.ornaAt[k], p);
+    n.copy(this.ornaNormal[k]).applyQuaternion(this.chestQ);
   };
 
   private readonly awayFromBody = (p: Vector3, out: Vector3): void => {
-    out.subVectors(p, this.chest.position);
+    out.subVectors(p, this.body.chest);
     const up = this.v3.set(0, 1, 0).applyQuaternion(this.chestQ);
     out.addScaledVector(up, -out.dot(up));
     if (out.lengthSq() < 1e-8) out.set(0, 0, -1);
     out.normalize();
   };
 
+  /**
+   * Pushes `p` out of her (as her clothes make her: `off` over the skin) where a radius map covers it: the
+   * chest's, carried by her chest, or below it the hips', carried by her hips.
+   */
+  private keepOutOf(p: Vector3, off: number): void {
+    const body = this.body;
+    const tryMap = (map: RadiusMap, bind: Vector3, q: Quaternion, inv: Quaternion, origin: Vector3) => {
+      const v = this.v.subVectors(p, origin).applyQuaternion(inv).add(bind);
+      const y = v.y - bind.y;
+      if (y < map.y0 || y > map.y0 + map.dy * (map.rows - 1)) return false;
+      const zc = radiusAt(map, y, 0).zc + bind.z;
+      const dx = v.x;
+      const dz = v.z - zc;
+      const r = Math.hypot(dx, dz);
+      if (r < 1e-4) return true;
+      const R = radiusAt(map, y, Math.atan2(dx, dz)).r + off;
+      if (r < R) {
+        v.x = (dx * R) / r;
+        v.z = zc + (dz * R) / r;
+        p.copy(v.sub(bind).applyQuaternion(q)).add(origin);
+      }
+      return true;
+    };
+    const { chest, pelvis } = body.data.sections;
+    if (!tryMap(chest, body.bindOf('spine01'), this.chestQ, this.chestInv, body.chest)) {
+      this.q2.copy(this.pelvisQ).invert();
+      tryMap(pelvis, body.bindOf('spine05'), this.pelvisQ, this.q2, this.pelvis);
+    }
+  }
+
   /** Keeps the orna's hanging ends out of her back and shoulders. */
-  private readonly keepOffBack = (p: Vector3): void => {
-    const v = this.v3.subVectors(p, this.chest.position).applyQuaternion(this.chestInv);
-    if (v.y > 0.47 || v.y < -0.45) return;
-    const [, a, b] = v.y > 0.04 ? kameezRow(KAMEEZ_TOP, 0.42 - ((v.y - 0.04) / 0.405) * 0.42) : kameezRow(KAMEEZ_LOW, 0.42 + Math.min(1, -v.y / 0.45) * 0.3);
-    const rx = a + 0.02;
-    const rz = b + 0.02;
-    const e = Math.hypot(v.x / rx, v.z / rz);
-    if (e >= 1 || e < 1e-4) return;
-    v.x /= e;
-    v.z /= e;
-    p.copy(v.applyQuaternion(this.chestQ)).add(this.chest.position);
-  };
+  private readonly keepOffBack = (p: Vector3): void => this.keepOutOf(p, BODICE_OFF + 0.012);
 
-  private readonly braidPin = (i: number, p: Vector3, n: Vector3): void => {
-    p.set(0, -0.05 - i * 0.04, -0.085 - i * 0.012).applyQuaternion(this.headQ).add(this.head.position);
-    n.set(0, 0, -1).applyQuaternion(this.headQ);
-  };
-
-  private readonly keepOffHead = (p: Vector3): void => {
-    this.keepOffBack(p);
-    const d = this.v.subVectors(p, this.head.position);
-    const l = d.length();
-    if (l < 0.105 && l > 1e-5) p.addScaledVector(d, (0.105 - l) / l);
-  };
+  /** Swings her plait: held at her nape, hanging under gravity, dragged by the wind, kept off her back and head. */
+  private swingPlait(dt: number): void {
+    const body = this.body;
+    const P = this.plait;
+    const prev = this.plaitPrev;
+    body.onHead(this.plaitBind[0], P[0]);
+    if (!this.plaitStarted) {
+      for (let k = 1; k < P.length; k++) {
+        body.onHead(this.plaitBind[k], P[k]);
+        prev[k].copy(P[k]);
+      }
+      this.plaitStarted = true;
+    }
+    const h = Math.min(dt, 1 / 30);
+    if (h > 0) {
+      for (let k = 1; k < P.length; k++) {
+        this.v.subVectors(P[k], prev[k]).multiplyScalar(PLAIT.keep);
+        prev[k].copy(P[k]);
+        P[k].add(this.v).addScaledVector(this.gravity, h * h).addScaledVector(this.wind, h * h * PLAIT.drag * this.wind.length() * 0.2);
+      }
+    }
+    for (let iter = 0; iter < 4; iter++) {
+      for (let k = 1; k < P.length; k++) {
+        const len = this.plaitBind[k].distanceTo(this.plaitBind[k - 1]);
+        const d = this.v.subVectors(P[k], P[k - 1]);
+        const l = d.length();
+        if (l < 1e-6) continue;
+        // the joint nearer her head is held (or heavier): the lower one gives
+        const fix = (l - len) / l;
+        if (k === 1) P[k].addScaledVector(d, -fix);
+        else {
+          P[k].addScaledVector(d, -fix * 0.6);
+          P[k - 1].addScaledVector(d, fix * 0.4);
+        }
+      }
+      for (let k = 1; k < P.length; k++) this.keepOutOf(P[k], BODICE_OFF + 0.022);
+    }
+    // each link turned with her head, then swung to where its joints are
+    for (let k = 0; k < this.plaitBones.length; k++) {
+      const bindDir = this.v2.subVectors(this.plaitBind[k + 1], this.plaitBind[k]).normalize().applyQuaternion(this.headQ);
+      const dir = this.v3.subVectors(P[k + 1], P[k]).normalize();
+      this.q.setFromUnitVectors(bindDir, dir).multiply(this.headQ);
+      body.setBone(this.plaitBones[k], P[k], this.q);
+    }
+  }
 
   /**
    * Poses her for this instant. `t`: seconds; `boat`: where the hero boat is (world), which she watches as
@@ -505,6 +511,8 @@ export class Girl {
    */
   update(dt: number, t: number, boat: Vector3, rain: number): void {
     const g = this.group;
+    const body = this.body;
+    const { dims } = body;
     // the air past her, in her own frame (she stands high and open to it on the bridge)
     windAt(g.position.x, g.position.z, this.air);
     this.wind.set(this.air.x, 0, this.air.z).applyQuaternion(this.inverse).multiplyScalar(1.1);
@@ -516,11 +524,11 @@ export class Girl {
     // and leans a little into a strong wind (x: forward bend, z: toward −x)
     const leanZ = Math.max(-0.06, Math.min(0.06, -this.wind.z * 0.004));
     const leanX = Math.max(-0.06, Math.min(0.06, this.wind.x * 0.004));
-    this.pelvis.set(0.024 * shift, PELVIS_HEIGHT - 0.008 * Math.abs(shift), 0.0);
+    this.pelvis.set(0.024 * shift, dims.pelvis - 0.012 - 0.008 * Math.abs(shift), 0.0);
     this.pelvisQ.setFromEuler(this.e.set(0.03 + leanZ * 0.5, 0.06 * shift, -0.045 * shift + leanX * 0.5, 'YXZ'));
 
-    // where she looks: the chest turns with a share of it, the head the rest
-    const look = { yaw: 0, pitch: 0 };
+    // where she looks: the chest turns with a share of it, the head the rest, her eyes ahead of both
+    const look = { yaw: 0, pitch: 0, at: null as Vector3 | null };
     this.gaze(t, boat, look);
     const step = Math.min(dt, 1 / 20);
     [this.lookYaw, this.vYaw] = follow(this.lookYaw, this.vYaw, look.yaw, 1.8, step);
@@ -529,27 +537,22 @@ export class Girl {
     this.q.setFromEuler(this.e.set(-0.02 + 0.012 * breath + leanZ - 0.25 * Math.min(0, this.lookPitch), 0.32 * this.lookYaw, leanX + 0.04 * shift, 'YXZ'));
     this.chestQ.copy(this.pelvisQ).multiply(this.q);
     this.chestInv.copy(this.chestQ).invert();
-    this.chest.position.copy(this.pelvis).add(this.v.set(0, SPINE + 0.004 * breath, 0).applyQuaternion(this.pelvisQ));
-    this.chest.quaternion.copy(this.chestQ);
+    body.setTrunk(this.pelvis, this.pelvisQ, this.chestQ);
 
-    // head, on the neck, turned the rest of the way
-    const neckBase = this.v.copy(NECK_BASE).applyQuaternion(this.chestQ).add(this.chest.position).clone();
+    // head, on the neck, turned the rest of the way; her eyes on the boat, or where she looks
     this.headQ.setFromEuler(this.e.set(0.04 - 0.8 * this.lookPitch, this.lookYaw, 0.02 * shift, 'YXZ'));
-    const headCentre = neckBase.clone().add(this.v.set(0, 0.125, 0.008).applyQuaternion(this.headQ));
-    this.head.position.copy(headCentre);
-    this.head.quaternion.copy(this.headQ);
-    aim(this.neck, neckBase, headCentre.clone().addScaledVector(UP, -0.06));
+    const target = look.at ?? this.look.set(0, 0, 30).applyQuaternion(this.q.setFromEuler(this.e.set(-look.pitch, look.yaw, 0, 'YXZ'))).add(body.head);
+    body.setHead(this.headQ, target, t);
 
     // legs to the planted feet, the knee of the foot she rests easing forward
-    this.legs.forEach((leg, i) => {
-      const hip = this.hips[i].set(leg.side * HIP_HALF, -0.03, 0).applyQuaternion(this.pelvisQ).add(this.pelvis);
-      const ankle = this.ankles[i].copy(this.feet[i]).addScaledVector(UP, ANKLE);
-      const pole = this.pole.copy(hip).add(this.v.set(leg.side * 0.1, -0.3, 1).applyQuaternion(this.pelvisQ));
-      solveTwoBone(hip, ankle, THIGH, SHIN, pole, this.knees[i], this.end);
-      aim(leg.thigh, hip, this.knees[i]);
-      aim(leg.shin, this.knees[i], this.end);
-      leg.knee.position.copy(this.knees[i]);
-    });
+    for (let i = 0; i < 2; i++) {
+      const side = i === 0 ? -1 : 1;
+      const hip = body.hip(side, this.hipAt[i]);
+      const ankle = this.ankles[i].copy(this.feet[i]).addScaledVector(UP, dims.ankle);
+      const pole = this.pole.copy(hip).add(this.v.set(side * 0.1, -0.3, 1).applyQuaternion(this.pelvisQ));
+      solveTwoBone(hip, ankle, dims.thigh, dims.shin, pole, this.knees[i], this.end);
+      body.setLeg(side, this.knees[i], this.end, FEET[i][2]);
+    }
 
     // the umbrella: the gusts push its canopy downwind and she holds it against them; when the rain drives
     // she tilts it into the wind
@@ -568,31 +571,33 @@ export class Girl {
     }
     this.shaftDir.copy(REST).add(this.v.set(this.tilt.x, 0, this.tilt.y)).normalize();
     // her right hand holds it at her chest, in front of her right shoulder, giving a little to the tilt
-    this.grip.set(-0.15, 0.3, 0.2).applyQuaternion(this.chestQ).add(this.chest.position).addScaledVector(this.v.set(this.tilt.x, 0, this.tilt.y), -0.06);
+    body.onChest(this.v2.copy(this.gripAt).add(body.bindOf('spine01')), this.grip).addScaledVector(this.v.set(this.tilt.x, 0, this.tilt.y), -0.06);
     this.brolly.position.copy(this.grip);
     this.brolly.quaternion.setFromUnitVectors(UP, this.shaftDir);
 
     // hands first, then the arms reach them
     const [right, left] = this.arms;
-    if (!this.posed) for (const arm of this.arms) arm.elbowAt.copy(this.shoulderOf(arm)).add(this.v.set(arm.side * 0.06, -0.25, 0));
+    if (!this.posed) for (const arm of this.arms) arm.elbowAt.copy(body.shoulder(arm.side, arm.shoulder)).add(this.v.set(arm.side * 0.06, -0.25, 0));
     this.placeHand(right, this.grip, this.shaftDir);
     // her left hangs easy by her side, swinging a touch with her weight
-    const restLeft = this.v2.set(0.19 + 0.01 * shift, -0.1, 0.04).applyQuaternion(this.pelvisQ).add(this.pelvis).clone();
-    this.placeHand(left, restLeft, this.v3.set(0.1, -0.2, 1).normalize().clone());
+    const reach = dims.upperArm + dims.foreArm;
+    const down = this.v3.set(0.12, -1, 0.06 + 0.02 * shift).normalize().applyQuaternion(this.pelvisQ);
+    const restLeft = body.shoulder(1, this.v2).addScaledVector(down, reach * 0.93 + 0.075).clone();
+    this.placeHand(left, restLeft, this.v.set(0.1, -0.2, 1).normalize().applyQuaternion(this.pelvisQ).clone());
     for (const arm of this.arms) {
-      const shoulder = this.shoulderOf(arm);
+      const shoulder = body.shoulder(arm.side, arm.shoulder);
       const pole = this.pole.set(arm.side * 0.4, -0.5, -0.35).applyQuaternion(this.chestQ).add(shoulder);
-      solveTwoBone(shoulder, arm.wrist, UPPER_ARM, FOREARM, pole, arm.elbowAt, this.end);
-      aim(arm.upper, shoulder, arm.elbowAt);
-      aimRolled(arm.fore, arm.elbowAt, this.end, arm.across);
-      arm.elbow.position.copy(arm.elbowAt);
+      solveTwoBone(shoulder, arm.wrist, dims.upperArm, dims.foreArm, pole, arm.elbowAt, this.end);
+      body.setHand(arm.grip, arm.hold, arm.barQ);
+      body.setArm(arm.side, arm.elbowAt);
     }
     this.posed = true;
 
-    // her clothes and her braid
-    this.kameez.update(dt, t, this.kameezRing, this.wind, this.keepOffBody);
+    // her clothes and her plait
+    this.skirt.update(dt, t, this.skirtRing, this.wind, this.keepOffLegs);
     this.orna.update(dt, t, this.ornaPin, this.awayFromBody, this.keepOffBack, this.wind, this.gravity);
-    this.braid.update(dt, t, this.braidPin, this.awayFromBody, this.keepOffHead, this.wind, this.gravity);
+    this.swingPlait(dt);
+    body.commit();
 
     // the soft shadows on the deck: under her feet, and the umbrella's where the key light throws it
     this.footShadow.position.x = this.pelvis.x * 0.6;
@@ -609,9 +614,5 @@ export class Girl {
     // what the umbrella keeps dry, for the rain
     canopy.applyQuaternion(g.quaternion).add(g.position);
     this.shelter.set(canopy.x, canopy.y, canopy.z, CANOPY_R * 1.05);
-  }
-
-  private shoulderOf(arm: Arm): Vector3 {
-    return arm.shoulder.set(arm.side * SHOULDER.x, SHOULDER.y, SHOULDER.z).applyQuaternion(this.chestQ).add(this.chest.position);
   }
 }

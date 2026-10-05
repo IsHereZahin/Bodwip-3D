@@ -1,3 +1,4 @@
 node_modules
 dist
 scripts/geo/cache
+scripts/humans/cache/

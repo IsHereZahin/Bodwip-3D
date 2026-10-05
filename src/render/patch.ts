@@ -10,6 +10,8 @@ export interface PatchOptions {
   windHeight?: number;
   /** Glow when the key light is behind the surface (leaves, straw, sailcloth). */
   translucency?: number;
+  /** Skin: the key light carried a little way under it past the terminator, reddened by the blood in it. */
+  skin?: number;
   /** World-space albedo noise so repeated surfaces don't look printed. */
   grime?: number;
   /** Paddy plots, wet banks and riverbed caustics, driven by the terrain's `aZone` attribute. */
@@ -369,6 +371,15 @@ const TRANSLUCENCY = /* glsl */ `
   outgoingLight += diffuseColor.rgb * uKeyColor * (back * 0.85 + 0.06) * ATM_TRANSL * 0.3;
 }
 #endif
+#ifdef ATM_SKIN
+{
+  // a wrapped terminator: where the light grazes and just past it, what scatters under the skin comes out red
+  float nl = dot(normalize(inverseTransformDirection(normal, viewMatrix)), uKeyDir);
+  float wrap = clamp((nl + 0.45) / 1.45, 0.0, 1.0);
+  float scatter = max(wrap * wrap * 1.45 - max(nl, 0.0), 0.0) * smoothstep(0.6, 0.0, nl);
+  outgoingLight += diffuseColor.rgb * vec3(1.0, 0.36, 0.2) * uKeyColor * scatter * ATM_SKIN;
+}
+#endif
 #ifdef ATM_TERRAIN
 // still water standing on the ground (brine in the pans, flooded plots) mirrors the sky, more so at a grazing look
 if (atmBrine > 0.01 && uReflPass < 0.5) {
@@ -398,6 +409,7 @@ export function patchMaterial<T extends Material>(material: T, options: PatchOpt
     defines.ATM_WIND_H = (options.windHeight ?? 2).toFixed(3);
   }
   if (options.translucency) defines.ATM_TRANSL = options.translucency.toFixed(3);
+  if (options.skin) defines.ATM_SKIN = options.skin.toFixed(3);
   if (options.grime) defines.ATM_GRIME = options.grime.toFixed(3);
   if (options.terrain) defines.ATM_TERRAIN = '';
   if (options.terrain && options.splat) defines.ATM_SPLAT = '';

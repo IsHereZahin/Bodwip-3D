@@ -316,7 +316,7 @@ export class HeroBoat {
 
   private readonly glass: MeshStandardMaterial;
   private readonly paddle = new Group();
-  private readonly man: Boatman;
+  readonly man: Boatman;
   private readonly lanternPivot = new Group();
   private readonly shadow: Mesh;
   private readonly stroke = makePaddlePose();
