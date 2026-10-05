@@ -3,13 +3,13 @@ import { LAYER_NO_REFLECT } from '../core/globals';
 import { smoothstep } from '../core/mathx';
 import { Rng } from '../core/rng';
 import { SegmentIndex } from '../core/segmentIndex';
-import { MeshBuilder, rgb, scaleRgb, type RGB } from '../render/builder';
+import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { ROAD_SURFACES, roadAtlas } from '../render/textures';
 import { HOMESTEAD_MOUNDS, PONDS, pondReach, shapePoint } from './layout';
 import { PLAIN, ROAD_RAISE, ROADS, type Pt, type RoadPoint, type RoadSpec } from './plan';
 import { bridgeEnds, sankoEnds, type Point2 } from './sites';
-import { KHAL, RIVER, riverLevee, waterwayAt } from './waterways';
+import { KHAL, RIVER, charShare, riverLevee, waterwayAt } from './waterways';
 
 // The village's ways (world/plan.ts ROADS): the brick road (herringbone brick, HBB, as Bengal's village roads
 // are laid) on its embankment a little above the fields, and the earth paths between the homesteads, the
@@ -333,7 +333,10 @@ export function buildRoads(ground: (x: number, z: number) => number): Group {
       const nz = -(r.bx - r.ax) / len;
       const b = builderFor((r.ax + r.bx) / 2, (r.az + r.bz) / 2);
       // a little variety piece by piece: newer and older stretches, fresher and more trodden earth
-      const c = scaleRgb(SURFACE_TINT[r.surface], rng.range(0.9, 1.05));
+      let c = scaleRgb(SURFACE_TINT[r.surface], rng.range(0.9, 1.05));
+      // across the char's sand a path is only sand trodden firm: paler, the colour of the ground it crosses
+      const sand = charShare((r.ax + r.bx) / 2, (r.az + r.bz) / 2);
+      if (sand > 0.05) c = mixRgb(c, [c[0] * 1.45, c[1] * 1.4, c[2] * 1.35], smoothstep(0.05, 0.5, sand));
       const height = (t: number, across: number) => {
         const x = r.ax + (r.bx - r.ax) * t + nx * across;
         const z = r.az + (r.bz - r.az) * t + nz * across;

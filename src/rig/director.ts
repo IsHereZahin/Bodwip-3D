@@ -2,13 +2,15 @@ import { Vector3 } from 'three';
 import type { PerspectiveCamera } from 'three';
 import { clamp, damp, lerp, smoothstep } from '../core/mathx';
 import type { WeatherChoice } from '../env/weather';
-import { terrainHeight, waterLevelAt } from '../world/geography';
+import { JOURNEY, journeyAt, journeyFrame, terrainHeight, waterLevelAt } from '../world/geography';
 
 // The film tour's engine: it plays a list of scenes (rig/tour.ts), each a camera move in its own place,
 // season, hour and weather, joined by dissolves. Before a cut the last frame is held; the next scene's
 // world is set at once beneath it, and the held frame melts away over the new shot. When the tour starts
 // it saves the viewer's world (time, season, moon, weather, where the boat is) and puts it back when they
 // take the camera again, dissolving back to their view. The frame is letterboxed and each place is named.
+// Nothing may appear in a shot: the ground, grass and crops along the next shot's path are built a little each
+// frame through the last seconds of the one before, and whatever is left as the cut's frame is held.
 
 /** A scene's world: the day of the year, the hour (or so long before or after that day's sunrise, sunset or moonrise), the moon, the weather and the wind. */
 export interface SceneWorld {
@@ -35,10 +37,14 @@ export interface Stage {
   readonly boatCourse: number;
   /** Sends the flocks of birds across, near a point and heading. */
   birds(at: Vector3, heading: number): void;
+  /** Puts the train's nose `s` m along the railway (from its east end), running west if `west`. */
+  train(s: number, west: boolean): void;
   readonly sunDir: Vector3;
   readonly moonDir: Vector3;
-  /** Builds what grows round a point now, so a shot opens on it whole. */
-  prepare(at: Vector3): void;
+  /** Builds now what stands round each point (the ground, the grass, the crops), the first point last, so a shot opens on it whole. */
+  prepare(points: readonly Vector3[]): void;
+  /** Builds a little of the same within this frame's budget, without showing it; true once all of it is built. */
+  warm(points: readonly Vector3[]): boolean;
 }
 
 export interface Scene {
@@ -47,7 +53,9 @@ export interface Scene {
   world: SceneWorld;
   /** Where the boat is on her journey as the scene opens, for scenes in her waters; else she goes on. */
   journey?: number;
-  /** Once, as the scene opens and after its world is set: cue the birds. */
+  /** The exposure, as a share of the light's own (a night lifted so it reads), else 1. */
+  exposure?: number;
+  /** Once, as the scene opens and after its world is set: cue the birds or the train. */
   begin?(stage: Stage): void;
   /** The camera at `u` (0..1 through the scene, eased): where it is and what it looks at. */
   pose(u: number, stage: Stage, pos: Vector3, look: Vector3): void;
@@ -55,6 +63,12 @@ export interface Scene {
 
 /** Seconds a dissolve takes. */
 const DISSOLVE = 1.8;
+/** Seconds before a cut that the next shot's places begin to be built. */
+const WARM_AHEAD = 6;
+/** Where through a shot its places are readied. */
+const PATH = [0, 0.25, 0.5, 0.75, 1] as const;
+/** The boat's usual way (m/s), for guessing where she will be through a shot not yet begun. */
+const CRUISE = 1.2;
 
 type State = 'off' | 'opening' | 'playing' | 'closing';
 
@@ -78,10 +92,27 @@ export class Director {
   private readonly stage: Stage;
   private readonly pos = new Vector3();
   private readonly look = new Vector3();
+  /** The stage as a shot not yet begun will see it: the boat where she will be (`guessPos`, `guessCourse`). */
+  private readonly guess: Stage;
+  private readonly guessPos = new Vector3();
+  private guessCourse = 0;
+  /** The next shot's places, while they are being built ahead of its cut; done once built. */
+  private ahead: Vector3[] | null = null;
+  private aheadDone = false;
 
   constructor(scenes: readonly Scene[], stage: Stage) {
     this.scenes = scenes;
     this.stage = stage;
+    const self = this;
+    this.guess = Object.create(stage, {
+      boatPos: { get: () => self.guessPos },
+      boatCourse: { get: () => self.guessCourse },
+    }) as Stage;
+  }
+
+  /** The exposure for this frame, as a share of the light's own: the scene's while the tour plays. */
+  get exposure(): number {
+    return this.state === 'playing' || this.state === 'closing' ? (this.scenes[this.index].exposure ?? 1) : 1;
   }
 
   /** The tour is on (or handing over at either end). */
@@ -163,6 +194,11 @@ export class Director {
     this.frameCamera(scene, t, camera);
     this.caption = scene.caption;
     this.captionAlpha = scene.caption ? clamp(Math.min((this.time - 1.2) / 0.9, (scene.seconds - 1.6 - this.time) / 0.9), 0, 1) : 0;
+    // the last seconds: build the next shot's places ahead, a little each frame
+    if (this.time > scene.seconds - WARM_AHEAD && !this.aheadDone) {
+      this.ahead ??= this.pathOf(this.scenes[(this.index + 1) % this.scenes.length], true);
+      this.aheadDone = this.stage.warm(this.ahead);
+    }
     // at the end of the scene, hold this frame: the next scene dissolves in from it
     this.hold = this.time >= scene.seconds;
   }
@@ -195,8 +231,28 @@ export class Director {
     this.stage.set(scene.world);
     if (scene.journey !== undefined) this.stage.placeBoat(scene.journey);
     scene.begin?.(this.stage);
+    this.ahead = null;
+    this.aheadDone = false;
+    // whatever was not built ahead is built now (the cut's frame is held meanwhile), along the whole shot
+    this.stage.prepare(this.pathOf(scene, false));
     scene.pose(0, this.stage, this.pos, this.look);
-    this.stage.prepare(this.pos);
+  }
+
+  /**
+   * The camera's places through a scene. As it opens (`guessed` false) the boat is where she is and goes on at
+   * her usual way; ahead of it, she is put where she will be: at the scene's place on her journey, or on from
+   * where she is now.
+   */
+  private pathOf(scene: Scene, guessed: boolean): Vector3[] {
+    const b = this.stage.boatPos;
+    const s0 = guessed && scene.journey !== undefined ? scene.journey * JOURNEY.length : (journeyFrame(b.x, b.z)?.s ?? 0);
+    return PATH.map((u) => {
+      const p = journeyAt(Math.min(JOURNEY.length, s0 + u * scene.seconds * CRUISE));
+      this.guessPos.set(p.x, b.y, p.z);
+      this.guessCourse = p.heading;
+      scene.pose(u, this.guess, this.pos, this.look);
+      return this.pos.clone();
+    });
   }
 
   /** Poses the camera for this moment of the scene: an eased move, a breath of hand-held drift, never in the ground or the water. */

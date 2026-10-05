@@ -55,13 +55,37 @@ vAtmRoot = root;
 {
   float hk = clamp(position.y / ATM_WIND_H, 0.0, 1.6);
   hk *= hk;
-  // the one wind (env/wind.ts): the local strength under the gust fronts rolling downwind. Drag grows
-  // with the square of the wind, so a plant leans further the harder it blows, and shivers faster.
+  // the one wind (env/wind.ts): the local strength under the gust fronts rolling downwind, made uneven by
+  // the air's own turbulence (each plant feels a gust a little differently, the more so in a storm). Drag
+  // grows with the square of the wind, so a plant leans further the harder it blows.
+  float t = uTime;
   float s = uWind.z * windGust(root.xz);
-  float lean = s * (0.5 + 0.5 * s + 0.25 * s * s);
-  float flutter = sin(uGust.x * 3.0 + root.x * 0.73 + root.z * 0.41 + position.y * 0.8) * (0.25 + 0.2 * min(s, 2.0));
-  vec2 sway = uWind.xy * (lean * 0.45 + flutter * 0.4) + vec2(-uWind.y, uWind.x) * 0.22 * min(s, 2.0) * sin(uGust.x * 2.2 + root.z * 0.3);
-  atmW.xz += sway * hk * ATM_WIND;
+  float turb = vnoise(root.xz * 0.045 + vec2(t * 0.33, -t * 0.27)) - 0.5;
+  float drive = max(0.0, s * (1.0 + turb * (0.5 + 0.4 * min(s, 2.0))));
+  float lean = drive * (0.5 + 0.5 * drive + 0.25 * drive * drive);
+  // each plant its own: a natural period by its size (a big tree swings slowly, a tuft of grass quickly),
+  // its own phase and its own give, so no two move in step
+  float seed = hash12(floor(root.xz * 3.1) + 0.37);
+  float seed2 = hash12(floor(root.xz * 1.7) + 7.1);
+  float w = 6.2832 * mix(0.32, 0.52, seed) / (0.6 + 0.4 * sqrt(ATM_WIND_H / 10.0));
+  float give = mix(0.75, 1.3, seed2);
+  float strong = min(drive, 2.5);
+  // the trunk rocks about its lean on two unrelated swings, so it never quite repeats
+  float rock = sin(t * w + seed * 6.2832) + 0.45 * sin(t * w * 2.31 + seed2 * 6.2832);
+  vec2 down = uWind.xy;
+  vec2 across = vec2(-uWind.y, uWind.x);
+  vec2 sway = down * (lean * 0.45 + rock * (0.14 + 0.22 * strong)) + across * (0.16 * strong) * sin(t * w * 0.73 + seed2 * 9.0);
+  atmW.xz += sway * hk * ATM_WIND * give;
+  // the crown's parts on their own swings, quicker and smaller, out where the branches are
+  float bk = smoothstep(0.3, 0.95, position.y / ATM_WIND_H);
+  float bp = dot(position, vec3(0.6, 0.31, 0.45)) + seed * 13.0;
+  vec2 branch = down * sin(t * w * 2.7 + bp) + across * 0.6 * sin(t * w * 3.4 + bp * 1.3);
+  atmW.xz += branch * (0.05 + 0.09 * strong) * bk * ATM_WIND * ATM_WIND_H * 0.25;
+  #ifdef ATM_FLUTTER
+  // the leaves: a quick small shiver, each its own
+  float fp = dot(position, vec3(3.1, 2.3, 2.7)) + seed * 40.0;
+  atmW.xyz += vec3(sin(t * (8.0 + 5.0 * seed) + fp), 0.6 * sin(t * 11.0 + fp * 1.7), cos(t * (7.0 + 4.0 * seed2) + fp)) * (0.012 + 0.03 * strong) * bk * ATM_WIND * 4.0;
+  #endif
 }
 #endif
 vAtmWorld = atmW.xyz;
@@ -207,26 +231,29 @@ ${SPLAT_COLOR}
     // from afar, the crop's own colour: seedlings bright over their water, rice deeper green as it grows,
     // ripe gold, the vivid yellow of mustard in flower, the straw-brown of stubble; in clumps and in the
     // lines it was planted in, the mustard's flowers in drifts
-    vec3 canopy = sh.x * vec3(0.10, 0.20, 0.035) + sh.y * mix(vec3(0.085, 0.19, 0.03), vec3(0.05, 0.12, 0.018), grown)
-      + sh.z * vec3(0.42, 0.28, 0.05) + sh.w * vec3(0.66, 0.47, 0.012) + stubble * vec3(0.19, 0.14, 0.07);
+    vec3 canopy = sh.x * vec3(0.11, 0.26, 0.035) + sh.y * mix(vec3(0.12, 0.29, 0.025), vec3(0.065, 0.19, 0.018), grown)
+      + sh.z * vec3(0.52, 0.37, 0.045) + sh.w * vec3(0.66, 0.47, 0.012) + stubble * vec3(0.19, 0.14, 0.07);
     canopy *= 0.84 + 0.32 * vnoise(q * vec2(0.45, 1.6) + grown * 40.0);
     canopy *= 0.9 + 0.2 * vnoise(q * 0.12 + grown * 13.0);
     // close by, the crops stand in 3D (world/crops.ts) and the plot shows its own ground under them: water
     // among the young and growing rice, damp soil under the ripe, dry earth under mustard and stubble (not
     // in the mirror, which draws no crops)
-    float under = (1.0 - smoothstep(${CROP_REACH.fade.toFixed(1)}, ${CROP_REACH.edge.toFixed(1)}, distance(wp, uCamPos.xz))) * smoothstep(0.45, 0.65, vZone) * (1.0 - uReflPass);
+    // (seen from higher up the crop closes over its rows and hides the ground: the canopy's colour there)
+    float under = (1.0 - smoothstep(${CROP_REACH.fade.toFixed(1)}, ${CROP_REACH.edge.toFixed(1)}, groundReach(vAtmWorld))) * smoothstep(0.45, 0.65, vZone) * (1.0 - uReflPass)
+      * (1.0 - smoothstep(4.0, 22.0, uCamPos.y - vAtmWorld.y));
     vec3 ground = mix(vec3(0.085, 0.07, 0.042), vec3(0.15, 0.115, 0.07), sh.w + stubble);
     vec3 fc = mix(canopy, ground, under);
     vec2 e = min(f, 1.0 - f) * PLOT_SIZE;
-    float bund = 1.0 - smoothstep(0.25, 0.8, min(e.x, e.y));
+    float bund = 1.0 - smoothstep(0.15, 0.5, min(e.x, e.y));
     // water standing in the plots: under the seedlings always, among the growing rice, and in the fallow
     // plots as the season has it
     float flooded = smoothstep(-0.035, 0.035, uSeasonB.y - fract(rank * 3.7 + 0.21)) * (sh.w + stubble);
     plotWater = (1.0 - bund) * vZone * max(max(sh.x, sh.y * under * 0.9), flooded);
-    fc = mix(fc, fc * 0.45, plotWater * 0.6);
-    fc = mix(fc, vec3(0.13, 0.11, 0.065), bund);
+    fc = mix(fc, fc * 0.45, plotWater * 0.6 * (1.0 - 0.5 * sh.x));
+    // the bunds are grassed over, a little paler than the crop round them, bare earth only in the dry months
+    fc = mix(fc, mix(vec3(0.075, 0.15, 0.04), vec3(0.13, 0.11, 0.065), uSeasonA.y), bund);
     diffuseColor.rgb = mix(diffuseColor.rgb, fc, vZone);
-    atmBrine = plotWater * 0.5;
+    atmBrine = plotWater * mix(0.5, 0.6, sh.x);
   }
   // the salt works (লবণ মাঠ) on the coastal flats, block by block behind a feeder channel of sea water and
   // an earth bund (the bunds stand in 3D, world/coast.ts, whose twin of this layout must stay in step).
@@ -409,6 +436,7 @@ export function patchMaterial<T extends Material>(material: T, options: PatchOpt
   if (options.wind) {
     defines.ATM_WIND = options.wind.toFixed(3);
     defines.ATM_WIND_H = (options.windHeight ?? 2).toFixed(3);
+    if (options.foliage) defines.ATM_FLUTTER = '';
   }
   if (options.translucency) defines.ATM_TRANSL = options.translucency.toFixed(3);
   if (options.skin) defines.ATM_SKIN = options.skin.toFixed(3);

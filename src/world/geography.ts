@@ -1,7 +1,7 @@
 import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
 import { FeatureGrid, HOMESTEAD_MOUNDS, MOUNDS, PONDS, POND_BANK, local, pondReach, shapeDistance, shapePoint, type Mound, type Pond } from './layout';
-import { BANYAN, HILLS, PLAIN, TEA_STALL, WATER_LEVEL, WORLD } from './plan';
+import { BANYAN, FAR_GROVES, HILLS, MOUND, PLAIN, TEA_STALL, WATER_LEVEL, WORLD } from './plan';
 import { railGround, railShare } from './railway';
 import { onRoad, roadCover, roadEdge, roadGround } from './roads';
 import { BRIDGE, SANKO, bridgeDeck, bridgeEnds, bridgeFrame, bridgeSoffit, bridgeToWorld, onBridge, onSanko, sankoEnds, type Point2 } from './sites';
@@ -204,11 +204,28 @@ export function hillShare(x: number, z: number): number {
   return smoothstep(0.8, 3, hillHeight(x, z));
 }
 
+/**
+ * How much of (x, z) is a far village's raised ground (0..1): each of `FAR_GROVES` stands on land a little above
+ * the fields, an ellipse as its trees are planted (vegetation.ts), its edge wandering, so from the air its grove
+ * reads as a village on its mound and not as trees standing in the paddy.
+ */
+export function groveShare(x: number, z: number): number {
+  let share = 0;
+  for (const g of FAR_GROVES) {
+    const dx = (x - g.x) / 1.3;
+    const dz = (z - g.z) / 0.8;
+    if (Math.abs(dx) > g.r * 1.2 || Math.abs(dz) > g.r * 1.2) continue;
+    const d = (Math.hypot(dx, dz) / g.r) * (0.85 + 0.3 * fbm(x * 0.012 + g.x * 0.01, z * 0.012, 2, 57));
+    share = Math.max(share, smoothstep(1.08, 0.9, d));
+  }
+  return share;
+}
+
 /** The land before the waters are cut in: the fields, the levee, the hills, the mounds, the road's and the railway's embankments, the ponds' banks. */
 function landHeight(x: number, z: number): number {
   const char = charShare(x, z);
   let h = PLAIN + unevenness(x, z) * (1 - char) + riverLevee(x, z) - 0.6 * char + hillHeight(x, z);
-  h = Math.max(h, moundGround(x, z));
+  h = Math.max(h, moundGround(x, z), PLAIN + MOUND * 0.8 * groveShare(x, z));
   h = roadGround(x, z, h);
   h = railGround(x, z, h);
   return pondGround(x, z, h);
@@ -321,7 +338,7 @@ export function landUse(x: number, z: number): LandUse {
   verge = Math.max(verge, smoothstep(6, 1, roadEdge(x, z)), roadCover(x, z));
   verge = Math.max(verge, railShare(x, z));
   // the hills are forest: the grove's floor under their trees
-  mound = Math.max(mound, hillShare(x, z));
+  mound = Math.max(mound, hillShare(x, z), groveShare(x, z));
   const sand = charShare(x, z) * (1 - mound);
   const marsh = bilMarsh(x, z);
   use.yard = yard;

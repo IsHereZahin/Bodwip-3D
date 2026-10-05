@@ -203,6 +203,59 @@ export function palmFrondTexture(seed: number): DataTexture {
   return toTexture(ctx, { bleed: true });
 }
 
+/**
+ * A tal (palmyra) leaf: its stalk up from the bottom middle to two fifths of the way, and from its tip a round
+ * fan of stiff pleated segments spread through some 250 degrees, each split at its end, dark along its fold.
+ * v up the stalk and out through the fan.
+ */
+export function palmFanTexture(seed: number): DataTexture {
+  const S = 256;
+  const rng = new Rng(seed);
+  const ctx = paint(S, S, (c) => {
+    const hub = { x: S / 2, y: S * 0.6 };
+    c.strokeStyle = '#6d6a3c';
+    c.lineWidth = 5;
+    c.beginPath();
+    c.moveTo(S / 2, S);
+    c.lineTo(hub.x, hub.y);
+    c.stroke();
+    const greens = ['#3f5a24', '#4a6629', '#55722f', '#5f7c35', '#47622a'];
+    const n = 46;
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1);
+      // from down-left, over the top, to down-right
+      const a = -2.2 + t * 4.4 + rng.range(-0.02, 0.02);
+      const len = S * rng.range(0.4, 0.47) * (0.75 + 0.25 * Math.cos(a * 0.6));
+      const half = 0.045;
+      const tip = { x: hub.x + Math.sin(a) * len, y: hub.y - Math.cos(a) * len };
+      c.fillStyle = rng.pick(greens);
+      c.beginPath();
+      c.moveTo(hub.x, hub.y);
+      c.lineTo(hub.x + Math.sin(a - half) * len * 0.97, hub.y - Math.cos(a - half) * len * 0.97);
+      // the split tip
+      c.lineTo(tip.x + Math.sin(a - 0.08) * 8, tip.y - Math.cos(a - 0.08) * 8);
+      c.lineTo(tip.x, tip.y);
+      c.lineTo(tip.x + Math.sin(a + 0.08) * 8, tip.y - Math.cos(a + 0.08) * 8);
+      c.lineTo(hub.x + Math.sin(a + half) * len * 0.97, hub.y - Math.cos(a + half) * len * 0.97);
+      c.closePath();
+      c.fill();
+      // the fold down its middle, darker
+      c.strokeStyle = 'rgba(30, 40, 15, 0.5)';
+      c.lineWidth = 1;
+      c.beginPath();
+      c.moveTo(hub.x, hub.y);
+      c.lineTo(tip.x, tip.y);
+      c.stroke();
+    }
+    // the dense heart of the fan where the segments meet
+    c.fillStyle = '#4a6328';
+    c.beginPath();
+    c.arc(hub.x, hub.y, S * 0.07, 0, Math.PI * 2);
+    c.fill();
+  });
+  return toTexture(ctx, { bleed: true });
+}
+
 /** Banana leaf: v along the leaf (stem at v = 0), torn into strips at the edges. */
 export function bananaLeafTexture(seed: number): DataTexture {
   const W = 128;
@@ -809,11 +862,11 @@ export function riceRowTexture(seed: number): DataTexture {
   const ctx = paint(W, H, (c) => {
     for (let k = 0; k < 10; k++) {
       const x0 = ((k + 0.5) / 10) * W + rng.range(-4, 4);
-      for (let i = 0; i < 14; i++) {
+      for (let i = 0; i < 24; i++) {
         const bx = x0 + rng.range(-5, 5);
-        const tx = bx + rng.range(-34, 34);
-        const ty = H * (1 - rng.range(0.55, 0.93));
-        const w = rng.range(1.8, 3.2);
+        const tx = bx + rng.range(-40, 40);
+        const ty = H * (1 - rng.range(0.55, 0.95));
+        const w = rng.range(2, 3.6);
         const g = c.createLinearGradient(0, H, 0, ty);
         g.addColorStop(0, '#383838');
         g.addColorStop(0.5, css([1, 1, 1], rng.range(120, 160)));
@@ -836,6 +889,131 @@ export function riceRowTexture(seed: number): DataTexture {
         c.moveTo(sx, H * 0.3);
         c.quadraticCurveTo(sx + dir * 4, top, sx + dir * rng.range(18, 28), top + rng.range(18, 30));
         c.stroke();
+      }
+    }
+  });
+  return toTexture(ctx, { bleed: true });
+}
+
+/**
+ * The near rice, two cards in one texture, in greys the crop's shader tints for its stage. The left half
+ * (u 0..0.5) is one hill of transplanted rice side-on: some thirty long narrow leaves fanning up and out from
+ * a narrow foot, the longer ones arching over at the tip, dark at the foot and pale toward the light. The right
+ * half (u 0.5..1) is one panicle laid straight along v (v 0 where it leaves its stem, 1 at its tip; the geometry
+ * bends it): a rachis with short branches angled toward the tip, each crowded with plump grains, drawn twice as
+ * wide as it should look (the ribbon it is laid on squeezes it), with a dense core for the mipmaps.
+ */
+export function riceHillTexture(seed: number): DataTexture {
+  const W = 512;
+  const H = 512;
+  const rng = new Rng(seed);
+  const ctx = paint(W, H, (c) => {
+    // ---- the hill ----
+    const cx = W / 4;
+    for (let i = 0; i < 44; i++) {
+      const bx = cx + rng.range(-16, 16);
+      const reach = rng.range(-115, 115) * (0.35 + 0.65 * rng.next());
+      const tall = rng.range(0.55, 0.98);
+      const ty = H * (1 - tall);
+      // the longer leaves arch over: their tip falls back below their highest point
+      const droop = tall > 0.75 ? rng.range(10, 60) : rng.range(0, 14);
+      const tx = bx + reach;
+      const w = rng.range(2.4, 4.2);
+      const g = c.createLinearGradient(0, H, 0, ty);
+      // dark only at the very foot, where the leaves crowd into shade; light all the way up from there
+      g.addColorStop(0, '#5a5a5a');
+      g.addColorStop(0.2, css([1, 1, 1], rng.range(165, 190)));
+      g.addColorStop(1, css([1, 1, 1], rng.range(215, 250)));
+      c.fillStyle = g;
+      const mx = bx + reach * 0.3;
+      const my = ty + (H - ty) * 0.25;
+      c.beginPath();
+      c.moveTo(bx - w, H);
+      c.quadraticCurveTo(mx - w * 0.6, my, tx, ty + droop);
+      c.quadraticCurveTo(mx + w * 0.6, my, bx + w, H);
+      c.fill();
+    }
+    // a dense core of stems at the foot, so the hill keeps its body far off
+    c.fillStyle = '#6a6a6a';
+    c.beginPath();
+    c.moveTo(cx - 18, H);
+    c.lineTo(cx - 6, H * 0.62);
+    c.lineTo(cx + 6, H * 0.62);
+    c.lineTo(cx + 18, H);
+    c.fill();
+    // ---- the panicle ----
+    const px = W * 0.75;
+    const top = 10;
+    const bottom = H - 4;
+    c.strokeStyle = '#bdbdbd';
+    c.lineWidth = 7;
+    c.beginPath();
+    c.moveTo(px, bottom);
+    c.lineTo(px, top + 30);
+    c.stroke();
+    // branches, alternating sides, longer near the panicle's base, angled toward its tip
+    const branches = 13;
+    for (let b = 0; b < branches; b++) {
+      const t = b / (branches - 1);
+      const y0 = bottom - 20 - t * (bottom - top - 60);
+      const side = b % 2 ? 1 : -1;
+      const len = (1 - 0.65 * t) * rng.range(70, 100);
+      const ex = px + side * len * 0.55;
+      const ey = y0 - len;
+      // the grains along it, plump and pale, each with a darker edge
+      const grains = Math.round(5 + 4 * (1 - t));
+      for (let k = 0; k < grains; k++) {
+        const f = (k + 1) / (grains + 0.5);
+        const gx = px + (ex - px) * f + rng.range(-4, 4);
+        const gy = y0 + (ey - y0) * f + rng.range(-4, 4);
+        const a = Math.atan2(ey - y0, ex - px) + rng.range(-0.3, 0.3);
+        c.fillStyle = css([1, 1, 1], rng.range(150, 175));
+        c.beginPath();
+        c.ellipse(gx, gy, 15, 8, a, 0, Math.PI * 2);
+        c.fill();
+        c.fillStyle = css([1, 1, 1], rng.range(205, 240));
+        c.beginPath();
+        c.ellipse(gx - 1, gy - 1, 12, 6, a, 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+    // the tip: a last few grains in line
+    for (let k = 0; k < 4; k++) {
+      c.fillStyle = css([1, 1, 1], 220);
+      c.beginPath();
+      c.ellipse(px + rng.range(-3, 3), top + 10 + k * 16, 10, 8, Math.PI / 2, 0, Math.PI * 2);
+      c.fill();
+    }
+  });
+  return toTexture(ctx, { bleed: true });
+}
+
+/**
+ * A row of ripening heads seen side-on, for the middling-far rice (laid over its row cards' tops): panicles
+ * nodding over all along the 2.4 m of row, in greys the shader tints green or gold.
+ */
+export function riceHeadsTexture(seed: number): DataTexture {
+  const W = 512;
+  const H = 96;
+  const rng = new Rng(seed);
+  const ctx = paint(W, H, (c) => {
+    c.lineCap = 'round';
+    for (let i = 0; i < 46; i++) {
+      const sx = rng.range(6, W - 6);
+      const sy = rng.range(H * 0.15, H * 0.35);
+      const dir = rng.sign();
+      const len = rng.range(26, 40);
+      // an arch over and down, grains crowding it
+      const ex = sx + dir * len * 0.8;
+      const ey = sy + len * rng.range(0.55, 0.9);
+      for (let k = 0; k < 9; k++) {
+        const t = (k + 0.5) / 9;
+        const x = sx + (ex - sx) * t;
+        const y = sy - Math.sin(Math.PI * t * 0.7) * 10 + (ey - sy) * t * t;
+        c.fillStyle = css([1, 1, 1], rng.range(170, 235));
+        c.beginPath();
+        c.ellipse(x, y, 4.5, 3.2, rng.range(0, 3), 0, Math.PI * 2);
+        c.fill();
       }
     }
   });
@@ -933,6 +1111,73 @@ export function mustardTexture(seed: number): DataTexture {
         c.arc(tx + Math.cos(a) * r, ty + Math.sin(a) * r * 1.3 + 4, rng.range(2, 3.4), 0, Math.PI * 2);
         c.fill();
       }
+    }
+  });
+  return toTexture(ctx, { bleed: true });
+}
+
+/**
+ * One mustard raceme seen close (the near plants' flower heads), in the left three quarters: its stalk, green
+ * pods angled up along it below, and above them a dome of small four-petalled yellow flowers, the buds greener at
+ * the very top. The right quarter is opaque white, for the stems and leaves (their vertex colour shows through).
+ */
+export function mustardRacemeTexture(seed: number): DataTexture {
+  const S = 128;
+  const W = 96;
+  const rng = new Rng(seed);
+  const ctx = paint(S, S, (c) => {
+    c.fillStyle = '#ffffff';
+    c.fillRect(W + 8, 0, S - W - 8, S);
+    c.lineCap = 'round';
+    const cx = W / 2;
+    c.strokeStyle = '#5f7f3a';
+    c.lineWidth = 2.2;
+    c.beginPath();
+    c.moveTo(cx, S);
+    c.lineTo(cx, S * 0.3);
+    c.stroke();
+    // the pods: slim, angled up from the stalk, longer lower down
+    for (let p = 0; p < 16; p++) {
+      const y = S - rng.range(4, S * 0.5);
+      const side = p % 2 ? 1 : -1;
+      const len = 10 + (y / S) * 14;
+      c.strokeStyle = rng.pick(['#7c9a44', '#86a24a', '#6f8e3c']);
+      c.lineWidth = rng.range(1.4, 2.2);
+      c.beginPath();
+      c.moveTo(cx, y);
+      c.lineTo(cx + side * len * 0.55, y - len);
+      c.stroke();
+    }
+    // the flowers: a dense core (it keeps its coverage through the mipmaps), then the petals round it
+    c.fillStyle = '#e9bd1e';
+    c.beginPath();
+    c.ellipse(cx, S * 0.3, 14, 12, 0, 0, Math.PI * 2);
+    c.fill();
+    for (let k = 0; k < 46; k++) {
+      const a = rng.range(0, Math.PI * 2);
+      const r = Math.sqrt(rng.next()) * 30;
+      const x = cx + Math.cos(a) * r;
+      const y = S * 0.3 + Math.sin(a) * r * 0.75 + (r / 30) * 10;
+      const size = rng.range(3.2, 4.6);
+      const turn = rng.range(0, Math.PI / 2);
+      c.fillStyle = rng.pick(['#f6d22b', '#f2c41f', '#f9de4a', '#ebb81a']);
+      for (let q = 0; q < 4; q++) {
+        const pa = turn + (q * Math.PI) / 2;
+        c.beginPath();
+        c.ellipse(x + Math.cos(pa) * size * 0.6, y + Math.sin(pa) * size * 0.6, size * 0.62, size * 0.4, pa, 0, Math.PI * 2);
+        c.fill();
+      }
+      c.fillStyle = '#d99a12';
+      c.beginPath();
+      c.arc(x, y, 1, 0, Math.PI * 2);
+      c.fill();
+    }
+    // the buds at the tip, closed and greener
+    for (let k = 0; k < 10; k++) {
+      c.fillStyle = rng.pick(['#c9cf55', '#b8c04a', '#d6d25a']);
+      c.beginPath();
+      c.arc(cx + rng.range(-7, 7), S * 0.3 - rng.range(12, 22), rng.range(1.8, 2.8), 0, Math.PI * 2);
+      c.fill();
     }
   });
   return toTexture(ctx, { bleed: true });
@@ -1270,9 +1515,11 @@ function paintRoad(c: Ctx, surface: (typeof ROAD_SURFACES)[number], W: number, H
       for (let y = -2 * B; y < H + 2 * B; y += B) {
         for (let x = -2 * B; x < W + 2 * B; x += B * 2) {
           for (const flip of [0, 1]) {
-            const r = rng.int(140, 186);
-            const g = rng.int(62, 86);
-            const b = rng.int(40, 58);
+            // old bricks, sun-bleached and dusty: a pale terracotta, some greyer, some still red
+            const k = rng.next();
+            const r = rng.int(150, 182);
+            const g = rng.int(92, 112) - (k > 0.85 ? 18 : 0);
+            const b = rng.int(70, 88) - (k > 0.85 ? 14 : 0);
             c.save();
             c.translate(x + flip * B, y + (flip ? B / 2 : 0));
             c.rotate(flip ? -Math.PI / 4 : Math.PI / 4);
@@ -1285,14 +1532,14 @@ function paintRoad(c: Ctx, surface: (typeof ROAD_SURFACES)[number], W: number, H
       // dust and wear down the middle
       const g = c.createLinearGradient(0, 0, W, 0);
       g.addColorStop(0, 'rgba(170,150,120,0)');
-      g.addColorStop(0.5, 'rgba(170,150,120,0.25)');
+      g.addColorStop(0.5, 'rgba(176,160,134,0.38)');
       g.addColorStop(1, 'rgba(170,150,120,0)');
       c.fillStyle = g;
       c.fillRect(0, 0, W, H);
       // the border: bricks laid on edge along both sides
       for (const x0 of [0, W - 10]) {
         for (let y = 0; y < H; y += 5) {
-          c.fillStyle = `rgb(${rng.int(130, 170)},${rng.int(60, 80)},${rng.int(40, 55)})`;
+          c.fillStyle = `rgb(${rng.int(140, 170)},${rng.int(84, 104)},${rng.int(64, 80)})`;
           c.fillRect(x0 + 1, y + 1, 8, 3.5);
         }
       }

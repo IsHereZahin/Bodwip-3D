@@ -10,30 +10,59 @@ import {
   Vector3,
 } from 'three';
 import type { Material } from 'three';
-import { LAYER_NO_REFLECT } from '../core/globals';
+import { G, LAYER_NO_REFLECT } from '../core/globals';
 import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
 import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
+import { CROP_REACH } from '../render/glsl';
 import { patchMaterial } from '../render/patch';
-import { WATER_LEVEL, onBridge, onLandmark, onRoad } from './geography';
+import { WATER_LEVEL, onBridge, onLandmark, onRoad, terrainHeight } from './geography';
 import { groundLattice } from './terrain';
 import type { Ghat, HutPlan } from './village';
 
 // Grass you can walk through: dense blade clumps, wild flowers and pebbles, built only round the viewer,
 // chunk by chunk as the view moves. Seen from the boat the banks are 100 m off and this costs nothing;
 // in the free camera or the film's bank-side shots the ground is thick with it.
+// Nothing pops: the full clumps give way to the lighter ones over a band of distance (both stand there, one
+// shrinking as the other grows), the lighter ones shrink away at the far edge, from higher up the grass
+// reaches less far (`groundReach`), and a chunk built late grows up out of the ground. Chunks in front of the
+// camera are built first, within a few milliseconds a frame; the film builds its next shot's ahead (`warm`).
 
-const CHUNK = 12;
-/** Chunks whose centre is nearer than this get the full blade clumps; the rest a lighter clump. */
-const NEAR = 26;
-const FAR = 56;
-const BUILD_PER_FRAME = 2;
-const CACHE = 180;
+const CHUNK = 8;
+/** A chunk's half-diagonal: how far its clumps stand from its middle at most. */
+const CHUNK_REACH = CHUNK * 0.71;
+/**
+ * Each level of detail's band (m, as `groundReach` measures, before the quality tier's share): fading in over
+ * `in`, out over `out`. The full blade clumps (and the flowers), then the lighter clumps.
+ */
+const BANDS = [
+  { in: [-2, -1], out: [20, 26] },
+  { in: [20, 26], out: [46, 56] },
+] as const;
+/** Milliseconds a frame may spend building chunks. */
+const BUILD_MS = 2;
+/** Seconds a chunk built late takes to grow up out of the ground. */
+const GROW = 0.9;
+/** Chunks kept built: those in view, and the film's next shot's, made ahead of it. */
+const CACHE = 1000;
 /** Candidate spacing in metres for the near and far clumps. */
 const STEP = [0.4, 0.9] as const;
 /** Lattice spacing for the cheap height and cover lookups inside a chunk. */
-const LATTICE = 1.5;
+const LATTICE = 1.6;
+
+/** The quality tier's share of the grass's reach, for the shaders' bands. */
+const REACH = { value: 1 };
+
+/** Shrinks a clump to its foot by its level of detail's band at its distance, and while its chunk grows in. */
+const fade = (lod: 0 | 1) => /* glsl */ `
+{
+  vec3 root = instanceMatrix[3].xyz;
+  float d = groundReach(root) / uMeadowReach;
+  transformed *= smoothstep(${BANDS[lod].in[0].toFixed(1)}, ${BANDS[lod].in[1].toFixed(1)}, d) * (1.0 - smoothstep(${BANDS[lod].out[0].toFixed(1)}, ${BANDS[lod].out[1].toFixed(1)}, d))
+    * smoothstep(aBorn, aBorn + ${GROW.toFixed(2)}, uTime);
+}`;
+const FADE_PARS = 'attribute float aBorn;\nuniform float uMeadowReach;\n';
 
 const UP = new Vector3(0, 1, 0);
 
@@ -144,6 +173,8 @@ function flowerClump(seed: number, kind: FlowerKind): BufferGeometry {
 interface Layer {
   mesh: InstancedMesh;
   colors: InstancedBufferAttribute;
+  /** When each clump's chunk was built (the shader clock), for growing in. */
+  born: InstancedBufferAttribute;
   capacity: number;
 }
 
@@ -152,6 +183,16 @@ interface ChunkData {
   key: string;
   parts: { m: Float32Array; c: Float32Array; n: number }[];
   used: number;
+  /** When it was built (the shader clock); long ago for those built out of sight. */
+  born: number;
+}
+
+/** A chunk a view wants: its key (x, z, level of detail), its middle, and its distance. */
+interface Want {
+  key: string;
+  x: number;
+  z: number;
+  d: number;
 }
 
 const LAYERS = ['grassNear', 'grassFar', 'white', 'yellow', 'lilac'] as const;
@@ -164,7 +205,7 @@ export class Meadow {
   private readonly cache = new Map<string, ChunkData>();
   private readonly huts: readonly HutPlan[];
   private readonly ghats: readonly Ghat[];
-  private wanted: string[] = [];
+  private wanted: Want[] = [];
   private centre = '';
   private reach = 1;
   private dirty = false;
@@ -174,20 +215,25 @@ export class Meadow {
     this.group.name = 'meadow';
     this.huts = huts;
     this.ghats = ghats;
-    const grassMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, side: DoubleSide, roughness: 0.78 }), {
-      seasonal: 'leaf',
-      wind: 0.12,
-      windHeight: 0.55,
-      translucency: 1.7,
-      foliage: true,
-    });
+    const grassMat = (lod: 0 | 1) =>
+      patchMaterial(new MeshStandardMaterial({ vertexColors: true, side: DoubleSide, roughness: 0.78 }), {
+        seasonal: 'leaf',
+        wind: 0.12,
+        windHeight: 0.55,
+        translucency: 1.7,
+        foliage: true,
+        vertex: { key: `meadow-grass-${lod}`, pars: FADE_PARS, code: fade(lod), uniforms: { uMeadowReach: REACH } },
+      });
     const flowerMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, side: DoubleSide, roughness: 0.7 }), {
       wind: 0.1,
       windHeight: 0.4,
       translucency: 1.2,
       foliage: true,
+      vertex: { key: 'meadow-flower', pars: FADE_PARS, code: fade(0), uniforms: { uMeadowReach: REACH } },
     });
     const make = (geometry: BufferGeometry, material: Material, capacity: number): Layer => {
+      const born = new InstancedBufferAttribute(new Float32Array(capacity), 1);
+      geometry.setAttribute('aBorn', born);
       const mesh = new InstancedMesh(geometry, material, capacity);
       mesh.count = 0;
       mesh.receiveShadow = true;
@@ -196,56 +242,87 @@ export class Meadow {
       const colors = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
       mesh.instanceColor = colors;
       this.group.add(mesh);
-      return { mesh, colors, capacity };
+      return { mesh, colors, born, capacity };
     };
+    const near = grassMat(0);
     this.layers = {
-      grassNear: make(grassClump(1, 10, 3, 0.03), grassMat, 20000),
-      grassFar: make(grassClump(2, 4, 2, 0.055), grassMat, 12000),
+      grassNear: make(grassClump(1, 10, 3, 0.03), near, 20000),
+      grassFar: make(grassClump(2, 4, 2, 0.055), grassMat(1), 16000),
       white: make(flowerClump(3, 'white'), flowerMat, 1500),
       yellow: make(flowerClump(4, 'yellow'), flowerMat, 1200),
       lilac: make(flowerClump(5, 'lilac'), flowerMat, 1200),
     };
   }
 
-  /** How far the grass reaches, as a share of NEAR and FAR (the lower quality tier keeps it closer). */
+  /** How far the grass reaches, as a share of its bands (the lower quality tier keeps it closer). */
   setReach(k: number): void {
     this.reach = k;
+    REACH.value = k;
     this.centre = '';
   }
 
-  /** Call every frame with the camera's position. `all` builds every missing chunk now (for stills). */
-  update(view: Vector3, all = false): void {
-    this.frame++;
+  /**
+   * The chunks a view at `view` wants, nearest first, each keyed with every level of detail whose band reaches
+   * any of its clumps (in a band's fade both stand). Seen from higher up they reach less far.
+   */
+  private wantedAt(view: Vector3): Want[] {
     const cx = Math.floor(view.x / CHUNK);
     const cz = Math.floor(view.z / CHUNK);
-    const centre = `${cx},${cz}`;
+    const lift = Math.max(0, view.y - terrainHeight(view.x, view.z) - 3) * CROP_REACH.lift;
+    const far = BANDS[1].out[1] * this.reach;
+    const R = Math.ceil((far + CHUNK_REACH) / CHUNK);
+    const list: Want[] = [];
+    for (let dz = -R; dz <= R; dz++) {
+      for (let dx = -R; dx <= R; dx++) {
+        const x = (cx + dx + 0.5) * CHUNK;
+        const z = (cz + dz + 0.5) * CHUNK;
+        const d = Math.hypot(x - view.x, z - view.z, lift);
+        BANDS.forEach((b, lod) => {
+          if (d > b.in[0] * this.reach - CHUNK_REACH && d < b.out[1] * this.reach + CHUNK_REACH) list.push({ key: `${cx + dx},${cz + dz},${lod}`, x, z, d });
+        });
+      }
+    }
+    return list.sort((a, b) => a.d - b.d);
+  }
+
+  /** Builds the chunks a view at `view` will want, until `until` (performance.now()), without showing them: the film readies its next shot. True once all are built. */
+  warm(view: Vector3, until: number): boolean {
+    for (const w of this.wantedAt(view)) {
+      const chunk = this.cache.get(w.key);
+      if (chunk) {
+        chunk.used = this.frame;
+        continue;
+      }
+      if (performance.now() > until) return false;
+      // out of sight as it is built: it stands grown when the camera comes
+      this.cache.set(w.key, this.build(w.key, true));
+    }
+    return true;
+  }
+
+  /**
+   * Call every frame with the camera's position and which way it looks. `all` builds every missing chunk now,
+   * grown (for stills); otherwise a few milliseconds' worth, those in front of the camera and the nearest first.
+   */
+  update(view: Vector3, all = false, forward?: Vector3): void {
+    this.frame++;
+    const lift = Math.max(0, view.y - terrainHeight(view.x, view.z) - 3);
+    const centre = `${Math.floor(view.x / CHUNK)},${Math.floor(view.z / CHUNK)},${Math.round(lift / 3)}`;
     if (centre !== this.centre) {
       this.centre = centre;
-      const far = FAR * this.reach;
-      const near = NEAR * this.reach;
-      const R = Math.ceil(far / CHUNK);
-      const list: { key: string; d: number }[] = [];
-      for (let dz = -R; dz <= R; dz++) {
-        for (let dx = -R; dx <= R; dx++) {
-          const x = (cx + dx + 0.5) * CHUNK;
-          const z = (cz + dz + 0.5) * CHUNK;
-          const d = Math.hypot(x - view.x, z - view.z);
-          if (d > far) continue;
-          list.push({ key: `${cx + dx},${cz + dz},${d < near ? 0 : 1}`, d });
-        }
-      }
-      list.sort((a, b) => a.d - b.d);
-      this.wanted = list.map((l) => l.key);
+      this.wanted = this.wantedAt(view);
       this.dirty = true;
     }
-    // build a few missing chunks, nearest first
-    let built = 0;
-    for (const key of this.wanted) {
-      if (built >= BUILD_PER_FRAME && !all) break;
-      if (this.cache.has(key)) continue;
-      this.cache.set(key, this.build(key));
-      built++;
-      this.dirty = true;
+    const start = performance.now();
+    for (const ahead of [true, false]) {
+      for (const w of this.wanted) {
+        if (this.cache.has(w.key)) continue;
+        if (!all && performance.now() - start > BUILD_MS) break;
+        // first those ahead of the camera (or right by it), then the rest
+        if (ahead && forward && w.d > 10 && (w.x - view.x) * forward.x + (w.z - view.z) * forward.z < 0) continue;
+        this.cache.set(w.key, this.build(w.key, all));
+        this.dirty = true;
+      }
     }
     if (this.dirty) this.upload();
   }
@@ -254,8 +331,8 @@ export class Meadow {
     this.dirty = false;
     const offsets: Record<string, number> = {};
     for (const name of LAYERS) offsets[name] = 0;
-    for (const key of this.wanted) {
-      const chunk = this.cache.get(key);
+    for (const w of this.wanted) {
+      const chunk = this.cache.get(w.key);
       if (!chunk) continue;
       chunk.used = this.frame;
       LAYERS.forEach((name, i) => {
@@ -266,14 +343,16 @@ export class Meadow {
         if (n <= 0) return;
         (layer.mesh.instanceMatrix.array as Float32Array).set(part.m.subarray(0, n * 16), at * 16);
         (layer.colors.array as Float32Array).set(part.c.subarray(0, n * 3), at * 3);
+        (layer.born.array as Float32Array).fill(chunk.born, at, at + n);
         offsets[name] = at + n;
       });
     }
     for (const name of LAYERS) {
-      const { mesh, colors } = this.layers[name];
+      const { mesh, colors, born } = this.layers[name];
       mesh.count = offsets[name];
       mesh.instanceMatrix.needsUpdate = true;
       colors.needsUpdate = true;
+      born.needsUpdate = true;
       if (mesh.count) mesh.computeBoundingSphere();
     }
     // forget the chunks not seen for a while
@@ -283,7 +362,8 @@ export class Meadow {
     }
   }
 
-  private build(key: string): ChunkData {
+  /** `grown`: built out of sight (or for a still), so it stands at once; else it grows in from now. */
+  private build(key: string, grown = false): ChunkData {
     const [cx, cz, lod] = key.split(',').map(Number);
     const x0 = cx * CHUNK;
     const z0 = cz * CHUNK;
@@ -340,6 +420,7 @@ export class Meadow {
     return {
       key,
       used: this.frame,
+      born: grown ? -1e4 : G.uTime.value,
       parts: out.map((o) => ({ m: new Float32Array(o.list), c: new Float32Array(o.col), n: o.col.length / 3 })),
     };
   }

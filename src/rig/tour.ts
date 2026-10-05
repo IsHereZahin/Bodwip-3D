@@ -1,6 +1,7 @@
 import { Vector3 } from 'three';
 import { angleDelta, lerp } from '../core/mathx';
 import { BIL, HOMESTEAD_MOUNDS, JOURNEY, WATER_LEVEL, journeyAt, journeyFrame, journeyHalfWidth, terrainHeight } from '../world/geography';
+import { RAIL_LENGTH, TRAIN_SPEED, railAt } from '../world/railway';
 import { bilPoint } from '../world/waterways';
 import { LILY_PONDS } from '../world/ponds';
 import { groundAt } from '../world/terrain';
@@ -118,6 +119,20 @@ const BLOSSOM = (() => {
 /** A village pond for a morning: the widest with lilies within 200 m of the boat's way; the bil if there is none. */
 const POND = LILY_PONDS.filter((p) => (journeyFrame(p.x, p.z)?.d ?? Infinity) < 200).sort((a, b) => b.r - a.r)[0] ?? { x: BIL.x, z: BIL.z, r: BIL.halfWid, level: BIL.level };
 
+/** Where along the railway the bil's shot looks across at it, from the middle of its drift (`railAt` s). */
+const BIL_TRAIN = (() => {
+  const eye = bilPoint(-BIL.halfLen * 0.55, -BIL.halfWid * 0.3);
+  const want = Math.atan2(BIL.x - eye.x, BIL.z - eye.z);
+  let best = 0;
+  let err = Infinity;
+  for (let s = 0; s <= RAIL_LENGTH; s += 4) {
+    const r = railAt(s);
+    const e = Math.abs(angleDelta(Math.atan2(r.x - eye.x, r.z - eye.z), want));
+    if (e < err) (err = e), (best = s);
+  }
+  return best;
+})();
+
 /** The film's scenes; `ghats` are the village's (world/village.ts planGhats). */
 export function tourScenes(ghats: readonly Ghat[]): Scene[] {
   // per-scene choices made as each scene opens
@@ -223,6 +238,8 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       caption: 'শাপলা বিল',
       seconds: 14,
       world: { day: 235, hour: 9.2, weather: 'clear', wind: 0.25 },
+      // the train comes by on its embankment beyond the bil as the shot reaches its middle
+      begin: (s) => s.train(BIL_TRAIN - TRAIN_SPEED * 7, true),
       // low over the lily rafts, drifting across the bil below the hills
       pose: (u, _s, pos, look) => {
         const p = bilPoint(lerp(-BIL.halfLen * 0.7, -BIL.halfLen * 0.4, u), -BIL.halfWid * 0.3);

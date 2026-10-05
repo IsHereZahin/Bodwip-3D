@@ -1,12 +1,12 @@
-import { BufferGeometry, DoubleSide, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Quaternion, Vector3 } from 'three';
+import { BufferAttribute, BufferGeometry, DoubleSide, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Quaternion, Vector3 } from 'three';
 import type { Texture } from 'three';
 import { G, LAYER_NO_REFLECT } from '../core/globals';
 import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, type RGB } from '../render/builder';
 import { CROP_REACH } from '../render/glsl';
 import { patchMaterial } from '../render/patch';
-import { mustardCanopyTexture, mustardTexture, riceCanopyTexture, riceRowTexture } from '../render/textures';
-import { onRoad } from './geography';
+import { mustardCanopyTexture, mustardRacemeTexture, mustardTexture, riceCanopyTexture, riceHeadsTexture, riceHillTexture, riceRowTexture } from '../render/textures';
+import { onRoad, terrainHeight } from './geography';
 import { groundLattice } from './terrain';
 
 // The crops in the paddy plots, standing in 3D round the camera (out to CROP_REACH; beyond, the terrain
@@ -20,6 +20,10 @@ import { groundLattice } from './terrain';
 // Patches are laid in each plot's own frame, rows along its length, filling it between its bunds; near the
 // camera each is real plants, farther off rows of painted cards under a painted canopy, and farthest the
 // canopy alone (seen that low and that far, the rows below it no longer show, and they cost the most).
+// Nothing pops: each level of detail fades into the next over a band of distance (both stand there, one
+// sinking as the other rises), the outermost sinks into the painted plots, and a chunk built late (the
+// camera came faster than the building) grows up out of the ground. Chunks in front of the camera are built
+// first, within a few milliseconds a frame; the film builds its next shot's ahead (`warm`).
 
 /** The plots' layout, as glsl.ts (plotFrame, plotWarp, PLOT_SIZE, PLOT_ANGLE) has it: keep the two in step. */
 const PLOT = { w: 32, h: 20, angle: 0.12 };
@@ -50,14 +54,27 @@ function fromPlots(qx: number, qy: number): [number, number] {
 /** Bare ground left inside each plot's bunds (m). */
 const MARGIN = 0.6;
 
-const CHUNK = 16;
-/** Chunks whose middle is nearer than the first are real plants, nearer than the second rows of cards; the rest canopy. */
-const LOD_AT = [20, 44] as const;
-const BUILD_PER_FRAME = 2;
-const CACHE = 160;
+const CHUNK = 8;
+/** A chunk's half-diagonal: how far its patches stand from its middle at most. */
+const CHUNK_REACH = CHUNK * 0.71;
+/**
+ * Each level of detail's band (m, as `groundReach` measures): fading in over `in`, out over `out`. Real
+ * plants, rows of cards under a canopy, the canopy alone; the last sinks into the painted plots.
+ */
+const BANDS = [
+  { in: [-2, -1], out: [16, 21] },
+  { in: [16, 21], out: [40, 47] },
+  { in: [40, 47], out: [CROP_REACH.fade, CROP_REACH.edge] },
+] as const;
+/** Milliseconds a frame may spend building chunks. */
+const BUILD_MS = 2.5;
+/** Seconds a chunk built late takes to grow up out of the ground. */
+const GROW = 0.9;
+/** Chunks kept built: those in view, and the film's next shot's, made ahead of it. */
+const CACHE = 1400;
 /** A patch's side (m), near the camera and farther off. */
 const PATCH = [1.2, 2.4, 2.4] as const;
-const CAPACITY = [2400, 1800, 4000] as const;
+const CAPACITY = [3000, 2600, 4800] as const;
 /** Where the plants of a patch stand, as a share of the paddy zone (the terrain's own mask). */
 const ZONE_MIN = 0.55;
 
@@ -67,83 +84,96 @@ const UP = new Vector3(0, 1, 0);
 // in b whether it is a panicle; uv carries each vertex's offset from the foot of its hill or plant, so the
 // shader can spread or gather a plant about its own foot.
 
-/** One leaf blade from (x, z): tapering, arching outward; unit height. */
-function blade(b: MeshBuilder, rng: Rng, x: number, z: number, part: number, height: number, width: number, bend: number): void {
-  const az = rng.range(0, Math.PI * 2);
-  const dir = new Vector3(Math.cos(az), 0, Math.sin(az));
-  const side = new Vector3(-dir.z, 0, dir.x);
-  const p = new Vector3();
-  const n = new Vector3();
-  const tangent = new Vector3();
-  const segments = 3;
-  const start = b.vertexCount;
-  for (let s = 0; s < segments; s++) {
-    const t = s / (segments - 1);
-    p.set(x, 0, z).addScaledVector(dir, bend * height * t * t).addScaledVector(UP, height * t * (1 - 0.35 * bend * t));
-    tangent.copy(dir).multiplyScalar(2 * bend * height * t).addScaledVector(UP, height).normalize();
-    n.crossVectors(side, tangent).normalize().lerp(UP, 0.5).normalize();
-    const shade = 0.45 + 0.55 * t;
-    const c: RGB = [shade, shade, part];
-    if (s === segments - 1) b.vertex(p, n, p.x - x, p.z - z, c);
-    else {
-      const half = width * (1 - t * 0.7);
-      const l = p.clone().addScaledVector(side, -half);
-      const r = p.clone().addScaledVector(side, half);
-      b.vertex(l, n, l.x - x, l.z - z, c);
-      b.vertex(r, n, r.x - x, r.z - z, c);
-    }
-  }
-  b.quad(start, start + 1, start + 3, start + 2);
-  b.tri(start + 2, start + 3, start + 4);
-}
-
-/** A ripening panicle nodding over from the top of its tiller (part 1). */
-function panicle(b: MeshBuilder, rng: Rng, x: number, z: number): void {
-  const az = rng.range(0, Math.PI * 2);
-  const dir = new Vector3(Math.cos(az), 0, Math.sin(az));
-  const side = new Vector3(-dir.z, 0, dir.x);
-  const pts = [new Vector3(0, 0.8, 0), new Vector3(0.05, 0.98, 0), new Vector3(0.15, 0.85, 0)].map((q) =>
-    new Vector3(x, q.y, z).addScaledVector(dir, q.x),
-  );
-  const start = b.vertexCount;
-  pts.forEach((q, i) => {
-    const w = i === 0 ? 0.004 : 0.016 * (1 - i * 0.25);
-    const shade = 0.8 + 0.07 * i;
-    const l = q.clone().addScaledVector(side, -w);
-    const r = q.clone().addScaledVector(side, w);
-    b.vertex(l, UP, l.x - x, l.z - z, [shade, shade, 1]);
-    b.vertex(r, UP, r.x - x, r.z - z, [shade, shade, 1]);
-  });
-  for (let i = 0; i < pts.length - 1; i++) b.quad(start + i * 2, start + i * 2 + 1, start + i * 2 + 3, start + i * 2 + 2);
-}
-
-/** A near patch of rice, 1.2 m square: four rows 0.3 m apart along its x, five hills to a row. */
+/**
+ * A near patch of rice, 1.2 m square: four rows 0.3 m apart along its x, five hills to a row. Each hill is
+ * three cards of `riceHillTexture`'s hill crossed at sixty degrees (unit height: the shader sizes it for its
+ * stage), and over it three panicles, each a ribbon of the texture's panicle arching out from the top of a
+ * tiller and hanging over (the shader lowers them out of sight until the heads come). Vertex colour: shading in
+ * r and g, and in b whether it is a panicle; `uv` each vertex's offset from its hill's foot, the texture
+ * coordinates in `uv1`.
+ */
 function ricePatch(seed: number): BufferGeometry {
   const rng = new Rng(seed);
   const b = new MeshBuilder();
+  const uv1: number[] = [];
   const S = PATCH[0];
+  const UP3 = new Vector3(0, 1, 0);
+  const p = new Vector3();
   for (let row = 0; row < 4; row++) {
     for (let k = 0; k < 5; k++) {
       const hx = ((k + 0.5) / 5 - 0.5) * S + rng.range(-0.03, 0.03);
       const hz = ((row + 0.5) / 4 - 0.5) * S + rng.range(-0.025, 0.025);
-      for (let i = 0; i < 4; i++) {
-        blade(b, rng, hx + rng.range(-0.015, 0.015), hz + rng.range(-0.015, 0.015), 0, rng.range(0.7, 1.0), rng.range(0.009, 0.013), rng.range(0.2, 0.55));
+      const turn = rng.range(0, Math.PI);
+      const tall = rng.range(0.88, 1.06);
+      // wide enough that neighbouring hills meet, as the crop closes over its rows
+      const w = rng.range(0.27, 0.33);
+      // the hill: three crossed cards, each leaning its own way a little
+      for (let c = 0; c < 3; c++) {
+        const a = turn + (c * Math.PI) / 3;
+        const dx = Math.cos(a) * w;
+        const dz = Math.sin(a) * w;
+        const lx = rng.range(-0.04, 0.04);
+        const lz = rng.range(-0.04, 0.04);
+        const n = new Vector3(-dz, 0.6, dx).normalize();
+        const shade = rng.range(0.85, 1.08);
+        const col: RGB = [shade, shade, 0];
+        const v0 = b.vertex(p.set(hx - dx, 0, hz - dz), n, -dx, -dz, col);
+        b.vertex(p.set(hx + dx, 0, hz + dz), n, dx, dz, col);
+        b.vertex(p.set(hx + dx + lx, tall, hz + dz + lz), n, dx + lx, dz + lz, col);
+        b.vertex(p.set(hx - dx + lx, tall, hz - dz + lz), n, -dx + lx, -dz + lz, col);
+        uv1.push(0, 0, 0.5, 0, 0.5, 1, 0, 1);
+        b.quad(v0, v0 + 1, v0 + 2, v0 + 3);
       }
-      panicle(b, rng, hx, hz);
+      // the panicles: from a tiller's top near the hill's crown, arching out and hanging over
+      for (let i = 0; i < 3; i++) {
+        const az = rng.range(0, Math.PI * 2);
+        const out = new Vector3(Math.cos(az), 0, Math.sin(az));
+        const side = new Vector3(-out.z, 0, out.x);
+        const base = new Vector3(hx, 0, hz).addScaledVector(out, rng.range(0.02, 0.07)).setY(tall * rng.range(0.8, 0.92));
+        const len = rng.range(0.2, 0.27);
+        const width = 0.032;
+        const shade = rng.range(0.9, 1.05);
+        const col: RGB = [shade, shade, 1];
+        const start = b.vertexCount;
+        const steps = 3;
+        for (let j = 0; j <= steps; j++) {
+          const t = j / steps;
+          // up and out, over the top, then down: a quarter of an ellipse and a little more
+          const ang = t * 2.1;
+          const q = base.clone().addScaledVector(out, Math.sin(ang) * len * 0.62).addScaledVector(UP3, (Math.cos(ang) - 0.35 * t) * len * 0.42);
+          const nrm = side.clone().cross(out.clone().multiplyScalar(Math.cos(ang)).addScaledVector(UP3, -Math.sin(ang))).normalize().lerp(UP3, 0.4).normalize();
+          const hw = width * (1 - 0.35 * t);
+          const l = q.clone().addScaledVector(side, -hw);
+          const r = q.clone().addScaledVector(side, hw);
+          b.vertex(l, nrm, l.x - hx, l.z - hz, col);
+          b.vertex(r, nrm, r.x - hx, r.z - hz, col);
+          uv1.push(0.5, t, 1, t);
+        }
+        for (let j = 0; j < steps; j++) b.quad(start + j * 2, start + j * 2 + 1, start + j * 2 + 3, start + j * 2 + 2);
+      }
     }
   }
-  return b.build();
+  const g = b.build();
+  g.setAttribute('uv1', new BufferAttribute(new Float32Array(uv1), 2));
+  return g;
 }
 
-/** A near patch of mustard, 1.2 m square: a dozen plants in flower, leaves low, racemes crowding the tops. */
+/**
+ * A near patch of mustard, 1.2 m square, sown thick: fourteen plants in flower, broad leaves low, the stems
+ * branching toward the top, each branch ending in a raceme (two crossed cards of `mustardRacemeTexture`).
+ * The racemes' texture coordinates are in `uv1` (the texture's channel 1): `uv` carries each vertex's offset
+ * from its plant's foot for the shader. Stems and leaves sample the texture's opaque white quarter.
+ */
 function mustardPatch(seed: number): BufferGeometry {
   const rng = new Rng(seed);
   const b = new MeshBuilder();
+  const uv1: number[] = [];
   const S = PATCH[0];
   const stem = rgb('#5d7a3a');
   const leaf = rgb('#4f6e47');
-  const flower = rgb('#f2cd27');
-  const pod = rgb('#86a046');
+  const solid = (n: number) => {
+    for (let i = 0; i < n; i++) uv1.push(0.9, 0.5);
+  };
   const strip = (from: Vector3, to: Vector3, w: number, c0: RGB, c1: RGB, foot: Vector3) => {
     const d = to.clone().sub(from);
     const side = new Vector3(-d.z, 0, d.x).normalize().multiplyScalar(w);
@@ -152,12 +182,13 @@ function mustardPatch(seed: number): BufferGeometry {
     const pts = [from.clone().sub(side), from.clone().add(side), to.clone().add(side), to.clone().sub(side)];
     const s = b.vertexCount;
     pts.forEach((p, i) => b.vertex(p, n, p.x - foot.x, p.z - foot.z, i < 2 ? c0 : c1));
+    solid(4);
     b.quad(s, s + 1, s + 2, s + 3);
   };
   // sown broadcast, not in rows: the plants stand where the seed fell
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 14; i++) {
     const foot = new Vector3(rng.range(-0.5, 0.5), 0, rng.range(-0.5, 0.5)).multiplyScalar(S * 0.94);
-    const h = rng.range(0.85, 1.15);
+    const h = rng.range(0.8, 1.15);
     const top = foot.clone().add(new Vector3(rng.range(-0.06, 0.06), h, rng.range(-0.06, 0.06)));
     strip(foot, top, 0.007, stem, stem, foot);
     // broad leaves low on the stem, drooping out
@@ -167,31 +198,40 @@ function mustardPatch(seed: number): BufferGeometry {
       const tip = at.clone().add(new Vector3(Math.cos(a) * 0.22, rng.range(0.02, 0.1), Math.sin(a) * 0.22));
       strip(at, tip, 0.045, leaf, mixRgb(leaf, [0.2, 0.3, 0.16], 0.4), foot);
     }
-    // branches, each ending in a raceme: two crossed cards of flowers, pods green below them
+    // branches from a fork, each ending in a raceme a little below the main one
     const fork = foot.clone().lerp(top, rng.range(0.55, 0.7));
     const tips = [top];
     for (let k = 0; k < 3; k++) {
       const a = rng.range(0, Math.PI * 2);
-      const t = top.clone().add(new Vector3(Math.cos(a) * rng.range(0.08, 0.18), rng.range(-0.15, -0.02), Math.sin(a) * rng.range(0.08, 0.18)));
+      const t = top.clone().add(new Vector3(Math.cos(a) * rng.range(0.08, 0.2), rng.range(-0.2, -0.03), Math.sin(a) * rng.range(0.08, 0.2)));
       strip(fork, t, 0.005, stem, stem, foot);
       tips.push(t);
     }
     for (const t of tips) {
-      for (const a of [0, Math.PI / 2]) {
-        const dx = Math.cos(a + i) * 0.05;
-        const dz = Math.sin(a + i) * 0.05;
+      const w = rng.range(0.07, 0.1);
+      const a0 = rng.range(0, Math.PI);
+      const shade = rng.range(0.85, 1.05);
+      const c: RGB = [shade, shade, shade];
+      for (const a of [a0, a0 + Math.PI / 2]) {
+        const dx = Math.cos(a) * w;
+        const dz = Math.sin(a) * w;
+        const n = new Vector3(-dz, 0.6, dx).normalize();
+        // the card's foot 0.17 m down the stalk (the pods), its top 0.07 m above the tip (the flowers' dome)
+        const lo = t.y - 0.17;
+        const hi = t.y + 0.07;
         const s = b.vertexCount;
-        const lo = t.y - 0.08;
-        const hi = t.y + 0.06;
-        b.vertex(new Vector3(t.x - dx, lo, t.z - dz), UP, t.x - dx - foot.x, t.z - dz - foot.z, pod);
-        b.vertex(new Vector3(t.x + dx, lo, t.z + dz), UP, t.x + dx - foot.x, t.z + dz - foot.z, pod);
-        b.vertex(new Vector3(t.x + dx * 1.2, hi, t.z + dz * 1.2), UP, t.x + dx * 1.2 - foot.x, t.z + dz * 1.2 - foot.z, flower);
-        b.vertex(new Vector3(t.x - dx * 1.2, hi, t.z - dz * 1.2), UP, t.x - dx * 1.2 - foot.x, t.z - dz * 1.2 - foot.z, flower);
+        b.vertex(new Vector3(t.x - dx, lo, t.z - dz), n, t.x - dx - foot.x, t.z - dz - foot.z, c);
+        b.vertex(new Vector3(t.x + dx, lo, t.z + dz), n, t.x + dx - foot.x, t.z + dz - foot.z, c);
+        b.vertex(new Vector3(t.x + dx, hi, t.z + dz), n, t.x + dx - foot.x, t.z + dz - foot.z, c);
+        b.vertex(new Vector3(t.x - dx, hi, t.z - dz), n, t.x - dx - foot.x, t.z - dz - foot.z, c);
+        uv1.push(0, 0, 0.75, 0, 0.75, 1, 0, 1);
         b.quad(s, s + 1, s + 2, s + 3);
       }
     }
   }
-  return b.build();
+  const g = b.build();
+  g.setAttribute('uv1', new BufferAttribute(new Float32Array(uv1), 2));
+  return g;
 }
 
 /** A middling-far patch of rice, 2.4 m square: four row cards (0.6 m apart along its z, each standing for two rows), unit height. */
@@ -205,6 +245,22 @@ function riceRows(): BufferGeometry {
     b.vertex(new Vector3(S / 2, 0, z), n, 1, 0);
     b.vertex(new Vector3(S / 2, 1, z), n, 1, 1);
     b.vertex(new Vector3(-S / 2, 1, z), n, 0, 1);
+    b.quad(s, s + 1, s + 2, s + 3);
+  }
+  return b.build();
+}
+
+/** A middling-far patch's heads: a band of card along each row card's top (0.62..1.02 of the crop's height), unit height. */
+function riceHeadRows(): BufferGeometry {
+  const b = new MeshBuilder();
+  const S = PATCH[1];
+  for (let row = 0; row < 4; row++) {
+    const z = ((row + 0.5) / 4 - 0.5) * S;
+    const n = new Vector3(0, 0.7, row % 2 ? 0.7 : -0.7).normalize();
+    const s = b.vertex(new Vector3(-S / 2, 0.62, z), n, 0, 0);
+    b.vertex(new Vector3(S / 2, 0.62, z), n, 1, 0);
+    b.vertex(new Vector3(S / 2, 1.02, z), n, 1, 1);
+    b.vertex(new Vector3(-S / 2, 1.02, z), n, 0, 1);
     b.quad(s, s + 1, s + 2, s + 3);
   }
   return b.build();
@@ -248,28 +304,34 @@ function mustardCards(seed: number): BufferGeometry {
 
 // ---- the shaders: the plot's crop now, the plant's shape for it, and the wind
 
-/** Which crop the patch's plot holds now (as the terrain paints it), and how far out it is. */
-const STAGE = /* glsl */ `
+/**
+ * Which crop the patch's plot holds now (as the terrain paints it), and how much of it stands at this level of
+ * detail: its band's share at its distance (the outermost sinking into the terrain's painted plot), and how
+ * far a chunk built late has grown.
+ */
+const stage = (lod: 0 | 1 | 2) => /* glsl */ `
 vec3 cropRoot = instanceMatrix[3].xyz;
 vec2 cropCell = floor(plotFrame(cropRoot.xz) / PLOT_SIZE);
 vec4 cropSh = cropShares(plotRank(cropCell));
 float cropStubble = max(0.0, 1.0 - cropSh.x - cropSh.y - cropSh.z - cropSh.w);
 float cropGrown = hash12(cropCell + 3.7);
-// out at the edge of the crops' reach they sink away (the terrain paints the plot's crop beyond)
-float cropFade = 1.0 - smoothstep(${CROP_REACH.fade.toFixed(1)}, ${CROP_REACH.edge.toFixed(1)}, distance(cropRoot.xz, uCamPos.xz));
+float cropD = groundReach(cropRoot);
+float cropFade = smoothstep(${BANDS[lod].in[0].toFixed(1)}, ${BANDS[lod].in[1].toFixed(1)}, cropD) * (1.0 - smoothstep(${BANDS[lod].out[0].toFixed(1)}, ${BANDS[lod].out[1].toFixed(1)}, cropD))
+  * smoothstep(aBorn, aBorn + ${GROW.toFixed(2)}, uTime);
 `;
 
 /** The rice: its height for the stage (seedling, growing, ripe, stubble), and none where the plot is in mustard or under a deep flood. */
 const RICE = /* glsl */ `
-float cropTall = cropSh.x * 0.28 + cropSh.y * mix(0.55, 0.95, cropGrown) + cropSh.z + cropStubble * 0.17;
+float cropTall = cropSh.x * 0.3 + cropSh.y * mix(0.6, 0.95, cropGrown) + cropSh.z + cropStubble * 0.17;
 float cropWater = waterSurface(cropRoot.xz);
 float cropHere = (1.0 - cropSh.w) * cropFade * smoothstep(cropWater - 0.9, cropWater - 0.5, cropRoot.y);
-// leaves: the seedlings' fresh yellow-green, deepening as the crop grows, gold as it ripens, straw once reaped
-vec3 leafC = (cropSh.x * vec3(0.2, 0.36, 0.07) + cropSh.y * mix(vec3(0.11, 0.25, 0.045), vec3(0.06, 0.15, 0.025), cropGrown)
-  + cropSh.z * vec3(0.45, 0.32, 0.07) + cropStubble * vec3(0.32, 0.24, 0.11)) / max(1.0 - cropSh.w, 1e-3);
-// heads: from late in the growing into the ripe crop, green turning gold
-float heads = cropSh.z + cropSh.y * smoothstep(0.75, 0.95, cropGrown);
-vec3 headC = mix(vec3(0.28, 0.36, 0.12), vec3(0.66, 0.48, 0.13), cropSh.z / max(cropSh.y + cropSh.z, 1e-3));
+// leaves: the seedlings' fresh bright green, the growing crop's lush yellow-green (deeper as it grows), the
+// ripe crop's yellowing gold-green, straw once reaped
+vec3 leafC = (cropSh.x * vec3(0.17, 0.44, 0.04) + cropSh.y * mix(vec3(0.15, 0.38, 0.025), vec3(0.075, 0.24, 0.018), cropGrown)
+  + cropSh.z * vec3(0.4, 0.34, 0.05) + cropStubble * vec3(0.32, 0.24, 0.11)) / max(1.0 - cropSh.w, 1e-3);
+// heads: from late in the growing into the ripe crop, pale green turning a deep gold
+float heads = cropSh.z + cropSh.y * smoothstep(0.7, 0.92, cropGrown);
+vec3 headC = mix(vec3(0.3, 0.42, 0.1), vec3(0.7, 0.46, 0.06), cropSh.z / max(cropSh.y + cropSh.z, 1e-3));
 `;
 
 /**
@@ -298,8 +360,8 @@ transformed.y *= ${tall};
 if (${k} < 0.01) transformed.y = -0.3;
 `;
 
-const NEAR_RICE = /* glsl */ `
-${STAGE}
+const nearRice = () => /* glsl */ `
+${stage(0)}
 ${RICE}
 ${gather('cropHere * mix(0.55, 1.0, smoothstep(0.2, 0.7, cropTall))', 'cropTall * cropHere')}
 if (color.b > 0.5) transformed.y = mix(-0.05, transformed.y, heads);
@@ -308,12 +370,12 @@ cropTall *= cropHere;
 ${sway(0.1)}
 `;
 
-const FAR_RICE = /* glsl */ `
-${STAGE}
+const farRice = (lod: 1 | 2, headShare: number) => /* glsl */ `
+${stage(lod)}
 ${RICE}
 transformed.y *= cropTall * cropHere;
 if (cropHere < 0.01) transformed.y = -0.3;
-vColor.rgb = mix(leafC, headC, heads * 0.35) * vColor.g;
+vColor.rgb = mix(leafC, headC, heads * ${headShare.toFixed(2)}) * vColor.g;
 cropTall *= cropHere;
 ${sway(0.1)}
 `;
@@ -331,8 +393,18 @@ const SCATTER = /* glsl */ `
 }
 `;
 
-const NEAR_MUSTARD = /* glsl */ `
-${STAGE}
+const farHeads = () => /* glsl */ `
+${stage(1)}
+${RICE}
+transformed.y *= cropTall * cropHere;
+if (cropHere * heads < 0.02) transformed.y = -0.3;
+vColor.rgb = headC * vColor.g;
+cropTall *= cropHere;
+${sway(0.1)}
+`;
+
+const nearMustard = () => /* glsl */ `
+${stage(0)}
 ${MUSTARD}
 ${gather('cropHere', 'cropHere')}
 ${SCATTER}
@@ -340,8 +412,8 @@ cropTall *= cropHere;
 ${sway(0.14)}
 `;
 
-const FAR_MUSTARD = /* glsl */ `
-${STAGE}
+const farMustard = (lod: 1 | 2) => /* glsl */ `
+${stage(lod)}
 ${MUSTARD}
 transformed.y *= cropHere;
 if (cropHere < 0.01) transformed.y = -0.3;
@@ -352,13 +424,16 @@ ${sway(0.14)}
 
 function cropMaterial(key: string, code: string, map?: Texture): MeshStandardMaterial {
   const material = new MeshStandardMaterial({ vertexColors: true, side: DoubleSide, roughness: 0.75, map: map ?? null, alphaTest: map ? 0.45 : 0 });
-  return patchMaterial(material, { translucency: 1.4, foliage: true, vertex: { key, pars: '', code } });
+  // thin leaves: the low sun through them lights the field from behind, the tips glowing
+  return patchMaterial(material, { translucency: 2.6, foliage: true, vertex: { key, pars: 'attribute float aBorn;\n', code } });
 }
 
 interface Layer {
   meshes: InstancedMesh[];
   matrices: InstancedBufferAttribute;
   colors: InstancedBufferAttribute;
+  /** When each patch's chunk was built (the shader clock), for growing in. */
+  born: InstancedBufferAttribute;
   capacity: number;
   /** Which of `meshes` are the mustard (shown only while some plot holds it). */
   mustard: InstancedMesh[];
@@ -370,6 +445,16 @@ interface ChunkData {
   c: Float32Array;
   n: number;
   used: number;
+  /** When it was built (the shader clock); long ago for those built out of sight. */
+  born: number;
+}
+
+/** A chunk a view wants: its key (x, z, level of detail), its middle, and its distance. */
+interface Want {
+  key: string;
+  x: number;
+  z: number;
+  d: number;
 }
 
 /** The crops round the camera, rebuilt chunk by chunk as the view moves. */
@@ -377,7 +462,7 @@ export class Crops {
   readonly group = new Group();
   private readonly layers: [Layer, Layer, Layer];
   private readonly cache = new Map<string, ChunkData>();
-  private wanted: string[] = [];
+  private wanted: Want[] = [];
   private centre = '';
   private dirty = false;
   private frame = 0;
@@ -387,14 +472,25 @@ export class Crops {
     const riceRow = riceRowTexture(13);
     const riceCanopy = riceCanopyTexture(14);
     const mustardCanopy = mustardCanopyTexture(17);
+    // the near rice's hills and panicles, read through its second uv set
+    const hill = riceHillTexture(19);
+    hill.channel = 1;
+    const riceHeads = riceHeadsTexture(20);
+    // the near mustard's racemes: read through its second uv set
+    const racemes = mustardRacemeTexture(18);
+    racemes.channel = 1;
     const riceTop = canopy(0.84);
     const mustardTop = canopy(0.92);
     const make = (lod: 0 | 1 | 2, parts: { geometry: BufferGeometry; key: string; code: string; map?: Texture; mustard: boolean }[]): Layer => {
       const capacity = CAPACITY[lod];
       const matrices = new InstancedBufferAttribute(new Float32Array(capacity * 16), 16);
       const colors = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+      const born = new InstancedBufferAttribute(new Float32Array(capacity), 1);
       const meshes = parts.map((p) => {
-        const mesh = new InstancedMesh(p.geometry, cropMaterial(p.key, p.code, p.map), capacity);
+        // each level of detail its own copy: the birth times are per layer
+        const geometry = p.geometry.clone();
+        geometry.setAttribute('aBorn', born);
+        const mesh = new InstancedMesh(geometry, cropMaterial(`${p.key}-${lod}`, p.code, p.map), capacity);
         // every part of a patch shares its place and tint
         mesh.instanceMatrix = matrices;
         mesh.instanceColor = colors;
@@ -407,57 +503,91 @@ export class Crops {
         this.group.add(mesh);
         return mesh;
       });
-      return { meshes, matrices, colors, capacity, mustard: meshes.filter((_, i) => parts[i].mustard) };
+      return { meshes, matrices, colors, born, capacity, mustard: meshes.filter((_, i) => parts[i].mustard) };
     };
     this.layers = [
       make(0, [
-        { geometry: ricePatch(11), key: 'crop-rice-near', code: NEAR_RICE, mustard: false },
-        { geometry: mustardPatch(12), key: 'crop-mustard-near', code: NEAR_MUSTARD, mustard: true },
+        { geometry: ricePatch(11), key: 'crop-rice-near', code: nearRice(), map: hill, mustard: false },
+        { geometry: mustardPatch(12), key: 'crop-mustard-near', code: nearMustard(), map: racemes, mustard: true },
       ]),
       make(1, [
-        { geometry: riceRows(), key: 'crop-rice-rows', code: FAR_RICE, map: riceRow, mustard: false },
-        { geometry: riceTop, key: 'crop-rice-top', code: FAR_RICE, map: riceCanopy, mustard: false },
-        { geometry: mustardCards(15), key: 'crop-mustard-cards', code: FAR_MUSTARD, map: mustardTexture(16), mustard: true },
-        { geometry: mustardTop, key: 'crop-mustard-top', code: FAR_MUSTARD, map: mustardCanopy, mustard: true },
+        { geometry: riceRows(), key: 'crop-rice-rows', code: farRice(1, 0.3), map: riceRow, mustard: false },
+        { geometry: riceHeadRows(), key: 'crop-rice-heads', code: farHeads(), map: riceHeads, mustard: false },
+        { geometry: riceTop, key: 'crop-rice-top', code: farRice(1, 0.7), map: riceCanopy, mustard: false },
+        { geometry: mustardCards(15), key: 'crop-mustard-cards', code: farMustard(1), map: mustardTexture(16), mustard: true },
+        { geometry: mustardTop, key: 'crop-mustard-top', code: farMustard(1), map: mustardCanopy, mustard: true },
       ]),
       make(2, [
-        { geometry: riceTop, key: 'crop-rice-top', code: FAR_RICE, map: riceCanopy, mustard: false },
-        { geometry: mustardTop, key: 'crop-mustard-top', code: FAR_MUSTARD, map: mustardCanopy, mustard: true },
+        { geometry: riceTop, key: 'crop-rice-top', code: farRice(2, 0.7), map: riceCanopy, mustard: false },
+        { geometry: mustardTop, key: 'crop-mustard-top', code: farMustard(2), map: mustardCanopy, mustard: true },
       ]),
     ];
   }
 
-  /** Call every frame with the camera's position. `all` builds every missing chunk now (for stills). */
-  update(view: Vector3, all = false): void {
+  /**
+   * The chunks a view at `view` wants, nearest first, each keyed with every level of detail whose band reaches
+   * any of its patches (in a band's fade both stand). Seen from higher up they reach less far.
+   */
+  private wantedAt(view: Vector3): Want[] {
+    const cx = Math.floor(view.x / CHUNK);
+    const cz = Math.floor(view.z / CHUNK);
+    const lift = Math.max(0, view.y - terrainHeight(view.x, view.z) - 3) * CROP_REACH.lift;
+    const R = Math.ceil((CROP_REACH.edge + CHUNK_REACH) / CHUNK);
+    const list: Want[] = [];
+    for (let dz = -R; dz <= R; dz++) {
+      for (let dx = -R; dx <= R; dx++) {
+        const x = (cx + dx + 0.5) * CHUNK;
+        const z = (cz + dz + 0.5) * CHUNK;
+        const d = Math.hypot(x - view.x, z - view.z, lift);
+        BANDS.forEach((b, lod) => {
+          if (d > b.in[0] - CHUNK_REACH && d < b.out[1] + CHUNK_REACH) list.push({ key: `${cx + dx},${cz + dz},${lod}`, x, z, d });
+        });
+      }
+    }
+    return list.sort((a, b) => a.d - b.d);
+  }
+
+  /** Builds the chunks a view at `view` will want, until `until` (performance.now()), without showing them: the film readies its next shot. True once all are built. */
+  warm(view: Vector3, until: number): boolean {
+    for (const w of this.wantedAt(view)) {
+      const chunk = this.cache.get(w.key);
+      if (chunk) {
+        chunk.used = this.frame;
+        continue;
+      }
+      if (performance.now() > until) return false;
+      // out of sight as it is built: it stands grown when the camera comes
+      this.cache.set(w.key, this.build(w.key, true));
+    }
+    return true;
+  }
+
+  /**
+   * Call every frame with the camera's position and which way it looks. `all` builds every missing chunk now,
+   * grown (for stills); otherwise a few milliseconds' worth, those in front of the camera and the nearest first.
+   */
+  update(view: Vector3, all = false, forward?: Vector3): void {
     this.frame++;
     // mustard is drawn only while some plot holds it
     const mustard = G.uCrops.value.w > 0.002;
     for (const layer of this.layers) for (const mesh of layer.mustard) mesh.visible = mustard;
-    const cx = Math.floor(view.x / CHUNK);
-    const cz = Math.floor(view.z / CHUNK);
-    const centre = `${cx},${cz}`;
+    const lift = Math.max(0, view.y - terrainHeight(view.x, view.z) - 3);
+    const centre = `${Math.floor(view.x / CHUNK)},${Math.floor(view.z / CHUNK)},${Math.round(lift / 3)}`;
     if (centre !== this.centre) {
       this.centre = centre;
-      const reach = CROP_REACH.edge + CHUNK * 0.71;
-      const R = Math.ceil(reach / CHUNK);
-      const list: { key: string; d: number }[] = [];
-      for (let dz = -R; dz <= R; dz++) {
-        for (let dx = -R; dx <= R; dx++) {
-          const d = Math.hypot((cx + dx + 0.5) * CHUNK - view.x, (cz + dz + 0.5) * CHUNK - view.z);
-          if (d < reach) list.push({ key: `${cx + dx},${cz + dz},${d < LOD_AT[0] ? 0 : d < LOD_AT[1] ? 1 : 2}`, d });
-        }
-      }
-      list.sort((a, b) => a.d - b.d);
-      this.wanted = list.map((l) => l.key);
+      this.wanted = this.wantedAt(view);
       this.dirty = true;
     }
-    let built = 0;
-    for (const key of this.wanted) {
-      if (built >= BUILD_PER_FRAME && !all) break;
-      if (this.cache.has(key)) continue;
-      this.cache.set(key, this.build(key));
-      built++;
-      this.dirty = true;
+    const start = performance.now();
+    for (const ahead of [true, false]) {
+      for (const w of this.wanted) {
+        if (this.cache.has(w.key)) continue;
+        if (!all && performance.now() - start > BUILD_MS) break;
+        // first those ahead of the camera (or right by it), then the rest
+        if (ahead && forward && w.d > 12 && (w.x - view.x) * forward.x + (w.z - view.z) * forward.z < 0) continue;
+        this.cache.set(w.key, this.build(w.key, all));
+        this.dirty = true;
+      }
     }
     if (this.dirty) this.upload();
   }
@@ -465,21 +595,23 @@ export class Crops {
   private upload(): void {
     this.dirty = false;
     const at = [0, 0, 0];
-    for (const key of this.wanted) {
-      const chunk = this.cache.get(key);
+    for (const w of this.wanted) {
+      const chunk = this.cache.get(w.key);
       if (!chunk) continue;
       chunk.used = this.frame;
-      const lod = Number(key.split(',')[2]);
+      const lod = Number(w.key.split(',')[2]);
       const layer = this.layers[lod];
       const n = Math.min(chunk.n, layer.capacity - at[lod]);
       if (n <= 0) continue;
       (layer.matrices.array as Float32Array).set(chunk.m.subarray(0, n * 16), at[lod] * 16);
       (layer.colors.array as Float32Array).set(chunk.c.subarray(0, n * 3), at[lod] * 3);
+      (layer.born.array as Float32Array).fill(chunk.born, at[lod], at[lod] + n);
       at[lod] += n;
     }
     this.layers.forEach((layer, lod) => {
       layer.matrices.needsUpdate = true;
       layer.colors.needsUpdate = true;
+      layer.born.needsUpdate = true;
       for (const mesh of layer.meshes) mesh.count = at[lod];
     });
     if (this.cache.size > CACHE) {
@@ -489,7 +621,8 @@ export class Crops {
   }
 
   /** The patches whose middles fall in a chunk: each plot filled between its bunds, rows along its length. */
-  private build(key: string): ChunkData {
+  /** `grown`: built out of sight (or for a still), so it stands at once; else it grows in from now. */
+  private build(key: string, grown = false): ChunkData {
     const [cx, cz, lod] = key.split(',').map(Number);
     const x0 = cx * CHUNK;
     const z0 = cz * CHUNK;
@@ -543,6 +676,6 @@ export class Crops {
         }
       }
     }
-    return { key, m: new Float32Array(m), c: new Float32Array(col), n: col.length / 3, used: this.frame };
+    return { key, m: new Float32Array(m), c: new Float32Array(col), n: col.length / 3, used: this.frame, born: grown ? -1e4 : G.uTime.value };
   }
 }

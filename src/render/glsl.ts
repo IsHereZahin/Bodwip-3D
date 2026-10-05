@@ -1,8 +1,10 @@
 /**
  * How far round the camera the crops stand in 3D (world/crops.ts): full height out to `fade`, gone by `edge`
- * (m). Beyond, the terrain paints the plots with the crop's colour; within, it paints the ground under them.
+ * (m), measured by `groundReach` (the camera's height above them counting double, so seen from the air the
+ * fields are the terrain's painted plots). Beyond, the terrain paints the plots with the crop's colour;
+ * within, it paints the ground under them.
  */
-export const CROP_REACH = { fade: 64, edge: 80 } as const;
+export const CROP_REACH = { fade: 64, edge: 80, lift: 2 } as const;
 
 /**
  * Shared uniforms, noise and aerial perspective. Included exactly once in every scene shader
@@ -104,6 +106,12 @@ vec2 plotWarp(vec2 p) {
 }
 vec2 plotFrame(vec2 wp) {
   return mat2(cos(PLOT_ANGLE), -sin(PLOT_ANGLE), sin(PLOT_ANGLE), cos(PLOT_ANGLE)) * (wp + plotWarp(wp));
+}
+// How far the 3D crops at p are from the camera, as their reach measures it (CROP_REACH in glsl.ts)
+float groundReach(vec3 p) {
+  vec2 d = p.xz - uCamPos.xz;
+  float up = max(uCamPos.y - p.y - 3.0, 0.0) * ${CROP_REACH.lift.toFixed(1)};
+  return sqrt(dot(d, d) + up * up);
 }
 // A plot's place in the order the season plants and reaps them (0..1): a field's worth of neighbouring plots
 // is worked together, so the stages lie over the land in broad patches, each plot a little ahead or behind

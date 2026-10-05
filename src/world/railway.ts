@@ -146,7 +146,8 @@ const GAP = 0.8;
 const NOSE = 2.4;
 const COACHES = 6;
 /** Running speed (m/s, ≈ 60 km/h), and how often a train comes by (s); one comes each way in turn. */
-const SPEED = 16.5;
+export const TRAIN_SPEED = 16.5;
+const SPEED = TRAIN_SPEED;
 const EVERY = 300;
 
 /** A car's cross-section (across, up): skirt, sides with a little tumblehome, a chamfered roof. */

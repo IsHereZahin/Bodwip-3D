@@ -38,7 +38,10 @@ import { Girl } from './world/girl';
 import { cullBeyond, setCullReach, updateCulling } from './render/cull';
 import { buildSky } from './world/sky';
 import { Terrain } from './world/terrain';
-import { buildVegetation } from './world/vegetation';
+import { buildVegetation, treeCrowns } from './world/vegetation';
+import { FallingLeaves } from './world/leaves';
+import { Fish } from './world/fish';
+import { Songbirds } from './world/songbirds';
 import { buildVillages, planGhats, planHuts } from './world/village';
 import { buildSanko } from './world/sanko';
 import { buildYards } from './world/yard';
@@ -65,6 +68,8 @@ const SYNODIC = 29.530589;
 /** Untouched this long, the camera turns to watch a sky event by itself; longer, the film tour starts. */
 const WATCH_IDLE_MS = 12000;
 const FILM_IDLE_MS = 30000;
+/** Milliseconds a frame may spend building the film's next shot ahead of it. */
+const WARM_MS = 3;
 
 /** Lets the loader repaint between build steps. */
 const nextTask = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -135,6 +140,14 @@ async function main(hud: Hud): Promise<void> {
   const vegetation = buildVegetation(standing, surfaces.bark, [BRIDGE_CLEARING, BANYAN_CLEARING], bridgeTrees());
   scene.add(vegetation);
   cullBeyond(vegetation, 1900);
+  // the leaves and petals the trees round the camera let fall (the banyan's too)
+  const leaves = new FallingLeaves(treeCrowns());
+  scene.add(leaves.mesh);
+  // the small birds in the trees, and the fish in the water, round the camera
+  const songbirds = new Songbirds(treeCrowns());
+  scene.add(songbirds.group);
+  const fish = new Fish();
+  scene.add(fish.group);
   // the ways, in 1.3 km cells: the far ones are left undrawn
   const roads = buildRoads(terrainHeight);
   scene.add(roads);
@@ -246,17 +259,26 @@ async function main(hud: Hud): Promise<void> {
       return rig.boat.course;
     },
     birds: (at, heading) => life.launchAll(at, heading, 60),
+    train: (s, west) => train.place(t, s, west),
     get sunDir() {
       return env.sunDir;
     },
     get moonDir() {
       return env.moonDir;
     },
-    prepare: (at) => {
-      terrain.update(at, true);
-      water.update(at.x, at.z, true);
-      meadow.update(at, true);
-      crops.update(at, true);
+    prepare: (points) => {
+      for (let i = points.length - 1; i >= 0; i--) {
+        terrain.update(points[i], true);
+        meadow.update(points[i], true);
+        crops.update(points[i], true);
+      }
+      water.update(points[0].x, points[0].z, true);
+    },
+    warm: (points) => {
+      const until = performance.now() + WARM_MS;
+      let done = true;
+      for (const p of points) done = terrain.warm(p, until) && meadow.warm(p, until) && crops.warm(p, until) && done;
+      return done;
     },
   };
   const director = new Director(tourScenes(ghats), stage);
@@ -571,6 +593,7 @@ async function main(hud: Hud): Promise<void> {
   const debug = { freeze: false };
   let t = 0;
   const focus = new Vector3();
+  const forward = new Vector3();
   /**
    * The season from the day of the year, the weather on it, and the wind they make; `settle` jumps
    * straight to where they are heading (for stills and a fresh season) instead of easing there.
@@ -619,6 +642,9 @@ async function main(hud: Hud): Promise<void> {
     const simStart = performance.now();
     // the hyacinth meets the hero's hull and blade
     drift.update(dt, t, camera.position, b, hero.blade);
+    leaves.update(dt, t, camera.position);
+    songbirds.update(dt, t, camera.position, env.night > 0.5 || weather.rain > 0.5);
+    fish.update(dt, t, camera.position, b.pos);
     // the bil's lilies give way to her hull and blade and are drawn back by their stems
     bil.update(dt, t, b, hero.blade, hero.bladeWet);
     perf.driftMs += (performance.now() - simStart - perf.driftMs) * 0.1;
@@ -627,8 +653,10 @@ async function main(hud: Hud): Promise<void> {
     sky.mesh.position.copy(camera.position);
     terrain.update(camera.position);
     water.update(camera.position.x, camera.position.z);
-    meadow.update(camera.position);
-    crops.update(camera.position);
+    // the grass and the crops build what the camera faces first
+    camera.getWorldDirection(forward);
+    meadow.update(camera.position, false, forward);
+    crops.update(camera.position, false, forward);
     // the shadow box rides ahead of the view, snapped so it redraws only every few metres
     if (director.active) focus.copy(director.focus);
     else rig.focus(focus);
@@ -665,7 +693,7 @@ async function main(hud: Hud): Promise<void> {
     const loop = rig.mode === 'follow' || director.active ? rig.fade : 0;
     updateCulling(camera.position);
     pipeline.render(renderer, scene, camera, {
-      exposure: env.exposure,
+      exposure: env.exposure * director.exposure,
       fade: Math.max(cut, loop),
       fadeColor: loop > cut ? MIST : BLACK,
       night: env.night,
@@ -860,6 +888,8 @@ async function main(hud: Hud): Promise<void> {
           train.place(t, s, forward);
           step(0.001);
         },
+        /** Where the first few falling leaves are. */
+        leaves: (n = 6) => leaves.sample(n),
         birds(ahead = 40) {
           life.launchAll(rig.boat.pos, rig.boat.heading, ahead);
           step(0.016);

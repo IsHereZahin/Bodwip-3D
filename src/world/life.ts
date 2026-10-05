@@ -22,7 +22,7 @@ import { JOURNEY, journeyAt, journeyFrame, journeyHalfWidth, terrainHeight, wate
 // ---------- birds ----------
 
 /** Body along +z, wings out along ±x; `aWing` marks wing vertices for the flap. */
-function birdGeometry(span: number, bodyLen: number): BufferGeometry {
+export function birdGeometry(span: number, bodyLen: number): BufferGeometry {
   const P: number[] = [];
   const W: number[] = [];
   const v = (x: number, y: number, z: number, wing: number) => {
@@ -46,7 +46,7 @@ function birdGeometry(span: number, bodyLen: number): BufferGeometry {
   return g;
 }
 
-const FLAP = {
+export const FLAP = {
   key: 'bird-flap',
   pars: 'attribute float aWing;\nattribute vec2 aBird;\n',
   code: /* glsl */ `

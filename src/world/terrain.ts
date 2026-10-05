@@ -348,6 +348,23 @@ export class Terrain {
     this.evict();
   }
 
+  /**
+   * Builds the patches a camera at `eye` will need, until `until` (performance.now()), without showing them:
+   * the film readies its next shot. True once all are built.
+   */
+  warm(eye: Vector3, until: number): boolean {
+    const want: Node[] = [];
+    this.select(this.root, eye, want);
+    for (const n of want) {
+      if (!this.built.has(n.key)) {
+        if (performance.now() > until) return false;
+        this.build(n).visible = false;
+      }
+      this.lastUsed.set(n.key, this.frame);
+    }
+    return true;
+  }
+
   private select(n: Node, eye: Vector3, out: Node[]): void {
     const d = Math.hypot(eye.x - n.x, eye.z - n.z, Math.max(0, eye.y - 20));
     if (n.size <= LEAF || d > n.size * SPLIT) {

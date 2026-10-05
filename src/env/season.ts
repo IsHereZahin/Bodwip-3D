@@ -95,9 +95,9 @@ const KEYS: readonly Key[] = [
   // গ্রীষ্ম (mid May): boro harvest, dust and heat haze, krishnachura, sudden squalls (kalboishakhi)
   { at: 134, flow: 0.8, silt: '#7e7050', green: 0.7, dry: 0.7, blossom: 0.25, kash: 0, lily: 0.55, crops: [0.1, 0.25, 0.45, 0], flood: 0.15, soilWet: 0.15, cloud: 0.35, rain: 0.12, fog: 0, haze: 0.6, wind: 0.95, gusts: 1, windAngle: TOWARD_N, light: 1.08, warm: 0.12, salt: 0.85, swell: 0.95 },
   // বর্ষা (mid July): the river high, fast and brown, aman seedlings in flooded plots, lilies everywhere, rain
-  { at: 195, flow: 1.6, silt: '#8a6a40', green: 1, dry: 0, blossom: 0, kash: 0, lily: 1, crops: [0.55, 0.3, 0, 0], flood: 0.9, soilWet: 1, cloud: 0.85, rain: 0.55, fog: 0.1, haze: 0.3, wind: 1.1, gusts: 0.8, windAngle: TOWARD_NE, light: 0.65, warm: -0.05, salt: 0, swell: 1.6 },
+  { at: 195, flow: 1.6, silt: '#8a6a40', green: 1, dry: 0, blossom: 0, kash: 0, lily: 1, crops: [0.6, 0.38, 0, 0], flood: 0.9, soilWet: 1, cloud: 0.85, rain: 0.55, fog: 0.1, haze: 0.3, wind: 1.1, gusts: 0.8, windAngle: TOWARD_NE, light: 0.65, warm: -0.05, salt: 0, swell: 1.6 },
   // শরৎ (mid September): white clouds in a blue sky, kash in plume on the chars, lush green aman
-  { at: 257, flow: 1.2, silt: '#7d6a46', green: 0.95, dry: 0.1, blossom: 0, kash: 1, lily: 0.9, crops: [0.1, 0.85, 0, 0], flood: 0.45, soilWet: 0.55, cloud: 0.45, rain: 0.08, fog: 0.3, haze: 0.15, wind: 0.75, gusts: 0.5, windAngle: TOWARD_W, light: 1, warm: 0, salt: 0.2, swell: 1.1 },
+  { at: 257, flow: 1.2, silt: '#7d6a46', green: 0.95, dry: 0.1, blossom: 0, kash: 1, lily: 0.9, crops: [0.08, 0.9, 0, 0], flood: 0.45, soilWet: 0.55, cloud: 0.45, rain: 0.08, fog: 0.3, haze: 0.15, wind: 0.75, gusts: 0.5, windAngle: TOWARD_W, light: 1, warm: 0, salt: 0.2, swell: 1.1 },
   // হেমন্ত (mid November): golden aman and the harvest, mist in the mornings, the water falling
   { at: 318, flow: 0.95, silt: '#786a4c', green: 0.8, dry: 0.3, blossom: 0, kash: 0.45, lily: 0.55, crops: [0, 0.25, 0.6, 0], flood: 0.15, soilWet: 0.35, cloud: 0.2, rain: 0.02, fog: 0.6, haze: 0.2, wind: 0.55, gusts: 0.35, windAngle: TOWARD_SW, light: 0.98, warm: 0.06, salt: 0.7, swell: 0.75 },
 ];

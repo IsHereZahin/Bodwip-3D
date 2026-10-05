@@ -11,6 +11,7 @@ import type { Surfaces } from '../render/surfaces';
 import {
   bananaLeafTexture,
   grassTexture,
+  palmFanTexture,
   kashTexture,
   leafClusterTexture,
   palmBarkTexture,
@@ -40,7 +41,7 @@ import {
   terrainHeight,
   type Mound,
 } from './geography';
-import { FAR_GROVES, HILLS, WORLD } from './plan';
+import { BANYAN, FAR_GROVES, HILLS, WORLD } from './plan';
 import { roadLines } from './roads';
 import { KHAL, SIDE_KHAL, journeyDistance, type Waterway } from './waterways';
 import type { HutPlan } from './village';
@@ -232,6 +233,58 @@ function palm(rng: Rng, kind: PalmKind, cheap = false): TreeParts {
   return { wood: wood.build(), leaves: leaves.build() };
 }
 
+/**
+ * A tal (palmyra), as the roads through the fields are lined with them: a straight dark trunk, thickest at its
+ * foot and swelling a little two thirds up, and a round crown of stiff fan leaves on their stalks (each a card of
+ * `palmFanTexture`), the youngest upright, the oldest hanging, a few dead ones brown below. `cheap`: fewer leaves,
+ * a coarser trunk, for the far ones.
+ */
+function tal(rng: Rng, cheap = false): TreeParts {
+  const wood = new MeshBuilder();
+  const leaves = new MeshBuilder();
+  const H = rng.range(9.5, 13);
+  const leanAz = rng.range(0, Math.PI * 2);
+  const lean = rng.range(0.05, 0.45);
+  const pts: Vector3[] = [];
+  const radii: number[] = [];
+  const steps = cheap ? 4 : 9;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    pts.push(new Vector3(Math.cos(leanAz) * lean * t * t, H * t, Math.sin(leanAz) * lean * t * t));
+    radii.push(0.3 * (1 - 0.25 * t + 0.12 * Math.exp(-(((t - 0.68) / 0.12) ** 2))) * (i === 0 ? 1.4 : 1));
+  }
+  taperedTube(wood, pts, radii, cheap ? 5 : 8, rgb('#c4bcb0'), 1.2);
+  const top = pts[steps].clone().add(new Vector3(0, 0.3, 0));
+  const n = cheap ? 18 : 36;
+  const up = new Vector3(0, 1, 0);
+  for (let i = 0; i < n + 4; i++) {
+    const dead = i >= n;
+    const az = rng.range(0, Math.PI * 2);
+    // the crown a ball of them: upright in the middle, out to the sides, the oldest hanging; the dead ones lower
+    const elev = dead ? rng.range(-1.35, -1.0) : Math.asin(rng.range(-0.55, 0.99));
+    const dir = new Vector3(Math.cos(az) * Math.cos(elev), Math.sin(elev), Math.sin(az) * Math.cos(elev));
+    const size = rng.range(1.35, 1.65) * (dead ? 0.85 : 1);
+    const along = dir.clone().multiplyScalar(size * 1.05);
+    // the fan faces out and a little up, turned about the stalk its own way
+    const side = new Vector3().crossVectors(dir, up);
+    if (side.lengthSq() < 1e-4) side.set(1, 0, 0);
+    side.normalize().applyAxisAngle(dir, rng.range(-0.5, 0.5)).multiplyScalar(size * 1.05);
+    const nrm = new Vector3().crossVectors(side, along).normalize().lerp(dir, 0.5).normalize();
+    const base = top.clone().addScaledVector(dir, 0.2);
+    card(leaves, base, side, along, nrm, dead ? rgb('#a88a58') : scaleRgb(WHITE, rng.range(0.85, 1.08)), true);
+  }
+  // taperedTube winds its triangles inward (CLAUDE.md): turned outward here, so the single-sided trunk shows
+  // its near side, lit as it faces the sun
+  const trunk = wood.build();
+  const index = trunk.getIndex();
+  if (index) {
+    const a = index.array;
+    for (let i = 0; i + 2 < a.length; i += 3) [a[i + 1], a[i + 2]] = [a[i + 2], a[i + 1]];
+    index.needsUpdate = true;
+  }
+  return { wood: trunk, leaves: leaves.build() };
+}
+
 function banana(rng: Rng): TreeParts {
   const wood = new MeshBuilder();
   const leaves = new MeshBuilder();
@@ -410,6 +463,46 @@ function kashStretch(way: Waterway, s: number, side: 1 | -1): boolean {
 
 /** Where the kash stands thickest (set when the vegetation is built): the film's kash scene stands in it. */
 let thickestKash: { x: number; z: number } | null = null;
+
+/** A broadleaf tree's crown: its middle (world), its reach, and whether it is one of those that flower red in spring. */
+export interface Crown {
+  x: number;
+  y: number;
+  z: number;
+  r: number;
+  blossom: boolean;
+}
+/** Every broadleaf crown (set when the vegetation is built), the banyan's among them: the falling leaves come from them (world/leaves.ts). */
+const CROWNS: Crown[] = [];
+export function treeCrowns(): readonly Crown[] {
+  return CROWNS;
+}
+/** The crowns filed in 40 m cells, for `overCrowns`. */
+const CROWN_CELLS = new Map<number, Crown[]>();
+const crownCell = (i: number, j: number) => (i + 4096) * 8192 + (j + 4096);
+
+/**
+ * The height a camera at (x, z) must be above to pass over every crown there (with `margin` m to spare), or
+ * -Infinity where no crown is: the film's flights keep above it.
+ */
+export function overCrowns(x: number, z: number, margin = 1.5): number {
+  let top = -Infinity;
+  const i0 = Math.floor(x / 40);
+  const j0 = Math.floor(z / 40);
+  for (let i = i0 - 1; i <= i0 + 1; i++) {
+    for (let j = j0 - 1; j <= j0 + 1; j++) {
+      for (const c of CROWN_CELLS.get(crownCell(i, j)) ?? []) {
+        // a dome over the crown's top, reaching down to nothing a few metres beyond its edge, so the height to
+        // keep above rises and falls smoothly as a camera comes over it
+        const R = c.r + margin + 4;
+        const d2 = (c.x - x) ** 2 + (c.z - z) ** 2;
+        if (d2 >= R * R) continue;
+        top = Math.max(top, (c.y + 0.85 * c.r + margin) * Math.sqrt(1 - d2 / (R * R)));
+      }
+    }
+  }
+  return top;
+}
 export function kashStand(): { x: number; z: number } | null {
   return thickestKash;
 }
@@ -498,6 +591,7 @@ export function buildVegetation(
     bamboo: leafClusterTexture(13, ['#4e6a24', '#5f7d2b', '#6f8c33', '#7f983c'], { count: 70, len: [0.18, 0.3], width: 0.16 }),
     hibiscus: leafClusterTexture(19, ['#1d3812', '#264818', '#30571d', '#3b6624'], { count: 80, len: [0.12, 0.18], width: 0.6 }),
     frond: palmFrondTexture(14),
+    fan: palmFanTexture(21),
     banana: bananaLeafTexture(15),
     kash: kashTexture(16),
     grass: grassTexture(17),
@@ -544,6 +638,7 @@ export function buildVegetation(
     rain: leafMat(tex.rain, 0.3, 6, 0.78, 'tree'),
     bamboo: leafMat(tex.bamboo, 0.45, 12),
     frond: leafMat({ map: tex.frond }, 0.2, 12),
+    fan: leafMat({ map: tex.fan }, 0.14, 14),
     banana: leafMat({ map: tex.banana }, 0.12, 3),
     hibiscus: leafMat(tex.hibiscus, 0.06, 1.5, 0.5),
     kash: patchMaterial(
@@ -579,6 +674,7 @@ export function buildVegetation(
   const supariFar = variants(1, (r) => palm(r, 'supari', true));
   const dateFar = variants(1, (r) => palm(r, 'date', true));
   const bananas = variants(1, banana);
+  const tals = variants(3, (r) => tal(r));
   const bamboos = variants(1, bamboo);
   const kash = variants(3, kashTuft);
   const grass = variants(3, (r) => tuft(r, [7, 10], [0.4, 0.8], 0.24, 1.2));
@@ -604,8 +700,21 @@ export function buildVegetation(
     bamboo: bucket(bamboos, mats.bamboo, culmMat),
     joba: bucket(joba, mats.hibiscus, flowerMat),
     akashmoni: bucket(akashmoni, mats.akashmoni),
+    tal: bucket(tals, mats.fan, palmWood),
   };
-  const put = (b: Bucket, p: Placement) => b.items[rng.int(0, b.items.length - 1)].push(p);
+  // where each broadleaf's crown sits over its foot (as `broadleaf` builds them, at their middling size), for the falling leaves
+  const crownOf = new Map<Bucket, { y: number; r: number }>([
+    [B.mango, { y: 5.2, r: 4.1 }],
+    [B.rain, { y: 6.8, r: 6.7 }],
+    [B.akashmoni, { y: 6.4, r: 3.7 }],
+    [B.far, { y: 6.5, r: 5.5 }],
+  ]);
+  const put = (b: Bucket, p: Placement) => {
+    b.items[rng.int(0, b.items.length - 1)].push(p);
+    const c = crownOf.get(b);
+    // all of these take the spring's red flower where the shader gives it (`seasonal: 'tree'`)
+    if (c) CROWNS.push({ x: p.x, y: p.y + c.y * p.s, z: p.z, r: c.r * p.s, blossom: true });
+  };
   for (const f of featured) put(B[f.kind], { x: f.x, y: terrainHeight(f.x, f.z) - 0.15, z: f.z, ry: f.ry, s: f.s });
 
   // the homesteads' joba bushes by the houses: one or two beside a house, by the door or the yard
@@ -738,20 +847,38 @@ export function buildVegetation(
     }
   }
 
-  // the brick road under its trees: a row each side (rain trees and akashmoni, as the roads are planted),
-  // gaps where houses, ponds or the bridge come up to it
+  // the brick road under its trees: through the village a row each side of rain trees and akashmoni (as the
+  // roads are planted), gaps where houses, ponds or the bridge come up to it; out where it crosses open fields,
+  // close rows of tal palms both sides, the way Bengal's field roads are lined with them
+  const openField = (x: number, z: number, nx: number, nz: number) =>
+    [16, 30].every((d) => landUse(x + nx * d, z + nz * d).field > 0.75 && landUse(x - nx * d, z - nz * d).field > 0.75);
   for (const line of roadLines()) {
     if (!line.raised) continue;
     const pts = line.points;
-    for (let k = 0; k + 1 < pts.length; k += 5) {
+    // tal every 7 m or so, one row's palms between the other's; the other trees farther apart
+    for (let k = 0; k + 1 < pts.length; k++) {
       const [ax, az] = pts[k];
       const [bx, bz] = pts[k + 1];
       const len = Math.hypot(bx - ax, bz - az) || 1;
+      const nx = (bz - az) / len;
+      const nz = -(bx - ax) / len;
+      const open = openField(ax, az, nx, nz);
+      if (!open && k % 5) continue;
       for (const side of [-1, 1]) {
+        if (open) {
+          // every 2.5 m point is a place; each side takes every third, the two sides out of step
+          if ((k + (side > 0 ? 0 : 1)) % 3) continue;
+          const off = line.half + 1.7 + rng.range(0, 0.5);
+          const x = ax + nx * off * side + rng.range(-0.4, 0.4);
+          const z = az + nz * off * side + rng.range(-0.4, 0.4);
+          if (onBridge(x, z, 18) || rng.next() < 0.06) continue;
+          plant(B.tal, x, z, 1.6, rng.range(0.85, 1.12), 2);
+          continue;
+        }
         if (rng.next() < 0.3) continue;
         const off = line.half + 3.2 + rng.range(0, 1.5);
-        const x = ax + ((bz - az) / len) * off * side;
-        const z = az - ((bx - ax) / len) * off * side;
+        const x = ax + nx * off * side;
+        const z = az + nz * off * side;
         if (onBridge(x, z, 18)) continue;
         plant(rng.next() < 0.6 ? B.rain : B.akashmoni, x, z, 3.5, rng.range(0.9, 1.2), 2);
       }
@@ -817,7 +944,7 @@ export function buildVegetation(
 
   // the far villages: groves on their mounds toward every horizon, cheap crowns that read the same through the haze
   for (const g of FAR_GROVES) {
-    const n = Math.round((g.r * g.r) / 55);
+    const n = Math.round((g.r * g.r) / 40);
     for (let k = 0; k < n; k++) {
       const a = rng.range(0, Math.PI * 2);
       const d = Math.sqrt(rng.next()) * g.r;
@@ -916,6 +1043,15 @@ export function buildVegetation(
   grass.forEach(
     (g, i) => grassItems[i].length && group.add(instanced(g, mats.grass, grassItems[i], { layer: LAYER_NO_REFLECT, receive: true })),
   );
+
+  // the banyan's crown too (world/banyan.ts builds it), and every crown filed for `overCrowns`
+  CROWNS.push({ x: BANYAN.x, y: terrainHeight(BANYAN.x, BANYAN.z) + 11, z: BANYAN.z, r: BANYAN.crown, blossom: false });
+  for (const c of CROWNS) {
+    const k = crownCell(Math.floor(c.x / 40), Math.floor(c.z / 40));
+    let list = CROWN_CELLS.get(k);
+    if (!list) CROWN_CELLS.set(k, (list = []));
+    list.push(c);
+  }
 
   return group;
 }
