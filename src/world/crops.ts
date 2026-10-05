@@ -1,12 +1,13 @@
 import { BufferAttribute, BufferGeometry, DoubleSide, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Quaternion, Vector3 } from 'three';
 import type { Texture } from 'three';
 import { G, LAYER_NO_REFLECT } from '../core/globals';
+import { glslHash12, glslNoise } from '../core/noise';
 import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, type RGB } from '../render/builder';
-import { CROP_REACH } from '../render/glsl';
+import { CORRIDOR, CROP_REACH } from '../render/glsl';
 import { patchMaterial } from '../render/patch';
 import { mustardCanopyTexture, mustardRacemeTexture, riceCanopyTexture, riceHillTexture } from '../render/textures';
-import { onRoad, terrainHeight } from './geography';
+import { corridorDistance, onRoad, terrainHeight } from './geography';
 import { groundLattice } from './terrain';
 
 // The crops in the paddy plots, standing in 3D round the camera (out to CROP_REACH; beyond, the terrain
@@ -51,6 +52,25 @@ function fromPlots(qx: number, qy: number): [number, number] {
   }
   return [x, z];
 }
+/**
+ * The crop the season gives the plot at (x, z) (the CPU twin of glsl.ts `plotRank` and `cropShares`): 0
+ * seedlings, 1 green rice, 2 ripe rice, 3 mustard in flower, 4 stubble; `crops` the season's shares (env/season.ts).
+ */
+export function plotCropAt(x: number, z: number, crops: readonly [number, number, number, number]): number {
+  const [qx, qy] = toPlots(x, z);
+  const cx = Math.floor(qx / PLOT.w);
+  const cy = Math.floor(qy / PLOT.h);
+  const n = glslNoise((cx + 0.5) * PLOT.w * 0.0065 + 3.1, (cy + 0.5) * PLOT.h * 0.0065 + 7.7);
+  const t = Math.min(1, Math.max(0, (n - 0.2) / 0.6));
+  const rank = Math.min(1, Math.max(0, 0.92 * t * t * (3 - 2 * t) + 0.08 * glslHash12(cx, cy)));
+  let edge = 0;
+  for (let k = 0; k < 4; k++) {
+    edge += crops[k];
+    if (rank < edge) return k;
+  }
+  return 4;
+}
+
 /** Bare ground left inside each plot's bunds (m). */
 const MARGIN = 0.6;
 
@@ -514,6 +534,8 @@ export class Crops {
         const x = (cx + dx + 0.5) * CHUNK;
         const z = (cz + dz + 0.5) * CHUNK;
         const d = Math.hypot(x - view.x, z - view.z, lift);
+        // nothing grown out where the land fades away
+        if (corridorDistance(x, z) > CORRIDOR.crops) continue;
         // the plants, with their heads near and without beyond SWITCH (one or the other, never both)
         if (d < BANDS[1].out[1] + CHUNK_REACH) list.push({ key: `${cx + dx},${cz + dz},${d < SWITCH ? 0 : 1}`, x, z, d });
         if (d > BANDS[2].in[0] - CHUNK_REACH && d < BANDS[2].out[1] + CHUNK_REACH) list.push({ key: `${cx + dx},${cz + dz},2`, x, z, d });

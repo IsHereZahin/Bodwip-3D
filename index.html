@@ -243,6 +243,18 @@
 
     <p id="caption" aria-live="polite"></p>
 
+    <nav id="film-nav" aria-label="চলচ্চিত্রের দৃশ্য">
+      <button id="film-prev" type="button" title="আগের দৃশ্য (←)" aria-label="আগের দৃশ্য">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+        <span>আগের দৃশ্য</span>
+      </button>
+      <span id="film-count" aria-live="polite"></span>
+      <button id="film-next" type="button" title="পরের দৃশ্য (→)" aria-label="পরের দৃশ্য">
+        <span>পরের দৃশ্য</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg>
+      </button>
+    </nav>
+
     <div id="toast" role="status" aria-live="polite">
       <span id="toast-text"></span>
       <button id="toast-look" type="button" hidden>দেখুন</button>
@@ -297,9 +309,6 @@
         <label class="pick">
           <select id="season" aria-label="ঋতু" title="ঋতু (Y)"></select>
         </label>
-        <label class="pick">
-          <select id="weather" aria-label="আবহাওয়া" title="আবহাওয়া (B)"></select>
-        </label>
         <span class="spacer"></span>
         <button id="sound" class="ibtn" type="button" aria-pressed="false" aria-label="শব্দ চালু করুন" title="শব্দ (M)">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -316,6 +325,9 @@
         </button>
         <button id="hide-ui" class="ibtn" type="button" aria-label="নিয়ন্ত্রণ লুকান" title="নিয়ন্ত্রণ লুকান (H)">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12S7 6.5 12 6.5 20.5 12 20.5 12 17 17.5 12 17.5 3.5 12 3.5 12z" /><circle cx="12" cy="12" r="2.5" /><path d="M4 20 20 4" /></svg>
+        </button>
+        <button id="map-btn" class="ibtn" type="button" aria-label="মানচিত্র" title="মানচিত্র: কোথায় যাবেন (L)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20z" /><path d="M9 4v13.5M15 6.5V20" /></svg>
         </button>
         <button id="help-btn" class="ibtn" type="button" aria-label="সব নিয়ন্ত্রণ" title="সব নিয়ন্ত্রণ (?)">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.6" /><path d="M12 17h.01" /></svg>
@@ -362,7 +374,6 @@
             <dt><kbd>T</kbd> চেপে ধরে</dt><dd>সময় খুব দ্রুত</dd>
             <dt><kbd>N</kbd></dt><dd>পরের সূর্যোদয়, সূর্যাস্ত, চন্দ্রোদয় বা চন্দ্রাস্ত</dd>
             <dt><kbd>Y</kbd></dt><dd>পরের ঋতু (শুরু হয় আজকের তারিখ থেকে)</dd>
-            <dt><kbd>B</kbd></dt><dd>আবহাওয়া: ঋতু অনুযায়ী, পরিষ্কার, হাওয়া, হালকা বৃষ্টি, বৃষ্টি, ঝড়</dd>
             <dt>বারের চিহ্ন</dt><dd>সেই মুহূর্তে গিয়ে সেদিকে তাকানো</dd>
           </dl>
         </section>
@@ -371,6 +382,8 @@
           <dl>
             <dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>নৌকা, মুক্ত, চলচ্চিত্র</dd>
             <dt><kbd>C</kbd></dt><dd>চলচ্চিত্র চালু বা বন্ধ</dd>
+            <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>চলচ্চিত্রে আগের বা পরের দৃশ্য (ওপরের বোতামেও)</dd>
+            <dt><kbd>L</kbd></dt><dd>মানচিত্র: কোথায় যাবেন</dd>
             <dt><kbd>M</kbd></dt><dd>শব্দ</dd>
             <dt><kbd>F</kbd></dt><dd>পূর্ণ পর্দা</dd>
             <dt><kbd>H</kbd></dt><dd>নিয়ন্ত্রণ লুকানো বা দেখানো</dd>

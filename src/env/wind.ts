@@ -12,6 +12,8 @@ export const WIND_MS = 4;
 /** How quickly gust fronts roll downwind, per unit of strength (in their phase units per second). */
 const FRONT_SPEED = 0.5;
 const FRONT_SPEED_PER = 0.35;
+/** The fronts' phase per metre downwind (`windGust` in glsl.ts uses the same). */
+const FRONT_PER_METRE = 0.045;
 
 export interface WindSetting {
   /** Mean strength (1 is a fresh breeze, about WIND_MS m/s; 2.5 a storm). */
@@ -24,7 +26,8 @@ export interface WindSetting {
 
 /**
  * The wind's state, eased toward what the season and the weather (or the viewer) ask for. `update` writes
- * G.uWind (x, z direction toward which it blows; strength; gustiness) and G.uGust (front phase).
+ * G.uWind (x, z direction toward which it blows; strength; gustiness) and G.uGust (the fronts' phase, and how
+ * far they roll downwind in a second (m): a plant that answers the gusts late reads them that far downwind).
  */
 export class Wind {
   /** Held strength chosen by the viewer, or null to follow the season and the weather. */
@@ -46,9 +49,10 @@ export class Wind {
     let d = want.angle + 0.18 * Math.sin(t * 0.013) - this.angle;
     d = Math.atan2(Math.sin(d), Math.cos(d));
     this.angle += d * k;
-    this.phase += dt * (FRONT_SPEED + FRONT_SPEED_PER * this.strength);
+    const speed = FRONT_SPEED + FRONT_SPEED_PER * this.strength;
+    this.phase += dt * speed;
     G.uWind.value.set(Math.sin(this.angle), Math.cos(this.angle), this.strength, this.gusts);
-    G.uGust.value.set(this.phase, 0);
+    G.uGust.value.set(this.phase, speed / FRONT_PER_METRE);
   }
 }
 
@@ -57,7 +61,7 @@ export function gustAt(x: number, z: number): number {
   const w = G.uWind.value;
   const along = x * w.x + z * w.y;
   const across = -x * w.y + z * w.x;
-  const front = along * 0.045 - G.uGust.value.x;
+  const front = along * FRONT_PER_METRE - G.uGust.value.x;
   const g = 0.62 * Math.sin(front) + 0.38 * Math.sin(front * 2.3 + across * 0.031 + 1.7);
   return Math.max(0, 1 + w.w * g);
 }

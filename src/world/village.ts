@@ -178,7 +178,8 @@ function bambooGhat(b: MeshBuilder, g: Ghat, rng: Rng): void {
   const uz = Math.cos(g.up);
   const cx = Math.cos(g.up);
   const cz = -Math.sin(g.up);
-  const deck = WATER_LEVEL + 0.5;
+  // above the rains' high water (env/season.ts): on tall legs in the dry months
+  const deck = WATER_LEVEL + 1.0;
   const at = (d: number, s: number, y: number) => new Vector3(g.x + ux * d + cx * s, y, g.z + uz * d + cz * s);
   const tint = () => scaleRgb(rgb('#a39469'), rng.range(0.82, 1.05));
   const reach = rng.range(3.5, 5);
@@ -205,19 +206,30 @@ function bambooGhat(b: MeshBuilder, g: Ghat, rng: Rng): void {
 
 const SMALL_BOAT: HullShape = { len: 6, beam: 0.62, keelMid: -0.2, keelRise: 0.6, sheerMid: 0.32, sheerRise: 0.7 };
 
-/** Where each boat tied up in the `afloat` builder lies: its vertices, and its middle (for the waves under it). */
+/**
+ * Where each boat tied up in the `afloat` builder lies: its vertices, its middle (for the waves under it), and
+ * the water's level below which she sits on the mud (the bed under her keel: in the dry months the water draws
+ * back from the banks and leaves the boats tied close in aground).
+ */
 interface Mooring {
   from: number;
   to: number;
   x: number;
   z: number;
+  aground: number;
 }
+
+/** How far a moored boat's keel lies under the water (m): her hull's keel below her origin, less the origin's height over the water. */
+const MOORED_DRAFT = 0.15;
 
 /** Adds a moored boat's hull to `b` and notes where it lies. */
 function moor(b: MeshBuilder, moorings: Mooring[], hull: MeshBuilder, m: Matrix4): void {
   const from = b.vertexCount;
   b.add(hull.build(), m, rgb('#3a2c20'));
-  moorings.push({ from, to: b.vertexCount, x: m.elements[12], z: m.elements[14] });
+  const x = m.elements[12];
+  const z = m.elements[14];
+  // sunk a few centimetres into the mud when the water has left her
+  moorings.push({ from, to: b.vertexCount, x, z, aground: terrainHeight(x, z) + MOORED_DRAFT - 0.03 });
 }
 
 /** A small boat tied up beside a ghat, along the bank, close in (the water's middle stays open). */
@@ -296,19 +308,21 @@ export function buildVillages(huts: readonly HutPlan[], ghats: readonly Ghat[]):
   add(hay, patchMaterial(new MeshStandardMaterial({ map: strawTexture(43), vertexColors: true, roughness: 0.95 }), { grime: 0.25 }));
   // moored boats float on the water, each rocking as one piece on the (sheltered) ripples under its middle
   const boats = afloat.build();
-  const middles = new Float32Array(boats.getAttribute('position').count * 2);
-  for (const m of moorings) for (let k = m.from; k < m.to; k++) middles.set([m.x, m.z], k * 2);
-  boats.setAttribute('aMoor', new BufferAttribute(middles, 2));
+  const middles = new Float32Array(boats.getAttribute('position').count * 3);
+  for (const m of moorings) for (let k = m.from; k < m.to; k++) middles.set([m.x, m.z, m.aground], k * 3);
+  boats.setAttribute('aMoor', new BufferAttribute(middles, 3));
   const moored = new Mesh(
     boats,
     patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), {
       grime: 0.35,
       vertex: {
         key: 'moored',
-        pars: `attribute vec2 aMoor;\n${waveHeightGlsl()}\n${waveSlopeGlsl()}\n`,
+        pars: `attribute vec3 aMoor;\n${waveHeightGlsl()}\n${waveSlopeGlsl()}\n`,
         code: `{
-  vec2 tilt = waveSlope(aMoor) * ${SHELTERED.toFixed(2)};
-  transformed.y += ${WATER_LEVEL.toFixed(2)} + waveHeight(aMoor) * ${SHELTERED.toFixed(2)} + dot(tilt, transformed.xz - aMoor);
+  // afloat on the season's water, or aground on the mud where it has drawn back from her
+  float afloat = ${WATER_LEVEL.toFixed(2)} + uWaterRise + waveHeight(aMoor.xy) * ${SHELTERED.toFixed(2)};
+  vec2 tilt = waveSlope(aMoor.xy) * ${SHELTERED.toFixed(2)} * smoothstep(aMoor.z, aMoor.z + 0.08, afloat);
+  transformed.y += max(afloat, aMoor.z) + dot(tilt, transformed.xz - aMoor.xy);
 }`,
       },
     }),

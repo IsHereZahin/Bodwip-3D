@@ -1,7 +1,7 @@
 import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
 import { SegmentIndex } from '../core/segmentIndex';
-import { BIL_SPEC, BRIDGE_NEAR, CHAR, INTO_BIL, JOURNEY_FROM, KHAL_POINTS, OPENING_NEAR, RIVER_POINTS, SANKO_NEAR, SIDE_KHAL_POINTS, WATER_LEVEL, WORLD, type Pt } from './plan';
+import { BIL_SPEC, BRIDGE_NEAR, CHAR, INTO_BIL, JOURNEY_FROM, KHAL_POINTS, KHAL_ROCKS, OPENING_NEAR, RIVER_POINTS, SANKO_NEAR, SIDE_KHAL_POINTS, WATER_LEVEL, WORLD, type Pt } from './plan';
 
 // The village's waters (world/plan.ts): the small river, the khal leaving it northward, the side khal through
 // the fields, and the shapla bil at the khal's head; and the boat's journey through them. Each waterway is a
@@ -308,6 +308,18 @@ export function bilReach(x: number, z: number): number {
 
 // ---------- the journey ----------
 
+/** How far the boat's way keeps from a rock's edge (m: her half-beam and room to spare). */
+const ROCK_CLEAR = 3;
+/** Round a rock the way holds its swerve this far either side of it, and is back on the khal's middle by this (m). */
+const SWERVE = [12, 44] as const;
+
+/** How far the boat's way stands off the khal's middle `s` m up it (m, left +): out round its rocks (plan.ts KHAL_ROCKS). */
+function rockSwerve(s: number): number {
+  let off = 0;
+  for (const r of KHAL_ROCKS) off += (r.c - Math.sign(r.c) * (r.r + ROCK_CLEAR)) * smoothstep(SWERVE[1], SWERVE[0], Math.abs(s - r.s));
+  return off;
+}
+
 /**
  * The boat's way: down the river from where she sets out, round the banyan's corner into the khal (swinging
  * wide of it), up the khal under the old bridge, and on into the bil. A line of its own, so she and the
@@ -335,10 +347,11 @@ const JOURNEY_LINE = (() => {
     const u = 1 - t;
     pts.push(u * u * u * a.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * b.x, u * u * u * a.z + 3 * u * u * t * c1.z + 3 * u * t * t * c2.z + t * t * t * b.z);
   }
-  // up the khal to its head
+  // up the khal to its head, swerving round its rocks
   for (let s = enter; s <= KHAL.length; s += STEP) {
     const p = KHAL.at(s);
-    pts.push(p.x, p.z);
+    const o = rockSwerve(s);
+    pts.push(p.x + Math.cos(p.heading) * o, p.z - Math.sin(p.heading) * o);
   }
   // and on into the bil, easing from the khal's heading toward the bil's middle line
   const head = KHAL.at(KHAL.length);

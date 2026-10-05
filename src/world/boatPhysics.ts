@@ -2,7 +2,7 @@ import { Vector3 } from 'three';
 import { G } from '../core/globals';
 import { angleDelta, smoothstep } from '../core/mathx';
 import { windAt } from '../env/wind';
-import { WATER_LEVEL, waterLevelAt, waterwayAt } from './geography';
+import { WATER_LEVEL, waterLevelAt, waterRise, waterwayAt } from './geography';
 import { HERO_HULL, heroBeamAtWater } from './hull';
 import { CRUISE, PADDLE_MOMENT, STROKE_SECONDS, paddleForce, strokePhase, type PaddleForce } from './paddle';
 import { SHELTERED, hullWaves, type HullWaves } from './waves';
@@ -36,7 +36,7 @@ export function currentAt(x: number, z: number, out: { x: number; z: number }): 
 /** The surface of the water she floats on at (x, z): the river's and the khal's (or a pond's, should she be put on one). */
 function waterUnder(x: number, z: number): number {
   const level = waterLevelAt(x, z);
-  return Number.isFinite(level) ? level : WATER_LEVEL;
+  return Number.isFinite(level) ? level : WATER_LEVEL + waterRise();
 }
 
 const MASS = 380; // the boat ≈ 240 kg, the boatman 65, cargo 75

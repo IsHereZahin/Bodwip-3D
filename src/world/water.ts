@@ -21,11 +21,11 @@ import {
 import type { Texture } from 'three';
 import { G, LAYER_WATER } from '../core/globals';
 import { periodicNoise } from '../core/noise';
-import { GLSL_COMMON } from '../render/glsl';
+import { EDGE_MARGIN, GLSL_COMMON } from '../render/glsl';
 import { HERO_HULL, HERO_SINK, hullWaterlineGlsl } from './hull';
 import { shipWakeGlsl, wakeGlsl } from './wake';
 import { OPEN_SEA, SHELTERED, swellGlsl, waveHeightLodGlsl, waveSlopeLodGlsl } from './waves';
-import { WATER_LEVEL, WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, eachWaterwayPoint, inlandWaterAt, terrainHeight, waterLevelAt, waterwayAt } from './geography';
+import { WATER_LEVEL, WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, eachWaterwayPoint, inlandWaterAt, meanWaterLevelAt, terrainHeight, waterLevelAt, waterRise, waterwayAt } from './geography';
 import { WORLD } from './plan';
 
 /** A field's rectangle in the world (x0, z0 its corner with the least x and z; sx, sz its extent) and its texels. */
@@ -38,8 +38,15 @@ interface FieldRect {
   h: number;
 }
 
-/** The wide field over the whole world and a margin round it, ≈8 m a texel. */
-const FIELD_WIDE: FieldRect = { x0: WORLD_X0 - 400, z0: WORLD_Z1 - 400, sx: WORLD_X1 - WORLD_X0 + 800, sz: WORLD_Z0 - WORLD_Z1 + 800, w: 480, h: 400 };
+/** The wide field over the whole world and the margin the waters run on into, ≈8 m a texel. */
+const FIELD_WIDE: FieldRect = {
+  x0: WORLD_X0 - EDGE_MARGIN,
+  z0: WORLD_Z1 - EDGE_MARGIN,
+  sx: WORLD_X1 - WORLD_X0 + 2 * EDGE_MARGIN,
+  sz: WORLD_Z0 - WORLD_Z1 + 2 * EDGE_MARGIN,
+  w: 420,
+  h: 360,
+};
 /**
  * The fine field round the camera: 1 km square at 4 m a texel, so the creeks and the khal have their own
  * depth. Rebuilt round the camera once it strays `drift` m from the middle, `rows` rows a frame.
@@ -175,12 +182,14 @@ class FineField {
 const LEVEL_CELL = 6;
 const LEVEL_SPREAD = 8;
 const SPREAD_BELOW = 0.15;
-const LEVEL_W = Math.ceil((WORLD.x1 - WORLD.x0) / LEVEL_CELL);
-const LEVEL_H = Math.ceil((WORLD.z1 - WORLD.z0) / LEVEL_CELL);
+/** The level map covers the world and `EDGE_MARGIN` round it, so the river runs on into the haze. */
+const LEVEL_AREA = { x0: WORLD.x0 - EDGE_MARGIN, x1: WORLD.x1 + EDGE_MARGIN, z0: WORLD.z0 - EDGE_MARGIN, z1: WORLD.z1 + EDGE_MARGIN };
+const LEVEL_W = Math.ceil((LEVEL_AREA.x1 - LEVEL_AREA.x0) / LEVEL_CELL);
+const LEVEL_H = Math.ceil((LEVEL_AREA.z1 - LEVEL_AREA.z0) / LEVEL_CELL);
 
 /**
- * Which water stands where, over the world in LEVEL_CELL cells: r the surface of the water there (the river's,
- * a khal's, the bil's or a pond's); g 1 where the water is the sea's (none here); b 1 where it is water; a how
+ * Which water stands where, over the world in LEVEL_CELL cells: r the surface of the water there at its mean
+ * level (the river's, a khal's, the bil's or a pond's; the season's rise is GLSL waterLevels' to add); g 1 where the water is the sea's (none here); b 1 where it is water; a how
  * open it is to a sea's swell (none here). Round the water r carries the nearest water's level on for
  * LEVEL_SPREAD cells, so the water grid's vertices beside a pond stand at its level and the pond's edge is cut
  * by the ground, not by the grid; farther off r lies well under the ground.
@@ -189,17 +198,17 @@ function levelTexture(): { texture: DataTexture; map: Vector4 } {
   const n = LEVEL_W * LEVEL_H;
   const surface = new Float32Array(n).fill(-20);
   const inland = new Uint8Array(n);
-  const centre = (i: number) => ({ x: WORLD.x1 - ((i % LEVEL_W) + 0.5) * LEVEL_CELL, z: WORLD.z1 - (Math.floor(i / LEVEL_W) + 0.5) * LEVEL_CELL });
+  const centre = (i: number) => ({ x: LEVEL_AREA.x1 - ((i % LEVEL_W) + 0.5) * LEVEL_CELL, z: LEVEL_AREA.z1 - (Math.floor(i / LEVEL_W) + 0.5) * LEVEL_CELL });
   for (let i = 0; i < n; i++) {
     const c = centre(i);
     if (!inlandWaterAt(c.x, c.z)) continue;
     inland[i] = 1;
-    surface[i] = waterLevelAt(c.x, c.z);
+    surface[i] = meanWaterLevelAt(c.x, c.z);
   }
   // the waterways' own points, so the narrow side khal has its cells wherever it runs (geography.ts)
   const mark = (x: number, z: number, level: number) => {
-    const c = Math.floor((WORLD.x1 - x) / LEVEL_CELL);
-    const r = Math.floor((WORLD.z1 - z) / LEVEL_CELL);
+    const c = Math.floor((LEVEL_AREA.x1 - x) / LEVEL_CELL);
+    const r = Math.floor((LEVEL_AREA.z1 - z) / LEVEL_CELL);
     if (c < 0 || r < 0 || c >= LEVEL_W || r >= LEVEL_H) return;
     const i = r * LEVEL_W + c;
     surface[i] = level;
@@ -240,7 +249,7 @@ function levelTexture(): { texture: DataTexture; map: Vector4 } {
   texture.minFilter = texture.magFilter = LinearFilter;
   texture.needsUpdate = true;
   // u runs west to east (x falling), v north to south (z falling)
-  return { texture, map: new Vector4(WORLD.x1, WORLD.z1, 1 / (WORLD.x1 - WORLD.x0), 1 / (WORLD.z1 - WORLD.z0)) };
+  return { texture, map: new Vector4(LEVEL_AREA.x1, LEVEL_AREA.z1, 1 / (LEVEL_AREA.x1 - LEVEL_AREA.x0), 1 / (LEVEL_AREA.z1 - LEVEL_AREA.z0)) };
 }
 
 /**
@@ -257,7 +266,7 @@ function mirrorLevelAt(x: number, z: number): number {
       if (inlandWaterAt(px, pz)) return waterLevelAt(px, pz);
     }
   }
-  return WATER_LEVEL;
+  return WATER_LEVEL + waterRise();
 }
 
 /** GLSL: the water field at p, from the fine one round the camera or the wide one beyond it (the levels are GLSL_COMMON's waterLevels). */

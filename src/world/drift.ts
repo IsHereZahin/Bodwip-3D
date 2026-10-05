@@ -1,12 +1,12 @@
 import { BufferGeometry, DoubleSide, DynamicDrawUsage, Group, InstancedMesh, Matrix4, MeshStandardMaterial, Quaternion, Vector3 } from 'three';
-import { G, LAYER_NO_REFLECT } from '../core/globals';
+import { LAYER_NO_REFLECT } from '../core/globals';
 import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, taperedTube, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { hyacinthLeafTexture } from '../render/textures';
 import { windAt } from '../env/wind';
 import type { BoatBody } from './boatPhysics';
-import { inlandWaterAt, terrainHeight, waterLevelAt, waterwayAt } from './geography';
+import { WATER_LEVEL, inlandWaterAt, meanWaterLevelAt, risenLevel, terrainHeight, waterLevelAt, waterwayAt } from './geography';
 import { HERO_HULL, heroBeamAtWater, hullHalfWidthAt, type HullShape } from './hull';
 import { wakeHeight } from './wake';
 import { SHELTERED, waveHeight, waveSlope } from './waves';
@@ -182,7 +182,7 @@ export class Drift {
   private readonly vz = new Float32Array(N);
   private readonly yaw = new Float32Array(N);
   private readonly spin = new Float32Array(N);
-  /** The level of the water each floats on (still fresh water keeps its own), found when it is set down. */
+  /** The mean level of the water each floats on (still fresh water keeps its own), found when it is set down; the season raises it (risenLevel). */
   private readonly levelOf = new Float32Array(N);
   private readonly radius = new Float32Array(N);
   /** Held up by a net that rose under it, and how high above the water. */
@@ -378,7 +378,7 @@ export class Drift {
     // floaters collect along the banks the way they do
     for (let i = this.frame % 4; i < N; i += 4) {
       if (Number.isNaN(pz[i])) continue;
-      if (terrainHeight(px[i], pz[i]) > this.levelOf[i] - 0.08) {
+      if (terrainHeight(px[i], pz[i]) > risenLevel(this.levelOf[i]) - 0.08) {
         px[i] = ox[i];
         pz[i] = oz[i];
       }
@@ -439,7 +439,7 @@ export class Drift {
       const at = this.spot(vx, vz);
       this.px[i] = at ? at[0] : Number.NaN;
       this.pz[i] = at ? at[1] : Number.NaN;
-      if (at) this.levelOf[i] = waterLevelAt(at[0], at[1]);
+      if (at) this.levelOf[i] = meanWaterLevelAt(at[0], at[1]);
       this.vx[i] = 0;
       this.vz[i] = 0;
     }
@@ -479,7 +479,7 @@ export class Drift {
       return;
     }
     const [cx, cz] = spot;
-    const level = waterLevelAt(cx, cz);
+    const level = meanWaterLevelAt(cx, cz);
     const turn = this.rng.range(0, Math.PI * 2);
     const stretch = this.rng.range(0.6, 1);
     mat.members.forEach((i, k) => {
@@ -487,7 +487,7 @@ export class Drift {
       const a = k * 2.39996 + turn;
       this.px[i] = cx + Math.cos(a) * r + this.rng.range(-0.05, 0.05);
       this.pz[i] = cz + Math.sin(a) * r * stretch + this.rng.range(-0.05, 0.05);
-      this.levelOf[i] = Number.isFinite(level) ? level : G.uWaterLevel.value;
+      this.levelOf[i] = Number.isFinite(level) ? level : WATER_LEVEL;
       this.vx[i] = 0;
       this.vz[i] = 0;
     });
@@ -516,7 +516,7 @@ export class Drift {
         continue;
       }
       // on its water's ripples
-      let y = this.levelOf[i] + waveHeight(x, z, t, SHELTERED) * RIPPLES;
+      let y = risenLevel(this.levelOf[i]) + waveHeight(x, z, t, SHELTERED) * RIPPLES;
       const bx = x - boat.pos.x;
       const bz = z - boat.pos.z;
       if (Math.abs(bx) + Math.abs(bz) < 150) y += wakeHeight(bx * ch - bz * sh, bx * sh + bz * ch, boat.speed);

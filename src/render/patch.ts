@@ -2,6 +2,7 @@ import { ShaderChunk } from 'three';
 import type { IUniform, Material } from 'three';
 import { G } from '../core/globals';
 import { CROP_REACH, GLSL_COMMON } from './glsl';
+import { SALT_FIELD } from '../world/plan';
 import type { GroundSet } from './surfaces';
 
 export interface PatchOptions {
@@ -14,6 +15,8 @@ export interface PatchOptions {
   skin?: number;
   /** World-space albedo noise so repeated surfaces don't look printed. */
   grime?: number;
+  /** Darkens and glosses what stands in the water near its surface (stones at the water's edge, posts): a wet band. */
+  wetline?: boolean;
   /** Paddy plots, wet banks and riverbed caustics, driven by the terrain's `aZone` attribute. */
   terrain?: boolean;
   /** Photo ground layers blended by the terrain's `aSplat` weights (needs `terrain`). */
@@ -31,6 +34,12 @@ export interface PatchOptions {
 
 /** Metres covered by one repeat of a ground texture. */
 const SPLAT_TILE = 2.6;
+
+/**
+ * The most a plant leans over in the wind, in the wind's units (× its `wind` and the square of its height
+ * over `windHeight`): a breeze is far below it, a storm reaches it (≈1.3 m at a mango's crown).
+ */
+const LEAN_MAX = 3.2;
 
 // same as three's project_vertex, but keeps the world position for the atmosphere and adds wind there
 const PROJECT_VERTEX = /* glsl */ `
@@ -55,14 +64,21 @@ vAtmRoot = root;
 {
   float hk = clamp(position.y / ATM_WIND_H, 0.0, 1.6);
   hk *= hk;
-  // the one wind (env/wind.ts): the local strength under the gust fronts rolling downwind, made uneven by
-  // the air's own turbulence (each plant feels a gust a little differently, the more so in a storm). Drag
-  // grows with the square of the wind, so a plant leans further the harder it blows.
   float t = uTime;
-  float s = uWind.z * windGust(root.xz);
+  // the one wind (env/wind.ts) as it reached this plant: the gust fronts rolling downwind, felt a moment
+  // late and smoothed (a tree takes a second or two to answer a gust, a tuft of grass none: what the fronts
+  // were here a moment ago is what they are now a little way downwind), made uneven by the air's own
+  // turbulence, each plant a little differently, the more so in a storm
+  vec2 past = uWind.xy * uGust.y * clamp(sqrt(ATM_WIND_H / 10.0), 0.1, 1.3);
+  float felt = 0.5 * windGust(root.xz + past * 0.35) + 0.3 * windGust(root.xz + past * 0.9) + 0.2 * windGust(root.xz + past * 1.6);
+  float s = uWind.z * felt;
   float turb = vnoise(root.xz * 0.045 + vec2(t * 0.33, -t * 0.27)) - 0.5;
   float drive = max(0.0, s * (1.0 + turb * (0.5 + 0.4 * min(s, 2.0))));
-  float lean = drive * (0.5 + 0.5 * drive + 0.25 * drive * drive);
+  // drag grows with the square of the wind, but leaves fold and branches streamline as it rises and the wood
+  // stiffens as it bends: the lean levels off, so a storm bows a crown over and holds it there, thrashing,
+  // rather than sliding it off its trunk with every gust
+  float raw = 0.45 * drive * (0.5 + 0.5 * drive + 0.25 * drive * drive);
+  float lean = ${LEAN_MAX.toFixed(2)} * tanh(raw / ${LEAN_MAX.toFixed(2)});
   // each plant its own: a natural period by its size (a big tree swings slowly, a tuft of grass quickly),
   // its own phase and its own give, so no two move in step
   float seed = hash12(floor(root.xz * 3.1) + 0.37);
@@ -70,21 +86,29 @@ vAtmRoot = root;
   float w = 6.2832 * mix(0.32, 0.52, seed) / (0.6 + 0.4 * sqrt(ATM_WIND_H / 10.0));
   float give = mix(0.75, 1.3, seed2);
   float strong = min(drive, 2.5);
-  // the trunk rocks about its lean on two unrelated swings, so it never quite repeats
+  float storm = smoothstep(1.0, 2.5, strong);
+  // about its lean the trunk rocks on two unrelated swings, so it never quite repeats; in a storm the gusts
+  // still heave it further over and let it back as they pass, and the rough air buffets it every which way
   float rock = sin(t * w + seed * 6.2832) + 0.45 * sin(t * w * 2.31 + seed2 * 6.2832);
+  vec2 buffet = vec2(vnoise(vec2(t * 0.85 + seed * 31.0, seed2 * 7.0)), vnoise(vec2(seed * 5.0, t * 0.7 + seed2 * 23.0))) * 2.0 - 1.0;
   vec2 down = uWind.xy;
   vec2 across = vec2(-uWind.y, uWind.x);
-  vec2 sway = down * (lean * 0.45 + rock * (0.14 + 0.22 * strong)) + across * (0.16 * strong) * sin(t * w * 0.73 + seed2 * 9.0);
-  atmW.xz += sway * hk * ATM_WIND * give;
-  // the crown's parts on their own swings, quicker and smaller, out where the branches are
+  float along = lean + 0.35 * strong * storm * (felt - 1.0) + rock * (0.14 + 0.22 * strong + 0.03 * strong * strong) + buffet.x * 0.35 * strong * storm;
+  float aside = 0.16 * strong * sin(t * w * 0.73 + seed2 * 9.0) + buffet.y * 0.25 * strong * storm;
+  vec2 sway = (down * along + across * aside) * hk * ATM_WIND * give;
+  // the crown's parts on their own swings, quicker and smaller, out where the branches are; whipping in a storm
   float bk = smoothstep(0.3, 0.95, position.y / ATM_WIND_H);
   float bp = dot(position, vec3(0.6, 0.31, 0.45)) + seed * 13.0;
   vec2 branch = down * sin(t * w * 2.7 + bp) + across * 0.6 * sin(t * w * 3.4 + bp * 1.3);
-  atmW.xz += branch * (0.05 + 0.09 * strong) * bk * ATM_WIND * ATM_WIND_H * 0.25;
+  sway += branch * (0.05 + 0.09 * strong + 0.04 * strong * strong) * bk * ATM_WIND * ATM_WIND_H * 0.25;
+  atmW.xz += sway;
+  // a stem keeps its length as it bends: what is carried over comes down
+  float above = max(atmW.y - root.y, 0.3);
+  atmW.y -= min(dot(sway, sway) / (2.0 * above), above * 0.5);
   #ifdef ATM_FLUTTER
-  // the leaves: a quick small shiver, each its own
+  // the leaves: a quick small shiver, each its own; streaming and flickering in a storm
   float fp = dot(position, vec3(3.1, 2.3, 2.7)) + seed * 40.0;
-  atmW.xyz += vec3(sin(t * (8.0 + 5.0 * seed) + fp), 0.6 * sin(t * 11.0 + fp * 1.7), cos(t * (7.0 + 4.0 * seed2) + fp)) * (0.012 + 0.03 * strong) * bk * ATM_WIND * 4.0;
+  atmW.xyz += vec3(sin(t * (8.0 + 5.0 * seed) + fp), 0.6 * sin(t * 11.0 + fp * 1.7), cos(t * (7.0 + 4.0 * seed2) + fp)) * (0.012 + 0.03 * strong + 0.02 * storm) * bk * ATM_WIND * 4.0;
   #endif
 }
 #endif
@@ -184,7 +208,8 @@ float atmBrine = 0.0;
   #if ATM_SEASONAL == 2
   // spring: a share of the trees (shimul, palash, krishnachura) aflame with red flowers
   // each tree comes into flower (and goes over) gradually as the season passes its turn
-  float bloom = smoothstep(-0.05, 0.05, uSeasonA.z - hash12(floor(vAtmRoot.xz * 0.37) + 3.1));
+  // (none at all out of the season: the ramp starts at its share, so no tree keeps a little red all year)
+  float bloom = smoothstep(0.0, 0.06, uSeasonA.z - hash12(floor(vAtmRoot.xz * 0.37) + 3.1));
   if (bloom > 0.0) {
     float spot = vnoise(vAtmWorld.xz * 2.3 + vAtmWorld.y * 1.7);
     float crown = smoothstep(1.2, 3.0, vAtmWorld.y - vAtmRoot.y);
@@ -200,6 +225,15 @@ diffuseColor.rgb *= 1.0 + ATM_GRIME * ((fbm3(vAtmWorld.xz * 0.35 + vAtmWorld.y *
 // after rain everything is darker and glistens
 atmWet = uWet * 0.4;
 diffuseColor.rgb *= mix(1.0, 0.8, atmWet);
+#endif
+#ifdef ATM_WETLINE
+{
+  // wet up to a hand's breadth above the water it stands in, darker and glossier
+  float wl = waterSurface(vAtmWorld.xz);
+  float wetBand = smoothstep(wl + 0.16, wl + 0.02, vAtmWorld.y);
+  diffuseColor.rgb *= mix(1.0, 0.55, wetBand);
+  atmWet = max(atmWet, wetBand * 0.9);
+}
 #endif
 #ifdef ATM_TERRAIN
 ${SPLAT_COLOR}
@@ -255,107 +289,89 @@ ${SPLAT_COLOR}
     diffuseColor.rgb = mix(diffuseColor.rgb, fc, vZone);
     atmBrine = plotWater * mix(0.5, 0.6, sh.x);
   }
-  // the salt works (লবণ মাঠ) on the coastal flats, block by block behind a feeder channel of sea water and
-  // an earth bund (the bunds stand in 3D, world/coast.ts, whose twin of this layout must stay in step).
-  // Most blocks are salt farms (khola): a settling pond where the sea water comes in; evaporation beds with
-  // mud floors where the brine thickens in the sun, some strong enough to rime their edges white; then the
-  // small crystallizer beds lined with black plastic, each at its stage: a film of brine mirroring the sky,
-  // crust forming in it, a white sheet of salt ready to rake, or just raked (the heaps stand on the bunds).
-  // Others are brackish shrimp ponds (gher), or barren mudflat, cracked and bloomed white with salt. In the
-  // rains (uSeasonB.w) the farms lie flooded, the plastic taken up.
+  // the salt field (লবণ মাঠ, world/plan.ts SALT_FIELD; world/saltworks.ts builds its bunds and heaps, whose
+  // twin of this layout must stay in step): one farm (khola) inside a feeder channel of the river's water and
+  // an earth bund. A settling pond where the water is let in; evaporation beds with mud floors where the brine
+  // thickens in the sun, a few strong enough to rime their floors white; then the small crystallizer beds lined
+  // with black plastic, each at its stage (saltStage): a film of brine mirroring the sky, crust forming in it, a
+  // white sheet of salt ready to rake, or just raked (the heaps stand on the bunds). Out of the salt season
+  // (uSeasonB.w: from late autumn to the first storms of summer) the beds lie flooded, the plastic taken up.
   float panW = 0.0;
   if (vZone < -0.01) {
     float salt = -vZone;
-    float ang = 0.12 + 0.2 * sin(floor(wp.y / 300.0) * 2.3);
-    vec2 q = mat2(cos(ang), -sin(ang), sin(ang), cos(ang)) * wp;
-    const vec2 blockSize = vec2(96.0, 60.0);
-    vec2 block = floor(q / blockSize);
-    vec2 bq = q - block * blockSize;
-    float kind = sin(block.x * 3.1 + block.y * 1.3 + 0.7);
+    const vec2 blockSize = vec2(${SALT_FIELD.w.toFixed(1)}, ${SALT_FIELD.d.toFixed(1)});
+    vec2 rel = wp - vec2(${SALT_FIELD.x.toFixed(1)}, ${SALT_FIELD.z.toFixed(1)});
+    vec2 axis = vec2(${Math.sin(SALT_FIELD.yaw).toFixed(5)}, ${Math.cos(SALT_FIELD.yaw).toFixed(5)});
+    vec2 bq = vec2(dot(rel, axis), dot(rel, vec2(axis.y, -axis.x))) + blockSize * 0.5;
+    vec2 q = bq;
     vec2 eb = min(bq, blockSize - bq);
     float edge = min(eb.x, eb.y);
-    float channel = 1.0 - smoothstep(1.2, 1.6, edge);
-    float rim = (1.0 - smoothstep(2.0, 2.6, edge)) * (1.0 - channel);
-    float working = smoothstep(-0.05, 0.05, uSeasonB.w - (0.5 + 0.45 * sin(block.x * 1.7 + block.y * 2.9 + 1.3)));
+    // the feeder channel just inside the field's edge, its bund inside that; outside, the channel's earth bank
+    float channel = (1.0 - smoothstep(1.2, 1.6, edge)) * smoothstep(-0.5, 0.0, edge);
+    float rim = (1.0 - smoothstep(2.0, 2.6, edge)) * (1.0 - channel) * step(0.0, edge);
+    float working = smoothstep(-0.05, 0.05, uSeasonB.w - 0.5);
     vec3 clay = vec3(0.24, 0.21, 0.17) * (0.9 + 0.2 * vnoise(q * 1.7));
     vec3 brackish = vec3(0.1, 0.1, 0.075);
-    vec3 pc = brackish;
-    float water = 1.0;
-    float bund = rim;
-    if (kind > 0.6) {
-      // barren mudflat: cracked grey clay, white where the salt blooms, a few dull halophytes
-      float crack = smoothstep(0.035, 0.0, abs(vnoise(q * 0.9) - 0.5)) + smoothstep(0.03, 0.0, abs(vnoise(q * 2.3 + 7.0) - 0.5)) * 0.6;
-      pc = vec3(0.23, 0.205, 0.165) * (0.85 + 0.25 * vnoise(q * 0.4));
-      pc = mix(pc, vec3(0.55, 0.54, 0.5), smoothstep(0.62, 0.8, fbm3(q * 0.18)) * 0.8);
-      pc = mix(pc, vec3(0.13, 0.14, 0.09), smoothstep(0.7, 0.85, vnoise(q * 0.6 + 3.0)) * 0.7);
-      pc *= 1.0 - crack * 0.35;
-      water = 0.0;
-      bund = 0.0;
-    } else if (kind < -0.75) {
-      // a shrimp pond: brackish water behind its bund
-      pc = vec3(0.08, 0.1, 0.07);
-    } else {
-      float u = bq.x / blockSize.x;
-      vec2 lq = bq;
-      vec2 size = blockSize;
-      if (u >= 0.5) {
-        lq.x -= blockSize.x * 0.5;
-        size = vec2(8.0, 5.0);
-      } else if (u >= 0.22) {
-        lq.x -= blockSize.x * 0.22;
-        size = vec2(8.96, 10.0);
-      }
-      vec2 cell = floor(lq / size);
-      vec2 e = min(fract(lq / size), 1.0 - fract(lq / size)) * size;
-      float inner = 1.0 - smoothstep(0.3, 0.7, min(e.x, e.y));
-      // the section's own cells only where they fit whole, the rest of the strip is bund
-      bund = max(rim, u >= 0.22 ? inner : 0.0);
-      float stage = hash12(cell + block * 31.0 + 4.1);
-      vec3 work;
-      float wet;
-      if (u < 0.22) {
-        // the settling pond
-        work = vec3(0.11, 0.115, 0.085);
-        wet = 1.0;
-      } else if (u < 0.5) {
-        // evaporation beds: brine over mud, browner where it is new, greyer and greener as it thickens, a
-        // few drying out with salt riming their floors
-        work = mix(vec3(0.16, 0.145, 0.105), vec3(0.15, 0.165, 0.135), stage);
-        wet = 1.0;
-        if (stage > 0.82) {
-          work = mix(vec3(0.3, 0.28, 0.24), vec3(0.6, 0.59, 0.55), smoothstep(0.5, 0.8, vnoise(q * 1.3 + stage * 20.0)));
-          wet = 0.2;
-        }
-      } else {
-        // crystallizers on black plastic
-        vec3 sheet = vec3(0.016, 0.017, 0.02);
-        vec3 crust = vec3(0.8, 0.79, 0.76) * (0.9 + 0.14 * vnoise(q * 2.3 + stage * 30.0));
-        if (stage < 0.3) {
-          work = sheet;
-          wet = 1.0;
-        } else if (stage < 0.55) {
-          float forming = smoothstep(0.45, 0.7, fbm3(q * 0.9 + stage * 40.0) + (stage - 0.42) * 1.4);
-          work = mix(sheet, crust * 0.85, forming);
-          wet = 1.0 - forming * 0.6;
-        } else if (stage < 0.85) {
-          work = crust;
-          wet = 0.1;
-        } else {
-          // raked: drag lines left in a thin crust across the black
-          float lines = smoothstep(0.55, 0.85, sin(lq.y * 9.0 + vnoise(q * 1.5) * 3.0));
-          work = mix(sheet, crust * 0.7, lines * 0.5);
-          wet = 0.4;
-        }
-        panW = 1.0;
-      }
-      pc = mix(brackish, work, working);
-      water = mix(1.0, wet, working);
+    float u = bq.x / blockSize.x;
+    vec2 lq = bq;
+    vec2 size = blockSize;
+    if (u >= ${SALT_FIELD.evaporation.toFixed(3)}) {
+      lq.x -= blockSize.x * ${SALT_FIELD.evaporation.toFixed(3)};
+      size = vec2(${SALT_FIELD.crystalCell[0].toFixed(2)}, ${SALT_FIELD.crystalCell[1].toFixed(2)});
+    } else if (u >= ${SALT_FIELD.pond.toFixed(3)}) {
+      lq.x -= blockSize.x * ${SALT_FIELD.pond.toFixed(3)};
+      size = vec2(${SALT_FIELD.evapCell[0].toFixed(2)}, ${SALT_FIELD.evapCell[1].toFixed(2)});
     }
+    vec2 cell = floor(lq / size);
+    vec2 e = min(fract(lq / size), 1.0 - fract(lq / size)) * size;
+    float inner = 1.0 - smoothstep(0.3, 0.7, min(e.x, e.y));
+    float bund = max(rim, u >= ${SALT_FIELD.pond.toFixed(3)} ? inner : 0.0);
+    // each bed's stage in the work (saltworks.ts saltStage is its twin)
+    float stage = fract(cell.x * 0.618 + cell.y * 0.29 + 0.11);
+    vec3 work;
+    float wet;
+    if (u < ${SALT_FIELD.pond.toFixed(3)}) {
+      // the settling pond
+      work = vec3(0.11, 0.115, 0.085);
+      wet = 1.0;
+    } else if (u < ${SALT_FIELD.evaporation.toFixed(3)}) {
+      // evaporation beds: brine over mud, browner where it is new, greyer and greener as it thickens, a few
+      // drying out with salt riming their floors
+      work = mix(vec3(0.16, 0.145, 0.105), vec3(0.15, 0.165, 0.135), stage);
+      wet = 1.0;
+      if (stage > 0.82) {
+        work = mix(vec3(0.3, 0.28, 0.24), vec3(0.6, 0.59, 0.55), smoothstep(0.5, 0.8, vnoise(q * 1.3 + stage * 20.0)));
+        wet = 0.2;
+      }
+    } else {
+      // crystallizers on black plastic
+      vec3 sheet = vec3(0.016, 0.017, 0.02);
+      vec3 crust = vec3(0.8, 0.79, 0.76) * (0.9 + 0.14 * vnoise(q * 2.3 + stage * 30.0));
+      if (stage < 0.3) {
+        work = sheet;
+        wet = 1.0;
+      } else if (stage < 0.55) {
+        float forming = smoothstep(0.45, 0.7, fbm3(q * 0.9 + stage * 40.0) + (stage - 0.42) * 1.4);
+        work = mix(sheet, crust * 0.85, forming);
+        wet = 1.0 - forming * 0.6;
+      } else if (stage < 0.85) {
+        work = crust;
+        wet = 0.1;
+      } else {
+        // raked: drag lines left in a thin crust across the black
+        float lines = smoothstep(0.55, 0.85, sin(lq.y * 9.0 + vnoise(q * 1.5) * 3.0));
+        work = mix(sheet, crust * 0.7, lines * 0.5);
+        wet = 0.4;
+      }
+      panW = 1.0;
+    }
+    vec3 pc = mix(brackish, work, working);
+    float water = mix(1.0, wet, working) * step(0.0, edge);
     // the bunds: grey clay, rimed white with salt where the brine laps them while the farm works
     vec3 bundC = mix(clay, vec3(0.5, 0.49, 0.46), working * 0.5 * smoothstep(0.6, 0.95, bund) * vnoise(q * 4.0));
-    pc = mix(pc, bundC, bund);
+    pc = mix(pc, bundC, max(bund, 1.0 - step(0.0, edge)));
     water *= 1.0 - bund;
-    // the feeder channel runs with sea water whatever the season
+    // the feeder channel runs with the river's water whatever the season
     pc = mix(pc, brackish, channel);
     water = max(water, channel);
     diffuseColor.rgb = mix(diffuseColor.rgb, pc, salt);
@@ -423,7 +439,7 @@ if (vAtmWorld.y < causticLevel - 0.02 && uReflPass < 0.5) {
   float a = vnoise(q + vec2(uTime * 0.31, uTime * 0.17));
   float b = vnoise(q * 1.41 + vec2(-uTime * 0.23, uTime * 0.29) + 4.7);
   float caustic = pow(clamp(1.0 - abs(a - b) * 3.2, 0.0, 1.0), 5.0);
-  outgoingLight += diffuseColor.rgb * uKeyColor * max(uKeyDir.y, 0.0) * caustic * smoothstep(causticLevel - 2.2, causticLevel - 0.08, vAtmWorld.y) * 1.6;
+  outgoingLight += diffuseColor.rgb * uKeyColor * max(uKeyDir.y, 0.0) * caustic * smoothstep(causticLevel - 2.2, causticLevel - 0.08, vAtmWorld.y) * 0.9;
 }
 #endif
 `;
@@ -441,6 +457,7 @@ export function patchMaterial<T extends Material>(material: T, options: PatchOpt
   if (options.translucency) defines.ATM_TRANSL = options.translucency.toFixed(3);
   if (options.skin) defines.ATM_SKIN = options.skin.toFixed(3);
   if (options.grime) defines.ATM_GRIME = options.grime.toFixed(3);
+  if (options.wetline) defines.ATM_WETLINE = '';
   if (options.terrain) defines.ATM_TERRAIN = '';
   if (options.terrain && options.splat) defines.ATM_SPLAT = '';
   if (options.seasonal) defines.ATM_SEASONAL = options.seasonal === 'leaf' ? '1' : options.seasonal === 'tree' ? '2' : '3';

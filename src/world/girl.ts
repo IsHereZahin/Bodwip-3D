@@ -46,11 +46,11 @@ const FEET = [
 ] as const;
 const UP = new Vector3(0, 1, 0);
 
-/** The kameez's skirt from the hips (over the bodice's hem) to the knees, on the hips: its top height from spine05's head. */
+/** The kameez's skirt from the hips (over the bodice's hem) down to her ankles (a long kameez, as the user's reference has her), on the hips: its top height from spine05's head. */
 const SKIRT_TOP = 0.05;
 /** How far below spine05's head its hem hangs, and how much it flares there (m). */
-const SKIRT_DROP = 0.38;
-const SKIRT_FLARE = 0.07;
+const SKIRT_DROP = 0.86;
+const SKIRT_FLARE = 0.13;
 /** How far the bodice and the salwar stand off her skin (as built). */
 const BODICE_OFF = 0.012;
 const SALWAR_OFF = 0.04;
@@ -80,7 +80,7 @@ const CANOPY_R = 0.52;
 const CANOPY_DEPTH = 0.21;
 const RIBS = 8;
 /** How it rests in her hand (her frame): tilted back over her head and a little inward. */
-const REST = new Vector3(0.08, 1, -0.28).normalize();
+const REST = new Vector3(0.12, 1, -0.62).normalize();
 /** Its tilt answers the wind as a damped spring (Hz, damping); how far she lets it go (rad). */
 const TILT = { f: 1.15, zeta: 0.32, max: 0.55 };
 /** Her plait: how much the air drags it, how much it keeps its swing each step. */
@@ -234,19 +234,20 @@ export class Girl {
     this.group.name = 'girl';
     const fabric = (map: ReturnType<typeof printTexture>, roughness: number, translucency: number) =>
       patchMaterial(new MeshStandardMaterial({ map, vertexColors: true, roughness, side: DoubleSide }), { translucency });
-    // a powder-blue kameez with a small white sprig, white salwar, a rose-pink orna bordered in gold
-    const sprig = printTexture('#8fb8cf', '#f4f1e8', '#5f8a6a', 41);
+    // a long dark kameez to her ankles, near black with a faint deep-red sprig, dark salwar and orna: one dark
+    // figure under the red umbrella, as the user's reference has her
+    const sprig = printTexture('#24242c', '#34343f', '#5a2328', 41);
     const kameezMat = fabric(sprig, 0.9, 0.35);
     // the bodice and sleeves wear the print over the body's own layout; the skirt is a tube of it
     const bodicePrint = sprig.clone();
     bodicePrint.repeat.set(16, 16);
     bodicePrint.needsUpdate = true;
     const bodiceMat = fabric(bodicePrint, 0.9, 0.35);
-    const salwarWeave = clothTexture('#ece6da', '#e4ddcd', '#dcd4c2', 42, true);
+    const salwarWeave = clothTexture('#26262d', '#2c2c34', '#22222a', 42, true);
     salwarWeave.map.repeat.set(10, 10);
     const salwarMat = patchMaterial(new MeshStandardMaterial({ map: salwarWeave.map, roughness: 0.92, side: DoubleSide, vertexColors: true }), { translucency: 0.3 });
     const ornaMat = patchMaterial(
-      new MeshStandardMaterial({ map: printTexture('#d65a7a', '#f2b8c6', '#c2486a', 44), vertexColors: true, roughness: 0.85, side: DoubleSide }),
+      new MeshStandardMaterial({ map: printTexture('#2e2c36', '#463a44', '#6e2a30', 44), vertexColors: true, roughness: 0.85, side: DoubleSide }),
       { translucency: 1.2 },
     );
     const sandal = new MeshStandardMaterial({ color: '#4a2e1c', roughness: 0.7 });
@@ -284,12 +285,12 @@ export class Girl {
     const chestMap = body.data.sections.chest;
     this.gripAt = new Vector3(-0.15, 0.04, radiusAt(chestMap, 0.04, 0).zc + 0.2);
 
-    // the kameez's skirt: held to her at the hips over the bodice's hem, swinging free toward its hem at the knees
+    // the kameez's skirt: held to her at the hips over the bodice's hem, swinging free toward its hem at her ankles
     const e = enclosing(body.data.sections.pelvis, SKIRT_TOP);
     this.hips = { zc: e.zc, a: e.a + BODICE_OFF + 0.01, b: e.b + BODICE_OFF + 0.01 };
     this.skirt = new ClothTube(kameezMat, {
-      segments: 28,
-      rings: 14,
+      segments: 32,
+      rings: 22,
       fold: (t, th) => ({ r: (0.004 * Math.sin(th * 8 + 0.5) + 0.01 * (0.5 + 0.5 * Math.sin(th * 5 + 1))) * smooth(0.15, 1, t), y: 0 }),
       freedom: (t) => 0.85 * smooth(0.12, 1, t),
       shade: (t) => (t < 0.03 ? 0.9 : 0.95 + 0.05 * smooth(0.85, 1, t)),
@@ -378,7 +379,7 @@ export class Girl {
     arm.hold.copy(at);
   }
 
-  /** The skirt's ring at `t` (0 its top at her hips .. 1 its hem below her knees). */
+  /** The skirt's ring at `t` (0 its top at her hips .. 1 its hem at her ankles). */
   private readonly skirtRing = (t: number, out: Ring): Ring => {
     const ax = this.v.set(1, 0, 0).applyQuaternion(this.pelvisQ);
     const az = this.v2.set(0, 0, 1).applyQuaternion(this.pelvisQ);

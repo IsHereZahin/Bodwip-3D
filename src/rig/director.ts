@@ -41,6 +41,8 @@ export interface Stage {
   birds(at: Vector3, heading: number): void;
   /** Puts the train's nose `s` m along the railway (from its east end), running west if `west`. */
   train(s: number, west: boolean): void;
+  /** Puts the fisherman `at` s into his cast (world/fisher.ts: he throws a little over three seconds in). */
+  fisherman(at: number): void;
   readonly sunDir: Vector3;
   readonly moonDir: Vector3;
   /** Builds whatever of each point's surroundings is not built yet (the ground, the grass, the crops), without showing it. */
@@ -155,6 +157,25 @@ export class Director {
   /** The tour is on. */
   get active(): boolean {
     return this.playing;
+  }
+
+  /** Which scene is showing (from 0), and how many there are. */
+  get sceneIndex(): number {
+    return this.index;
+  }
+  get sceneCount(): number {
+    return this.scenes.length;
+  }
+
+  /**
+   * On to the scene `step` from this one (−1 the one before, +1 the next), at the viewer's asking: cut as the
+   * film cuts by itself, this shot going on beneath while the other dissolves in, from its beginning.
+   */
+  skip(step: number): void {
+    if (!this.playing) return;
+    const n = this.scenes.length;
+    this.leaveScene();
+    this.enter((((this.index + step) % n) + n) % n);
   }
 
   /** The shot being left, to draw beneath this frame's while a dissolve lasts; null otherwise. */

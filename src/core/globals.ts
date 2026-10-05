@@ -27,7 +27,7 @@ export const G = {
   uWaterBody: { value: new Color() },
   /** xy: the way the wind blows toward, z: its strength (1 ≈ 4 m/s), w: how gusty (see env/wind.ts). */
   uWind: { value: new Vector4(0.97, 0.24, 1, 0.5) },
-  /** x: phase of the gust fronts rolling downwind. */
+  /** x: phase of the gust fronts rolling downwind; y: how far they roll in a second (m), for the plants that answer them late. */
   uGust: { value: new Vector2(0, 0) },
   /** Each wave's amplitude now (world/waves.ts): the swell and the chop the wind and the rain have raised. */
   uWaveA: { value: new Vector4() },
@@ -50,12 +50,23 @@ export const G = {
   tLevel: { value: null as Texture | null },
   uLevelMap: { value: new Vector4() },
   /**
+   * How far each place lies from the land the village keeps to (world/corridor.ts: the boat's way and the bil),
+   * and where that map lies (`uCorridorMap`: its west and north edges, 1 / its extent): the haze thickens past it.
+   */
+  tCorridor: { value: null as Texture | null },
+  uCorridorMap: { value: new Vector4() },
+  /**
    * The plane the mirror pass reflects about (m): the level of the water nearest the eye, the sea's or a
    * pond's, the bil's or the khal's (world/water.ts mirrorLevelAt); water at other levels shows the sky.
    */
   uMirrorLevel: { value: 0 },
   /** The khal's current against its mean (world/khal.ts KHAL_CURRENT): the season's runoff (main.ts). */
   uFlowScale: { value: 1 },
+  /**
+   * The season's rise of the waters above their mean level (m, env/season.ts `water`): the river, the khals and
+   * the bil rise and fall by all of it, the ponds by `POND_RISE` (geography.ts waterLevelAt, GLSL waterLevels).
+   */
+  uWaterRise: { value: 0 },
   /** The season on the land: x leafiness, y dryness, z share of trees in flower, w kash in plume. */
   uSeasonA: { value: new Vector4(0.95, 0.1, 0, 1) },
   /** x lilies in flower, y water standing in the paddy plots, z wet soil, w salt pans at work. */
@@ -67,6 +78,8 @@ export const G = {
   uRain: { value: 0 },
   /** 0..1: how far the sky has closed over with rain cloud (no sun glitter, soft light). */
   uOvercast: { value: 0 },
+  /** How much cloud lies on the hills (0..1): winter's mornings and evenings most, some in the rains (main.ts). */
+  uHillCloud: { value: 0 },
 };
 
 /** Drawn by the main camera only: never seen in the mirror pass. */

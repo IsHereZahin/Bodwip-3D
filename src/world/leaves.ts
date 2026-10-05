@@ -1,10 +1,11 @@
 import { BufferAttribute, BufferGeometry, Color, DoubleSide, InstancedBufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Quaternion, Vector3 } from 'three';
 import { G, LAYER_NO_REFLECT } from '../core/globals';
 import { smoothstep } from '../core/mathx';
+import { glslHash12 } from '../core/noise';
 import { Rng } from '../core/rng';
 import { windAt } from '../env/wind';
 import { patchMaterial } from '../render/patch';
-import { terrainHeight, waterLevelAt } from './geography';
+import { terrainHeight, waterLevelAt, waterwayAt } from './geography';
 import type { Crown } from './vegetation';
 
 // Leaves and petals falling from the trees round the camera. In spring the trees in red flower (the
@@ -16,13 +17,15 @@ import type { Crown } from './vegetation';
 // for a while and wither away. Only the crowns near the camera shed, so this costs the same anywhere.
 
 /** Most leaves in the air or lying at once. */
-const MOST = 1400;
+const MOST = 2200;
 /** Crowns this near the camera shed leaves (m). */
 const REACH = 70;
 /** A leaf this far from the camera is let go (m). */
 const LOSE = REACH + 35;
 /** Seconds a leaf lies where it fell before it withers away. */
 const LIE: [number, number] = [8, 22];
+/** Seconds a petal or leaf floats on the water before it sinks or is gone: longer, so they gather and drift. */
+const AFLOAT: [number, number] = [28, 60];
 /** Side of the cells the crowns are filed in (m). */
 const CELL = 40;
 
@@ -51,23 +54,14 @@ function leafGeometry(): BufferGeometry {
   return g;
 }
 
-/** fract(x), as GLSL has it. */
-const fract = (x: number) => x - Math.floor(x);
-/** The CPU twin of glsl.ts `hash12`. */
-function hash12(x: number, y: number): number {
-  let px = fract(x * 0.1031);
-  let py = fract(y * 0.1031);
-  let pz = fract(x * 0.1031);
-  const d = px * (py + 33.33) + py * (pz + 33.33) + pz * (px + 33.33);
-  px += d;
-  py += d;
-  pz += d;
-  return fract((px + py) * pz);
-}
-
 /** How far a tree at (x, z) is in red flower now, as the shader paints it (render/patch.ts, `ATM_SEASONAL == 2`). */
 function bloomAt(x: number, z: number): number {
-  return smoothstep(-0.05, 0.05, G.uSeasonA.value.z - hash12(Math.floor(x * 0.37) + 3.1, Math.floor(z * 0.37) + 3.1));
+  return smoothstep(0, 0.06, G.uSeasonA.value.z - bloomRank(x, z));
+}
+
+/** The share of the trees in flower at which one at (x, z) flowers (the shader's hash, its CPU twin): low ones flower first. */
+export function bloomRank(x: number, z: number): number {
+  return glslHash12(Math.floor(x * 0.37) + 3.1, Math.floor(z * 0.37) + 3.1);
 }
 
 interface Leaf {
@@ -185,7 +179,7 @@ export class FallingLeaves {
           const bloom = c.blossom && season.z > 0.02 ? bloomAt(c.x, c.z) : 0;
           // the bigger the crown, the more it sheds; those by the camera the most, where a leaf shows
           const size = (c.r / 4) ** 2 * (1 + 2 * (1 - smoothstep(10, 40, Math.hypot(c.x - eye.x, c.z - eye.z))));
-          const petals = bloom * 5 * size * storm;
+          const petals = bloom * 7 * size * storm;
           const leaves = dry * size * storm;
           for (let k = Math.floor(petals * dt + this.rng.next()); k > 0; k--) this.fromCrown(c, true, season.y);
           for (let k = Math.floor(leaves * dt + this.rng.next()); k > 0; k--) this.fromCrown(c, false, season.y);
@@ -259,6 +253,17 @@ export class FallingLeaves {
       const k = l.afloat ? 0.06 : Math.max(0, strength - 1.4) * 0.35;
       l.p.x += this.wind.x * k * dt;
       l.p.z += this.wind.z * k * dt;
+      // afloat it rides the water down with the current, and turns slowly as it goes
+      if (l.afloat) {
+        const w = waterwayAt(l.p.x, l.p.z);
+        if (w && w.d < w.half) {
+          const p = w.way.at(w.s);
+          const speed = w.way.current * G.uFlowScale.value * Math.max(0, 1 - (w.d / w.half) ** 2);
+          l.p.x += Math.sin(p.heading) * speed * dt;
+          l.p.z += Math.cos(p.heading) * speed * dt;
+        }
+        l.yaw += dt * 0.08 * Math.sin(l.phase);
+      }
       return l.lying > 0;
     }
     // the air carries it: its sideways way comes to the wind's quickly, plus its own slip from side to side
@@ -282,7 +287,7 @@ export class FallingLeaves {
     }
     if (l.p.y <= l.floor + 0.02) {
       l.p.y = l.floor + (l.afloat ? 0.005 : 0.02);
-      l.lying = this.rng.range(LIE[0], LIE[1]);
+      l.lying = l.afloat ? this.rng.range(AFLOAT[0], AFLOAT[1]) : this.rng.range(LIE[0], LIE[1]);
     }
     return true;
   }

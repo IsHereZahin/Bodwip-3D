@@ -117,6 +117,8 @@ export function leafClusterTexture(
   seed: number,
   palette: readonly string[],
   leaf: { count: number; len: [number, number]; width: number },
+  /** Small flowers dotted over the leaves (a flowering bush's), each a few petals round a paler eye. */
+  flowers?: { count: number; palette: readonly string[] },
 ): { map: DataTexture; normal: DataTexture } {
   const S = 256;
   const rng = new Rng(seed);
@@ -161,6 +163,27 @@ export function leafClusterTexture(
           halfLeafPath(normals, len, len * leaf.width, side);
         }
         normals.restore();
+      }
+    }
+    if (flowers) {
+      for (let i = 0; i < flowers.count; i++) {
+        const a = rng.range(0, Math.PI * 2);
+        const r = Math.sqrt(rng.next()) * S * 0.31;
+        const x = S / 2 + Math.cos(a) * r;
+        const y = S / 2 + Math.sin(a) * r;
+        const size = rng.range(3.5, 6.5);
+        const turn = rng.range(0, Math.PI);
+        c.fillStyle = rng.pick(flowers.palette);
+        for (let q = 0; q < 5; q++) {
+          const pa = turn + (q / 5) * Math.PI * 2;
+          c.beginPath();
+          c.ellipse(x + Math.cos(pa) * size * 0.55, y + Math.sin(pa) * size * 0.55, size * 0.55, size * 0.38, pa, 0, Math.PI * 2);
+          c.fill();
+        }
+        c.fillStyle = 'rgba(255, 236, 214, 0.85)';
+        c.beginPath();
+        c.arc(x, y, size * 0.22, 0, Math.PI * 2);
+        c.fill();
       }
     }
   });
@@ -254,6 +277,112 @@ export function palmFanTexture(seed: number): DataTexture {
     c.fill();
   });
   return toTexture(ctx, { bleed: true });
+}
+
+/**
+ * Weathered stone, tiling (the stones' and rocks' surface, world/stones.ts), with a matching normal map: a
+ * grey ground of fine grains light and dark, soft mottling where it has weathered, a few thin dark cracks, and
+ * pale grey lichen in small patches. The mottling and the cracks are laid into a height the normal map is taken
+ * from. Everything wraps round the edges, so it tiles.
+ */
+export function rockTexture(seed: number): { map: DataTexture; normal: DataTexture } {
+  const S = 256;
+  const rng = new Rng(seed);
+  const height = new Float32Array(S * S);
+  const tone = new Float32Array(S * S);
+  /** A soft round bump of `amount` into `field` at (cx, cy), wrapping round the edges. */
+  const bump = (field: Float32Array, cx: number, cy: number, r: number, amount: number) => {
+    const r2 = r * r;
+    for (let dy = -Math.ceil(r); dy <= Math.ceil(r); dy++) {
+      for (let dx = -Math.ceil(r); dx <= Math.ceil(r); dx++) {
+        const d2 = dx * dx + dy * dy;
+        if (d2 > r2) continue;
+        const x = (((Math.round(cx) + dx) % S) + S) % S;
+        const y = (((Math.round(cy) + dy) % S) + S) % S;
+        const f = 1 - d2 / r2;
+        field[y * S + x] += amount * f * f;
+      }
+    }
+  };
+  // weathering: broad soft mottles, lighter and darker, in the height and in the tone alike
+  for (let i = 0; i < 260; i++) {
+    const x = rng.range(0, S);
+    const y = rng.range(0, S);
+    const r = rng.range(6, 30);
+    const a = rng.range(-1, 1);
+    bump(height, x, y, r, a * 0.18);
+    bump(tone, x, y, r, a * 0.09 + rng.range(-0.04, 0.04));
+  }
+  // grain: tiny pits and crystals
+  for (let i = 0; i < S * S; i++) {
+    const g = rng.next() - 0.5;
+    height[i] += g * 0.05;
+    tone[i] += g * 0.16;
+  }
+  // cracks: thin wandering lines, cut into the height
+  for (let k = 0; k < 5; k++) {
+    let x = rng.range(0, S);
+    let y = rng.range(0, S);
+    let a = rng.range(0, Math.PI * 2);
+    for (let i = 0; i < 18; i++) {
+      a += rng.range(-0.5, 0.5);
+      x += Math.cos(a) * 4;
+      y += Math.sin(a) * 4;
+      bump(height, x, y, 1.6, -0.35);
+      bump(tone, x, y, 1.4, -0.22);
+    }
+  }
+  const map = paint(S, S, (c) => {
+    const img = c.createImageData(S, S);
+    for (let i = 0; i < S * S; i++) {
+      const v = Math.max(0.35, Math.min(1.3, 1 + tone[i]));
+      img.data[i * 4] = 128 * v;
+      img.data[i * 4 + 1] = 124 * v;
+      img.data[i * 4 + 2] = 116 * v;
+      img.data[i * 4 + 3] = 255;
+    }
+    c.putImageData(img, 0, 0);
+    // lichen: small pale grey patches of tiny dots (drawn at each wrap so a patch crossing an edge tiles)
+    for (let k = 0; k < 10; k++) {
+      const cx = rng.range(0, S);
+      const cy = rng.range(0, S);
+      const r = rng.range(5, 13);
+      const col = rng.pick(['rgba(196, 198, 186, 0.5)', 'rgba(178, 182, 168, 0.45)', 'rgba(200, 192, 166, 0.35)']);
+      const dots = Array.from({ length: Math.round(r * 7) }, () => {
+        const a = rng.range(0, Math.PI * 2);
+        const d = Math.sqrt(rng.next()) * r;
+        return { x: cx + Math.cos(a) * d, y: cy + Math.sin(a) * d, s: rng.range(0.5, 1.5) };
+      });
+      c.fillStyle = col;
+      for (const ox of [-S, 0, S]) {
+        for (const oy of [-S, 0, S]) {
+          for (const d of dots) {
+            c.beginPath();
+            c.arc(d.x + ox, d.y + oy, d.s, 0, Math.PI * 2);
+            c.fill();
+          }
+        }
+      }
+    }
+  });
+  const normals = paint(S, S, (n) => {
+    const img = n.createImageData(S, S);
+    const h = (x: number, y: number) => height[(((y % S) + S) % S) * S + (((x % S) + S) % S)];
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const dx = (h(x + 1, y) - h(x - 1, y)) * 4;
+        const dy = (h(x, y + 1) - h(x, y - 1)) * 4;
+        const l = Math.hypot(dx, dy, 1);
+        const o = (y * S + x) * 4;
+        img.data[o] = (-dx / l * 0.5 + 0.5) * 255;
+        img.data[o + 1] = (dy / l * 0.5 + 0.5) * 255;
+        img.data[o + 2] = (1 / l * 0.5 + 0.5) * 255;
+        img.data[o + 3] = 255;
+      }
+    }
+    n.putImageData(img, 0, 0);
+  });
+  return { map: toTexture(map, { repeat: true }), normal: toTexture(normals, { repeat: true, data: true }) };
 }
 
 /** Banana leaf: v along the leaf (stem at v = 0), torn into strips at the edges. */
@@ -796,6 +925,37 @@ export function palmBarkTexture(seed: number): DataTexture {
     }
   });
   return toTexture(ctx, { repeat: true });
+}
+
+/**
+ * A cast net's mesh (tiles): pale twine knotted in diamonds on nothing, the knots a little heavier. Seen from
+ * afar its mipmaps leave a faint veil, as a net in the air is.
+ */
+export function castNetTexture(): DataTexture {
+  const S = 128;
+  const N = 6;
+  const ctx = paint(S, S, (c) => {
+    c.strokeStyle = 'rgba(232,226,210,1)';
+    c.lineWidth = 2.8;
+    const cell = S / N;
+    for (let k = -N; k <= 2 * N; k++) {
+      c.beginPath();
+      c.moveTo(k * cell, 0);
+      c.lineTo(k * cell + S, S);
+      c.moveTo(k * cell + S, 0);
+      c.lineTo(k * cell, S);
+      c.stroke();
+    }
+    c.fillStyle = 'rgba(214,206,186,1)';
+    for (let i = 0; i <= N; i++) {
+      for (let j = 0; j <= N; j++) {
+        c.beginPath();
+        c.arc(i * cell, j * cell, 2.8, 0, Math.PI * 2);
+        c.fill();
+      }
+    }
+  });
+  return toTexture(ctx, { repeat: true, bleed: true });
 }
 
 /** A soft round shadow, dark in the middle and gone at the rim (alpha only), for contact shadows. */

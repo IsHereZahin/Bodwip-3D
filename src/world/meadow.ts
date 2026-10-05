@@ -15,9 +15,10 @@ import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
 import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
-import { CROP_REACH } from '../render/glsl';
+import { CORRIDOR, CROP_REACH } from '../render/glsl';
 import { patchMaterial } from '../render/patch';
-import { WATER_LEVEL, onBridge, onLandmark, onRoad, terrainHeight } from './geography';
+import { WATER_LEVEL, corridorDistance, onBridge, onLandmark, onRoad, terrainHeight } from './geography';
+import { nearStone } from './stones';
 import { groundLattice } from './terrain';
 import type { Ghat, HutPlan } from './village';
 
@@ -311,7 +312,8 @@ export class Meadow {
         const x = (cx + dx + 0.5) * CHUNK;
         const z = (cz + dz + 0.5) * CHUNK;
         const d = Math.hypot(x - view.x, z - view.z, lift);
-        if (d < far + CHUNK_REACH) list.push({ key: `${cx + dx},${cz + dz},0`, x, z, d });
+        // nothing grown out where the land fades away
+        if (d < far + CHUNK_REACH && corridorDistance(x, z) < CORRIDOR.crops) list.push({ key: `${cx + dx},${cz + dz},0`, x, z, d });
       }
     }
     return list.sort((a, b) => a.d - b.d);
@@ -426,7 +428,7 @@ export class Meadow {
         // none in the khal's or the bil's water, nor on the mud just above it
         if (g.h < WATER_LEVEL + 0.25) continue;
         if (huts.some((h) => Math.hypot(h.x - x, h.z - z) < Math.max(h.l, h.w) * 0.6 + 0.4)) continue;
-        if (onBridge(x, z) || onLandmark(x, z)) continue;
+        if (onBridge(x, z) || onLandmark(x, z) || nearStone(x, z, 0.05)) continue;
         // nothing grows on a road, a footpath or the bridge's worn way: they stay trodden and clear (the
         // lattice is too coarse to see a footpath's metre, so each is asked here)
         if (onRoad(x, z, 0.25)) continue;

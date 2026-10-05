@@ -6,10 +6,26 @@
  */
 export const CROP_REACH = { fade: 30, edge: 37, canopy: [80, 100], lift: 2 } as const;
 
+import { POND_LEVEL, POND_RISE, WATER_LEVEL } from '../world/plan';
+
 /**
  * Shared uniforms, noise and aerial perspective. Included exactly once in every scene shader
  * (custom ones and the patched built-in materials), so haze is identical on land, water and sky.
  */
+/**
+ * How far past the world's edges the map of the waters (water.ts levelTexture) runs on (m), so the river goes on
+ * into the haze instead of ending at the edge; the haze still thickens from the world's own edges.
+ */
+export const EDGE_MARGIN = 600;
+
+/**
+ * The land the village keeps to (geography.ts corridorDistance: from the boat's way and the bil, m): all is drawn
+ * out to `clear`; beyond, the land fades into the haze at `haze` per m. The crops and the grass stop at `crops`,
+ * the trees thin away between `trees`, and the free camera keeps within `camera`. The user asked for the land
+ * either side of the waters cut to a third, nothing grown on the rest, and nobody let out onto it.
+ */
+export const CORRIDOR = { clear: 230, haze: 0.008, crops: 300, trees: [290, 420], camera: 205 } as const;
+
 export const GLSL_COMMON = /* glsl */ `
 uniform float uTime;
 uniform vec3 uCamPos;
@@ -37,14 +53,18 @@ uniform float uWaterLevel;
 uniform float uTideHigh;
 uniform sampler2D tLevel;
 uniform vec4 uLevelMap;
+uniform sampler2D tCorridor;
+uniform vec4 uCorridorMap;
 uniform float uMirrorLevel;
 uniform float uFlowScale;
+uniform float uWaterRise;
 uniform vec4 uSeasonA;
 uniform vec4 uSeasonB;
 uniform vec4 uCrops;
 uniform float uWet;
 uniform float uRain;
 uniform float uOvercast;
+uniform float uHillCloud;
 
 float hash12(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -146,9 +166,15 @@ vec3 hazeColor(vec3 rd) {
 }
 
 // Which water stands over p (world xz): r inland water's level, g the sea's cells, b inland water's
-// (world/water.ts levelTexture)
+// (world/water.ts levelTexture, baked at the mean level). The season raises and lowers it (uWaterRise): the
+// river, the khals and the bil by all of it, the ponds (above the khal's level) by POND_RISE, as geography.ts's
+// waterLevelAt does. A rising water spills over the banks the map carries its level out over: b is then
+// taken as water wherever a level was carried (r far above its fill of -20).
 vec3 waterLevels(vec2 p) {
-  return texture2D(tLevel, (uLevelMap.xy - p) * uLevelMap.zw).rgb;
+  vec3 lv = texture2D(tLevel, (uLevelMap.xy - p) * uLevelMap.zw).rgb;
+  lv.r += uWaterRise * (lv.r > ${(WATER_LEVEL + (POND_LEVEL - WATER_LEVEL) / 2).toFixed(2)} ? ${POND_RISE.toFixed(2)} : 1.0);
+  if (uWaterRise > 0.01 && lv.r > -5.0) lv.b = 1.0;
+  return lv;
 }
 
 // How open the sea's water at p is to the Bay's swell (world/exposure.ts): 1 on the open sea, 0 up the creeks
@@ -173,8 +199,13 @@ vec3 underwater(vec3 col, vec3 wpos) {
   float path = length(wpos - uCamPos) * (level - wpos.y) / (uCamPos.y - wpos.y);
   // out toward the open Bay the sea is clearer and greener-blue than the channel's silt
   float open = lv.g > 0.5 ? seaExposure(wpos.xz) : 0.0;
+  // the rivers run clear and green from late autumn through the dry months, and silty brown in the rains, as
+  // the land's runoff (uFlowScale, the season's) brings the silt down
+  float clear = 1.0 - smoothstep(0.8, 1.4, uFlowScale);
   vec3 body = mix(uWaterBody, uWaterBody * vec3(0.62, 0.98, 1.2), open);
-  return mix(body, col * vec3(0.78, 0.86, 0.72), exp(-path * mix(2.8, 1.5, open)));
+  body = mix(body, body * vec3(0.72, 1.06, 1.02), clear);
+  vec3 seen = col * mix(vec3(0.78, 0.86, 0.72), vec3(0.74, 0.92, 0.86), clear);
+  return mix(body, seen, exp(-path * mix(mix(2.8, 1.5, open), 0.7, clear)));
 }
 
 // Aerial perspective: analytic exponential height fog plus a thin river mist that hugs the water
@@ -212,9 +243,14 @@ vec3 applyAtmosphere(vec3 col, vec3 wpos) {
   // extent): beyond its edges, where the edge cells only run on, the land fades into the haze
   float odE = 0.0;
   if (uLevelMap.z > 0.0) {
-    vec2 hi = uLevelMap.xy;
-    vec2 lo = hi - 1.0 / uLevelMap.zw;
+    vec2 hi = uLevelMap.xy - ${EDGE_MARGIN.toFixed(1)};
+    vec2 lo = uLevelMap.xy - 1.0 / uLevelMap.zw + ${EDGE_MARGIN.toFixed(1)};
     odE = length(max(max(lo - wpos.xz, wpos.xz - hi), 0.0)) * EDGE_HAZE;
+  }
+  // and past the land the village keeps to (CORRIDOR), the land fades away
+  if (uCorridorMap.z > 0.0) {
+    float cd = texture2D(tCorridor, (uCorridorMap.xy - wpos.xz) * uCorridorMap.zw).r;
+    odE = max(odE, max(cd - ${CORRIDOR.clear.toFixed(1)}, 0.0) * ${CORRIDOR.haze.toFixed(4)});
   }
   float od = odF + odM + odE;
   vec3 hc = hazeColor(rd);

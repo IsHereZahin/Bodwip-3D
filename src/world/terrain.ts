@@ -14,6 +14,8 @@ import { roadCover } from './roads';
 
 const COLORS = {
   bedDeep: rgb('#2a241a'),
+  /** The shallow bed by the banks: gravel and small stones, seen through clear water. */
+  gravel: rgb('#6b6253'),
   wetMud: rgb('#3d3226'),
   dryMud: rgb('#6e5c45'),
   sandWet: rgb('#8a7759'),
@@ -28,6 +30,8 @@ const COLORS = {
   grove: rgb('#3e5226'),
   /** The bil's wet meadow. */
   marsh: rgb('#5a6c38'),
+  /** The salt field's grey clay (render/patch.ts paints its beds over it). */
+  clay: rgb('#6f685d'),
 };
 
 /**
@@ -57,7 +61,7 @@ interface ClassLook {
   bare: number;
 }
 
-const LOOK: Record<'field' | 'yard' | 'mound' | 'verge' | 'sand' | 'marsh', ClassLook> = {
+const LOOK: Record<'field' | 'yard' | 'mound' | 'verge' | 'sand' | 'marsh' | 'salt', ClassLook> = {
   field: { color: COLORS.grassA, zone: 1, grass: 0.75, dirt: 0.15, sand: 0, bare: 0 },
   // the yard is clay swept smooth: the fine sand layer's grain under its colour, little of the gravelly dirt or the cracked mud
   yard: { color: COLORS.yard, zone: 0, grass: 0.02, dirt: 0.08, sand: 0.6, bare: 1 },
@@ -65,6 +69,8 @@ const LOOK: Record<'field' | 'yard' | 'mound' | 'verge' | 'sand' | 'marsh', Clas
   verge: { color: COLORS.grassB, zone: 0, grass: 0.9, dirt: 0.05, sand: 0, bare: 0 },
   sand: { color: COLORS.sand, zone: 0, grass: 0, dirt: 0, sand: 1, bare: 0 },
   marsh: { color: COLORS.marsh, zone: 0, grass: 0.85, dirt: 0, sand: 0, bare: 0 },
+  // the salt field: its zone below 0 (render/patch.ts paints the beds, bunds and brine), kept bare
+  salt: { color: COLORS.clay, zone: -1, grass: 0, dirt: 0.4, sand: 0.3, bare: 1 },
 };
 
 const blend: ClassLook = { color: [0, 0, 0], zone: 0, grass: 0, dirt: 0, sand: 0, bare: 0 };
@@ -79,6 +85,7 @@ function blendedLook(x: number, z: number): ClassLook {
     [LOOK.verge, u.verge],
     [LOOK.sand, u.sand],
     [LOOK.marsh, u.marsh],
+    [LOOK.salt, u.salt],
   ];
   let total = 0;
   for (const [, w] of parts) total += w;
@@ -113,8 +120,10 @@ function cover(x: number, z: number, h: number): Cover {
   const water = shoreLevel(x, z);
   const level = Number.isFinite(water) ? water : -1e4;
   if (h < level - 0.15) {
-    const color = mixRgb(COLORS.bedDeep, COLORS.wetMud, smoothstep(-4, -0.15, h - level));
-    return { color, zone: 0, grass: 0, dirt: 0, sand: look.sand, pebbles: 0, bare: 0 };
+    // gravel and stones in the shallows along the banks, fading into silt as it deepens
+    const shallow = smoothstep(-2.4, -0.4, h - level);
+    const color = mixRgb(mixRgb(COLORS.bedDeep, COLORS.wetMud, smoothstep(-4, -0.15, h - level)), COLORS.gravel, shallow * 0.75);
+    return { color, zone: 0, grass: 0, dirt: 0, sand: Math.max(look.sand, 0.25 * shallow), pebbles: 0.85 * shallow, bare: 0 };
   }
   let ground = look.color;
   // some variety: greener and drier patches, and on the hills red earth showing through the forest

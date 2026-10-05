@@ -37,7 +37,7 @@ const LEAP_EVERY: [number, number] = [3, 10];
 const RINGS = 24;
 
 /** A fish 1 m long along +z (scaled down per fish): a spindle body, dark back and pale belly, and a forked tail. */
-function fishGeometry(): BufferGeometry {
+export function fishGeometry(): BufferGeometry {
   const pos: number[] = [];
   const col: number[] = [];
   const back = [0.16, 0.18, 0.12];
@@ -255,8 +255,8 @@ export class Fish {
     this.ringShade.needsUpdate = true;
   }
 
-  /** Rings spreading from `at` on the water, `size` m across at their widest. */
-  private ring(at: Vector3, size: number): void {
+  /** Rings spreading from `at` on the water, `size` m across at their widest (a leap's, or a net's falling in). */
+  ring(at: Vector3, size: number): void {
     if (this.ringList.length >= RINGS - 1) return;
     this.ringList.push({ p: at.clone().setY(at.y + 0.02), t: 0, size });
     this.ringList.push({ p: at.clone().setY(at.y + 0.02), t: -0.35, size: size * 0.7 });

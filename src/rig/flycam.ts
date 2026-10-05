@@ -1,7 +1,8 @@
 import { Vector3 } from 'three';
 import type { PerspectiveCamera } from 'three';
 import { angleDelta, clamp, damp } from '../core/mathx';
-import { WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, terrainHeight, waterLevelAt } from '../world/geography';
+import { CORRIDOR } from '../render/glsl';
+import { WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, corridorDistance, terrainHeight, waterLevelAt } from '../world/geography';
 
 /**
  * How far the free camera may roam: over the khal and its village, well inside the world's edges (so they stay
@@ -100,7 +101,23 @@ export class FlyCam {
     this.vel.lerp(this.want, k);
     const step = this.push * k;
     this.push -= step;
+    const fromX = this.pos.x;
+    const fromZ = this.pos.z;
     this.pos.addScaledVector(this.vel, dt).addScaledVector(this.fwd, step);
+    // never out over the land beyond the village: a move that would take it farther out slides along the
+    // limit, or stops (placed outside, it may still come back in)
+    const limit = CORRIDOR.camera;
+    const outNow = corridorDistance(this.pos.x, this.pos.z);
+    if (outNow > limit && outNow > corridorDistance(fromX, fromZ)) {
+      if (corridorDistance(this.pos.x, fromZ) <= limit) this.pos.z = fromZ;
+      else if (corridorDistance(fromX, this.pos.z) <= limit) this.pos.x = fromX;
+      else {
+        this.pos.x = fromX;
+        this.pos.z = fromZ;
+      }
+      this.vel.x *= 0.5;
+      this.vel.z *= 0.5;
+    }
 
     // stay inside the world, above the ground and the water
     if (ahead || side || lift || step) this.still = false;

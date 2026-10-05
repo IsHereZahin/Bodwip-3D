@@ -388,7 +388,72 @@
   display: none;
 }
 
+/* the film's way back and on through its scenes: at the top while it plays, resting with the dock */
+#film-nav {
+  position: fixed;
+  left: 50%;
+  top: max(14px, env(safe-area-inset-top));
+  transform: translate(-50%, -10px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 999px;
+  background: rgba(14, 12, 10, 0.5);
+  border: 1px solid rgba(236, 211, 168, 0.14);
+  -webkit-backdrop-filter: blur(10px) saturate(1.15);
+  backdrop-filter: blur(10px) saturate(1.15);
+  color: var(--ink);
+  font-size: 14px;
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.6s ease, transform 0.6s ease;
+}
+#film-nav.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  pointer-events: auto;
+}
+#film-nav.show.idle {
+  opacity: 0;
+  transform: translate(-50%, -10px);
+  pointer-events: none;
+}
+#film-nav button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(236, 211, 168, 0.22);
+  background: rgba(236, 211, 168, 0.04);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+#film-nav button:hover {
+  background: rgba(236, 211, 168, 0.16);
+}
+#film-nav button:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+#film-count {
+  min-width: 4.5em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+}
+@media (max-width: 520px) {
+  #film-nav button span {
+    display: none;
+  }
+}
+
 /* everything but the film's captions can be hidden for a clean view */
+body.ui-off #film-nav,
 body.ui-off #dock,
 body.ui-off #hint,
 body.ui-off #toast {

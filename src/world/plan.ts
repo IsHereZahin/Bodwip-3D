@@ -18,12 +18,20 @@
 /** A point on the ground (world m). */
 export type Pt = readonly [number, number];
 
-/** The designed area (world m): x from X0 (east) to X1 (west), z from Z0 (south) to Z1 (north). Beyond it the land fades into the haze. */
-export const WORLD = { x0: -1500, x1: 1500, z0: -950, z1: 1400 } as const;
+/**
+ * The designed area (world m): x from X0 (east) to X1 (west), z from Z0 (south) to Z1 (north): the boat's way
+ * from where she sets out to the bil, the village round it, the railway and the north hill's near slope, ≈2.15
+ * × 1.65 km. Beyond it the land fades into the haze and only the hills of the backdrop stand on the horizon
+ * (world/backdrop.ts): the user found the open fields beyond the village's own ground empty and unneeded.
+ */
+export const WORLD = { x0: -1500, x1: 650, z0: -350, z1: 1300 } as const;
 
 // ---------- levels ----------
 
-/** The river, the khal and the bil stand at one level (m): they are one water. */
+/**
+ * The river, the khal and the bil stand at one level (m): they are one water. It is their mean: the season
+ * raises them by up to ≈0.8 m in the rains and lowers them by ≈0.4 m in spring (env/season.ts `water`).
+ */
 export const WATER_LEVEL = 1.0;
 /** The fields' level (m): the land stands this high over the water in the months the boat goes out. */
 export const PLAIN = WATER_LEVEL + 1.4;
@@ -33,6 +41,8 @@ export const MOUND = 1.0;
 export const ROAD_RAISE = 0.7;
 /** The ponds' water, a little above the river's (m): fed by the rain and the ground. */
 export const POND_LEVEL = WATER_LEVEL + 0.55;
+/** How much of the season's rise and fall the ponds take: rain-fed, they change less than the river. */
+export const POND_RISE = 0.3;
 
 // ---------- the waterways ----------
 
@@ -101,12 +111,41 @@ export const INTO_BIL = 150;
 /** Where the scene opens: the boat on the river by the first para, its groves along the right bank and the bend ahead in the evening light. */
 export const OPENING_NEAR: Pt = [-905, 30];
 
+/**
+ * The fisherman casting his net (world/fisher.ts): his dinghy tied to a bamboo pole on the river below where
+ * the khal comes in, off the boat's way, on the south bank's side of the middle; near which point.
+ */
+export const FISHER_NEAR: Pt = [92, -14];
+
 /** The old bridge carries the village road over the khal here (nearest point of the khal), and the bamboo sanko the field path over the side khal. */
 export const BRIDGE_NEAR: Pt = [23, 262];
 export const SANKO_NEAR: Pt = [150, 476];
 
 /** The inside of the river's broad bend, opposite the zamindar house: a low sandy char where the kash grows. */
 export const CHAR = { x: -455, z: 128, halfLen: 140, halfWid: 34, yaw: 0.22 } as const;
+
+/**
+ * The salt field (লবণ মাঠ, the user's ask) on the river's south bank by where the boat sets out, behind the
+ * river's embankment at the foot of the wooded hill: one farm (khola) worked in the dry months (env/season.ts
+ * `salt`). Its middle, the way its length runs (yaw: along (sin, cos), here upriver, west), its length and
+ * width (m), and the shares of its length (from its east end) given to the settling pond where the river's
+ * water is let in, then the evaporation beds where the brine thickens; the rest is crystallizer beds lined
+ * with black plastic, where the salt forms and is raked up. render/patch.ts paints it, world/saltworks.ts
+ * builds what stands on it: keep the two in step.
+ */
+export const SALT_FIELD = {
+  x: -1200,
+  z: -52,
+  yaw: 1.485,
+  w: 96,
+  d: 60,
+  pond: 0.22,
+  evaporation: 0.5,
+  /** The evaporation beds' and the crystallizers' cells (m along, m across), and how far in from the edge its bund runs (inside the feeder channel). */
+  evapCell: [8.96, 10],
+  crystalCell: [8, 5],
+  rimInset: 2.3,
+} as const;
 
 // ---------- homesteads ----------
 
@@ -225,14 +264,33 @@ export const ZAMINDAR = { x: -440, z: 240, face: S + 0.35, w: 72, d: 54, pond: {
 export const MOSQUE = { x: 152, z: 212, face: E, w: 40, d: 34, pond: { x: 100, z: 206, yaw: 0, halfW: 17, halfD: 12, ghat: [116, 206] } as PondSpec } as const;
 
 /**
- * The wooded hills (টিলা) that rise from the plain in a few places: one over the river's south bank down from the
- * confluence (the boat sees it against the sunset from there), a higher one on the northern horizon behind the
- * railway, a low ridge in the east. An ellipse each, `stretch` times longer along `yaw` (0 north), `h` m high.
+ * The wooded hills (টিলা) that rise from the plain in a few places. An ellipse each, `stretch` times longer along
+ * `yaw` (0 north), `h` m high. Most are rounded domes; a `steep` one (the user's reference: forested hills
+ * standing right over the water) keeps a low foot out to its edge and then climbs steeply from `steep` of its
+ * radius inward, so a strip of grassy bank lies between the water and the slope. Three stand right by the
+ * waters: over the river's south bank where the boat sets out, out of the bil's north-east shore where the khal
+ * comes into it, and behind the char's kash; the rest are on the horizons, faded into the haze.
  */
-export const HILLS: readonly { x: number; z: number; r: number; h: number; stretch: number; yaw: number }[] = [
-  { x: 520, z: -430, r: 190, h: 24, stretch: 1.45, yaw: 1.25 },
+export const HILLS: readonly { x: number; z: number; r: number; h: number; stretch: number; yaw: number; steep?: number }[] = [
+  { x: -900, z: -140, r: 150, h: 85, stretch: 1.6, yaw: 1.5, steep: 0.3 },
+  { x: -22, z: 955, r: 115, h: 75, stretch: 1.3, yaw: 0.3, steep: 0.3 },
+  { x: -470, z: -115, r: 130, h: 52, stretch: 1.5, yaw: 1.45, steep: 0.35 },
+  { x: 520, z: -395, r: 190, h: 24, stretch: 1.45, yaw: 1.25 },
   { x: -420, z: 1340, r: 260, h: 36, stretch: 1.6, yaw: 1.4 },
   { x: -1330, z: 620, r: 220, h: 18, stretch: 1.3, yaw: 0.4 },
+];
+
+/**
+ * Rocks standing up out of the khal's water (the user asked for some, with the boat going round them): `s` m
+ * along the khal from its mouth, `c` m to the left of its middle going up it, `r` their half-width (m). Clear of
+ * the bridge (s 250), the ghats (188, 336, 360, 550) and the side khal's mouth (430); the boat's way swerves
+ * round each (waterways.ts `rockSwerve`). All on her right going up: the boatman paddles on his left, and the
+ * blade must not reach a rock.
+ */
+export const KHAL_ROCKS: readonly { s: number; c: number; r: number }[] = [
+  { s: 110, c: -1.4, r: 1.0 },
+  { s: 400, c: -1.2, r: 0.85 },
+  { s: 495, c: -1.1, r: 1.1 },
 ];
 
 /** The railway, east to west on its embankment north of the bil: the far side of the village from the river. */
@@ -250,18 +308,13 @@ export const RAILWAY = { raise: 3.2, top: 6.5, slope: 0.5 } as const;
 /** The far villages: groves on their mounds out toward every horizon (only trees, seen through the haze). */
 export const FAR_GROVES: readonly { x: number; z: number; r: number }[] = [
   { x: -1250, z: 470, r: 120 },
-  { x: -1080, z: -480, r: 110 },
-  { x: -560, z: -650, r: 130 },
-  { x: 180, z: -720, r: 120 },
-  { x: 860, z: -640, r: 140 },
-  { x: 1280, z: -260, r: 110 },
-  { x: 1250, z: 480, r: 130 },
-  { x: 820, z: 930, r: 140 },
-  { x: 300, z: 1230, r: 120 },
+  { x: -900, z: -250, r: 90 },
+  { x: -300, z: -260, r: 80 },
+  { x: 560, z: 520, r: 80 },
+  { x: 460, z: 1180, r: 90 },
   { x: -430, z: 975, r: 120 },
   { x: -1000, z: 920, r: 120 },
   { x: -820, z: 720, r: 90 },
-  { x: 680, z: 560, r: 100 },
   { x: -1300, z: 60, r: 90 },
 ];
 

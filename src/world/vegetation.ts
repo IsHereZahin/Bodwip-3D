@@ -6,6 +6,7 @@ import { fbm } from '../core/noise';
 import { Rng } from '../core/rng';
 import { MeshBuilder, card, rgb, scaleRgb, taperedTube, type RGB } from '../render/builder';
 import { instanced, type Placement } from '../render/instancing';
+import { CORRIDOR } from '../render/glsl';
 import { patchMaterial } from '../render/patch';
 import type { Surfaces } from '../render/surfaces';
 import {
@@ -28,6 +29,8 @@ import {
   bilPoint,
   bilReach,
   charShare,
+  corridorDistance,
+  hillHeight,
   hillShare,
   inlandWaterAt,
   landUse,
@@ -39,10 +42,12 @@ import {
   routeGap,
   shapePoint,
   terrainHeight,
+  waterLevelAt,
   type Mound,
 } from './geography';
 import { BANYAN, FAR_GROVES, HILLS, WORLD } from './plan';
 import { roadLines } from './roads';
+import { nearStone } from './stones';
 import { KHAL, SIDE_KHAL, journeyDistance, type Waterway } from './waterways';
 import type { HutPlan } from './village';
 
@@ -342,6 +347,36 @@ function bamboo(rng: Rng): TreeParts {
 }
 
 /** Joba (hibiscus) by the houses: a few stems, a rounded bush of glossy leaves, red flowers on its skin. */
+/**
+ * A low flowering bush in the grass by the khals (the user's reference): a dome of small dark leaves dotted with
+ * pink-red flowers, knee high, on a few short stems.
+ */
+function flowerBush(rng: Rng): TreeParts {
+  const stems = new MeshBuilder();
+  const leaves = new MeshBuilder();
+  const r = rng.range(0.38, 0.5);
+  const h = rng.range(0.42, 0.58);
+  const center = new Vector3(0, h * 0.5, 0);
+  for (let i = 0; i < 3; i++) {
+    const a = rng.range(0, Math.PI * 2);
+    taperedTube(stems, [new Vector3(0, 0, 0), new Vector3(Math.cos(a) * r * 0.4, h * 0.5, Math.sin(a) * r * 0.4)], [0.02, 0.01], 4, rgb('#4a3a28'), 1);
+  }
+  const dir = new Vector3();
+  for (let k = 0; k < 34; k++) {
+    randomUnit(rng, dir);
+    dir.y = Math.abs(dir.y) * 0.9 - 0.05;
+    dir.normalize();
+    const p = new Vector3(dir.x * r, center.y + dir.y * h * 0.55, dir.z * r).addScaledVector(dir, -r * rng.range(0, 0.3));
+    p.y = Math.max(0.08, p.y);
+    const facing = dir.clone().add(randomUnit(rng, new Vector3()).multiplyScalar(0.5)).normalize();
+    const right = new Vector3().crossVectors(facing, Math.abs(facing.y) < 0.95 ? UP : new Vector3(1, 0, 0)).normalize();
+    const up = new Vector3().crossVectors(right, facing).normalize();
+    const s = rng.range(0.2, 0.28);
+    card(leaves, p, right.multiplyScalar(s), up.multiplyScalar(s), dir.clone().add(UP).normalize(), scaleRgb(WHITE, rng.range(0.82, 1.05)));
+  }
+  return { wood: stems.build(), leaves: leaves.build() };
+}
+
 function hibiscus(rng: Rng): TreeParts {
   const stems = new MeshBuilder();
   const leaves = new MeshBuilder();
@@ -590,6 +625,10 @@ export function buildVegetation(
     rain: leafClusterTexture(12, ['#33501c', '#3f5f22', '#4e7029', '#5d7f2f', '#6c8a36'], { count: 210, len: [0.045, 0.085], width: 0.5 }),
     bamboo: leafClusterTexture(13, ['#4e6a24', '#5f7d2b', '#6f8c33', '#7f983c'], { count: 70, len: [0.18, 0.3], width: 0.16 }),
     hibiscus: leafClusterTexture(19, ['#1d3812', '#264818', '#30571d', '#3b6624'], { count: 80, len: [0.12, 0.18], width: 0.6 }),
+    bush: leafClusterTexture(23, ['#1a3210', '#22401a', '#2c4d1e', '#365a24'], { count: 150, len: [0.06, 0.1], width: 0.55 }, {
+      count: 95,
+      palette: ['#c8304e', '#d8426a', '#b8243e', '#e45c80', '#cf3a58'],
+    }),
     frond: palmFrondTexture(14),
     fan: palmFanTexture(21),
     banana: bananaLeafTexture(15),
@@ -632,15 +671,24 @@ export function buildVegetation(
     wind: 0.2,
     windHeight: 12,
   });
+  // the banana's soft pseudostem bends with its big leaves
+  const bananaStem = patchMaterial(
+    new MeshStandardMaterial({ map: bark?.color ?? null, normalMap: bark?.normal ?? null, vertexColors: true, roughness: 0.92 }),
+    { grime: bark ? 0.2 : 0.5, wind: 0.12, windHeight: 3 },
+  );
   const mats = {
     // crowns move a hand's breadth in a breeze and a good half metre in a storm (see the wind in patch.ts)
     mango: leafMat(tex.mango, 0.3, 6, 0.78, 'tree'),
     rain: leafMat(tex.rain, 0.3, 6, 0.78, 'tree'),
     bamboo: leafMat(tex.bamboo, 0.45, 12),
     frond: leafMat({ map: tex.frond }, 0.2, 12),
-    fan: leafMat({ map: tex.fan }, 0.14, 14),
+    // as stiff as the trunk it crowns (palmWood), so the fans never part from it
+    fan: leafMat({ map: tex.fan }, 0.2, 12),
     banana: leafMat({ map: tex.banana }, 0.12, 3),
     hibiscus: leafMat(tex.hibiscus, 0.06, 1.5, 0.5),
+    bush: leafMat(tex.bush, 0.05, 0.8, 0.6),
+    // the hills' tall trees do not flower red in spring (only some of the trees round them do)
+    garjan: leafMat(tex.mango, 0.3, 6, 0.78, 'leaf'),
     kash: patchMaterial(
       new MeshStandardMaterial({ map: tex.kash, vertexColors: true, alphaTest: 0.42, alphaToCoverage: true, side: DoubleSide, roughness: 0.85 }),
       { wind: 0.35, windHeight: 2.2, translucency: 2.2, foliage: true, seasonal: 'kash' },
@@ -661,8 +709,14 @@ export function buildVegetation(
     broadleaf(r, { height: 4, trunkR: 0.4, crown: 5.5, flat: 0.75, lobes: 4, cards: 34, cardSize: 2.6, tint: rgb('#c8d0b8'), bark: barkTint, simple: true }),
   );
   const joba = variants(2, hibiscus);
+  const bushes = variants(3, flowerBush);
   // akashmoni (Acacia auriculiformis), among the commonest trees of Bengal's homesteads and roadsides: an
   // upright trunk, a dense rounded crown
+  // the hills' tall trees (garjan and their like): a long straight bole and a tall narrow crown, so the
+  // wooded slopes have a ragged, spired skyline over the rounder trees
+  const garjan = variants(2, (r) =>
+    broadleaf(r, { height: r.range(11, 15), trunkR: 0.36, crown: r.range(2.8, 3.6), flat: 1.7, lobes: 5, cards: 95, cardSize: 1.15, tint: rgb('#c4d0b0'), bark: barkTint }),
+  );
   const akashmoni = variants(2, (r) =>
     broadleaf(r, { height: r.range(3.5, 5), trunkR: 0.24, crown: r.range(3.2, 4.2), flat: 1.0, lobes: 6, cards: 90, cardSize: 1.0, tint: rgb('#d4dcc0'), bark: barkTint }),
   );
@@ -696,10 +750,12 @@ export function buildVegetation(
     coconutFar: bucket(coconutFar, mats.frond, palmWood),
     supariFar: bucket(supariFar, mats.frond, palmWood),
     dateFar: bucket(dateFar, mats.frond, palmWood),
-    banana: bucket(bananas, mats.banana),
+    banana: bucket(bananas, mats.banana, bananaStem),
     bamboo: bucket(bamboos, mats.bamboo, culmMat),
     joba: bucket(joba, mats.hibiscus, flowerMat),
+    bush: bucket(bushes, mats.bush),
     akashmoni: bucket(akashmoni, mats.akashmoni),
+    garjan: bucket(garjan, mats.garjan),
     tal: bucket(tals, mats.fan, palmWood),
   };
   // where each broadleaf's crown sits over its foot (as `broadleaf` builds them, at their middling size), for the falling leaves
@@ -707,13 +763,17 @@ export function buildVegetation(
     [B.mango, { y: 5.2, r: 4.1 }],
     [B.rain, { y: 6.8, r: 6.7 }],
     [B.akashmoni, { y: 6.4, r: 3.7 }],
+    [B.garjan, { y: 15.5, r: 3.2 }],
     [B.far, { y: 6.5, r: 5.5 }],
   ]);
   const put = (b: Bucket, p: Placement) => {
+    // out where the land fades away the trees thin out and stop (each one its own chance, so no line shows)
+    const out = corridorDistance(p.x, p.z);
+    if (out > CORRIDOR.trees[0] && rng.next() < smoothstep(CORRIDOR.trees[0], CORRIDOR.trees[1], out)) return;
     b.items[rng.int(0, b.items.length - 1)].push(p);
     const c = crownOf.get(b);
-    // all of these take the spring's red flower where the shader gives it (`seasonal: 'tree'`)
-    if (c) CROWNS.push({ x: p.x, y: p.y + c.y * p.s, z: p.z, r: c.r * p.s, blossom: true });
+    // these take the spring's red flower where the shader gives it (`seasonal: 'tree'`); the hills' garjan does not
+    if (c) CROWNS.push({ x: p.x, y: p.y + c.y * p.s, z: p.z, r: c.r * p.s, blossom: b !== B.garjan });
   };
   for (const f of featured) put(B[f.kind], { x: f.x, y: terrainHeight(f.x, f.z) - 0.15, z: f.z, ry: f.ry, s: f.s });
 
@@ -905,7 +965,9 @@ export function buildVegetation(
     // the hill the boat's way sees close is planted thick; those on the horizon with fewer, larger crowns that
     // close over them the same through the haze
     const seen = journeyDistance(hill.x, hill.z) < 700;
-    const n = Math.round((Math.PI * hill.r * hill.r * hill.stretch) / (seen ? 115 : 230));
+    // the steep hills by the water are wooded thick, crowns closing over their slopes
+    const n = Math.round((Math.PI * hill.r * hill.r * hill.stretch) / (hill.steep !== undefined ? 50 : seen ? 115 : 230));
+    const centreOut = journeyDistance(hill.x, hill.z);
     for (let k = 0; k < n; k++) {
       const a = rng.range(0, Math.PI * 2);
       const d = Math.sqrt(rng.next()) * hill.r;
@@ -916,6 +978,23 @@ export function buildVegetation(
       if (hillShare(x, z) < 0.5) continue;
       const near = journeyDistance(x, z) < 450;
       const r = rng.next();
+      if (hill.steep !== undefined) {
+        // wooded down to the water: the bil's marshy rim keeps trees back on the flat, not on a slope rising
+        // out of it, so only the water, the ways and the other trees keep them off here
+        const h = terrainHeight(x, z);
+        if (h < WATER_LEVEL + 1.2 || waterLevelAt(x, z) > h - 0.5 || onRoad(x, z, 1.5) || !occ.free(x, z, 2.4)) continue;
+        occ.add(x, z, 2.4);
+        // tall garjan standing over rain trees, mango and akashmoni; the higher, the more of the tall
+        // ones. Over the back of the hill, which no one on the water sees but from above, cheap crowns
+        const up = hillHeight(x, z) / hill.h;
+        if (journeyDistance(x, z) > centreOut + hill.r * 0.15) {
+          put(B.far, at(x, z, rng, rng.range(1.3, 1.7)));
+          continue;
+        }
+        const tree = r < 0.25 + 0.35 * up ? B.garjan : r < 0.7 ? B.rain : r < 0.85 ? B.mango : B.akashmoni;
+        put(tree, at(x, z, rng, rng.range(1.0, 1.4)));
+        continue;
+      }
       const tree = near ? (r < 0.35 ? B.rain : r < 0.6 ? B.mango : r < 0.8 ? B.akashmoni : r < 0.9 ? B.date : B.bamboo) : r < 0.8 ? B.far : r < 0.9 ? B.dateFar : B.coconutFar;
       plant(tree, x, z, near ? 3.2 : seen ? 4 : 6, near ? rng.range(1.0, 1.35) : seen ? rng.range(1.35, 1.7) : rng.range(1.8, 2.3));
     }
@@ -954,6 +1033,22 @@ export function buildVegetation(
       occ.add(x, z, 2.5);
       const r = rng.next();
       put(r < 0.62 ? B.far : r < 0.8 ? B.supariFar : r < 0.92 ? B.coconutFar : B.dateFar, { x, y: terrainHeight(x, z) - 0.2, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.9, 1.35) });
+    }
+  }
+
+  // low flowering bushes in the grass along the khals' banks, every so often, now and then two together
+  for (const way of [KHAL, SIDE_KHAL]) {
+    for (const side of [-1, 1] as const) {
+      for (let s = rng.range(10, 30); s < way.length - 15; s += rng.range(16, 38)) {
+        const c = way.beside(s, side, way.half(s) + (way === KHAL ? 5 : 3) + rng.range(0.8, 9));
+        for (let k = 0; k < (rng.next() < 0.3 ? 2 : 1); k++) {
+          const x = c.x + (k ? rng.range(-1.4, 1.4) : 0);
+          const z = c.z + (k ? rng.range(-1.4, 1.4) : 0);
+          if (!onDryLand(x, z, 0) || landUse(x, z).yard > 0.3 || nearStone(x, z, 0.4) || !occ.free(x, z, 0.9)) continue;
+          occ.add(x, z, 0.9);
+          put(B.bush, at(x, z, rng, rng.range(0.8, 1.3), 0.04));
+        }
+      }
     }
   }
 
@@ -1027,7 +1122,7 @@ export function buildVegetation(
     for (const side of [-1, 1] as const) {
       for (let s = 0; s < way.length; s += 1.3) {
         const p0 = way.at(s);
-        if (Math.abs(p0.x - (WORLD.x0 + WORLD.x1) / 2) > 1300 || journeyDistance(p0.x, p0.z) > 500) continue;
+        if (corridorDistance(p0.x, p0.z) > CORRIDOR.trees[0]) continue;
         for (const inland of [rng.range(0.3, 3), rng.range(2, 12)]) {
           const { x, z } = way.beside(s, side, way.half(s) + (way === SIDE_KHAL ? 3 : way === KHAL ? 5 : 7) + inland);
           if (!onDryLand(x, z, 0) || rng.next() < 0.3 || charShare(x, z) > 0.3) continue;

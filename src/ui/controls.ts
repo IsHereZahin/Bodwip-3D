@@ -10,17 +10,6 @@ import './controls.css';
 
 export type CameraChoice = 'follow' | 'free' | 'film';
 
-/** The weather menu: by the season, or held clear, breezy, windy, raining or stormy. */
-export const WEATHER_PICKS = [
-  ['auto', 'ঋতু অনুযায়ী'],
-  ['calm', 'পরিষ্কার, শান্ত'],
-  ['breeze', 'মৃদু হাওয়া'],
-  ['windy', 'জোর হাওয়া'],
-  ['drizzle', 'হালকা বৃষ্টি'],
-  ['rain', 'বৃষ্টি'],
-  ['storm', 'ঝড়'],
-] as const;
-export type WeatherPick = (typeof WEATHER_PICKS)[number][0];
 
 /** What the controls ask of the scene. */
 export interface ControlHandlers {
@@ -36,8 +25,11 @@ export interface ControlHandlers {
   moon(age: number): void;
   /** A season by index into SEASON_NAMES, or today's date. */
   season(choice: number | 'today'): void;
-  weather(choice: WeatherPick): void;
   sound(): void;
+  /** Opens or closes the map. */
+  map(): void;
+  /** The film's scene before or after this one. */
+  scene(step: -1 | 1): void;
   /** Any use of the controls; it counts as activity, like touching the scene. */
   touched(): void;
 }
@@ -100,18 +92,19 @@ export class Controls {
   private readonly moon = $<HTMLSelectElement>('#moon');
   private readonly moonLit = $<SVGPathElement>('#moon-lit');
   private readonly season = $<HTMLSelectElement>('#season');
-  private readonly weather = $<HTMLSelectElement>('#weather');
   private readonly bdate = $<HTMLElement>('#bdate');
   private readonly sound = $<HTMLButtonElement>('#sound');
   private readonly fullscreen = $<HTMLButtonElement>('#fullscreen');
   private readonly help = $<HTMLDialogElement>('#help');
+  private readonly filmNav = $<HTMLElement>('#film-nav');
+  private readonly filmCount = $<HTMLElement>('#film-count');
   private readonly handlers: ControlHandlers;
 
   private shown = false;
   private scrubbing = false;
   private idleTimer = 0;
   private film = false;
-  private last = { minute: -1, playing: true, speed: 0, camera: '', sound: false, sky: -1, phase: -1, moonAge: -1, tithi: '', date: '', season: -1 };
+  private last = { minute: -1, playing: true, speed: 0, camera: '', sound: false, sky: -1, phase: -1, moonAge: -1, tithi: '', date: '', season: -1, scene: '' };
 
   constructor(handlers: ControlHandlers) {
     this.handlers = handlers;
@@ -141,8 +134,6 @@ export class Controls {
     SEASON_NAMES.forEach((name, i) => this.season.add(new Option(name, String(i))));
     this.season.add(new Option('আজকের তারিখ', 'today'));
     this.season.addEventListener('change', use(() => h.season(this.season.value === 'today' ? 'today' : Number(this.season.value))));
-    for (const [value, label] of WEATHER_PICKS) this.weather.add(new Option(label, value));
-    this.weather.addEventListener('change', use(() => h.weather(this.weather.value as WeatherPick)));
 
     // the timeline: drag or click to set the time; the arrow keys step ten minutes, an hour with Shift
     this.paintDay();
@@ -173,6 +164,9 @@ export class Controls {
     $<HTMLElement>('#hide-ui').addEventListener('click', use(() => this.toggleUi()));
     $<HTMLElement>('#ui-restore').addEventListener('click', use(() => this.toggleUi()));
     $<HTMLElement>('#help-btn').addEventListener('click', use(() => this.toggleHelp()));
+    $<HTMLElement>('#map-btn').addEventListener('click', use(() => handlers.map()));
+    $<HTMLElement>('#film-prev').addEventListener('click', use(() => handlers.scene(-1)));
+    $<HTMLElement>('#film-next').addEventListener('click', use(() => handlers.scene(1)));
     // a click on the dimmed backdrop closes the sheet
     this.help.addEventListener('click', (e) => {
       if (e.target === this.help) this.help.close();
@@ -182,6 +176,7 @@ export class Controls {
     const wake = () => this.wake();
     for (const type of ['pointermove', 'pointerdown', 'keydown'] as const) window.addEventListener(type, wake, { passive: true });
     this.dock.addEventListener('focusin', wake);
+    this.filmNav.addEventListener('focusin', wake);
   }
 
   get helpOpen(): boolean {
@@ -215,9 +210,15 @@ export class Controls {
     request.catch((err: unknown) => console.warn('fullscreen:', err));
   }
 
-  /** Mirrors the scene's state; touches the page only where something changed. */
-  update(clock: Clock, camera: CameraChoice, sound: boolean): void {
+  /** Mirrors the scene's state (and, while the film plays, which of its scenes is showing); touches the page only where something changed. */
+  update(clock: Clock, camera: CameraChoice, sound: boolean, scene?: { index: number; count: number }): void {
     const l = this.last;
+    const film = camera === 'film' && scene ? `${bn(scene.index + 1)} / ${bn(scene.count)}` : '';
+    if (film !== l.scene) {
+      l.scene = film;
+      this.filmCount.textContent = film;
+      this.filmNav.classList.toggle('show', film !== '');
+    }
     const minute = Math.floor(clock.hour * 60);
     if (minute !== l.minute) {
       l.minute = minute;
@@ -280,11 +281,6 @@ export class Controls {
         this.moon.value = String(phase);
       }
     }
-  }
-
-  /** Shows a weather choice made elsewhere (by a key). */
-  showWeather(choice: WeatherPick): void {
-    this.weather.value = choice;
   }
 
   /** Paints the bar with the colour of the sky through one day (the day's own sun path), and its hour ticks. */
@@ -350,13 +346,17 @@ export class Controls {
   private wake(): void {
     if (!this.shown) return;
     this.dock.classList.remove('idle');
+    this.filmNav.classList.remove('idle');
     window.clearTimeout(this.idleTimer);
     this.idleTimer = window.setTimeout(() => this.rest(), this.film ? 2500 : 5000);
   }
 
   /** Steps aside, unless the pointer is over the dock, a key has focused it, or a drag is under way. */
   private rest(): void {
-    if (this.dock.matches(':hover') || this.dock.querySelector(':focus-visible') || this.scrubbing || this.helpOpen) this.wake();
-    else this.dock.classList.add('idle');
+    if (this.dock.matches(':hover') || this.filmNav.matches(':hover') || this.dock.querySelector(':focus-visible') || this.filmNav.querySelector(':focus-visible') || this.scrubbing || this.helpOpen) this.wake();
+    else {
+      this.dock.classList.add('idle');
+      this.filmNav.classList.add('idle');
+    }
   }
 }

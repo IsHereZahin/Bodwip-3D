@@ -1,7 +1,7 @@
 import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
 import { FeatureGrid, HOMESTEAD_MOUNDS, MOUNDS, PONDS, POND_BANK, local, pondReach, shapeDistance, shapePoint, type Mound, type Pond } from './layout';
-import { BANYAN, FAR_GROVES, HILLS, MOUND, PLAIN, TEA_STALL, WATER_LEVEL, WORLD } from './plan';
+import { BANYAN, FAR_GROVES, HILLS, MOUND, PLAIN, POND_LEVEL, POND_RISE, SALT_FIELD, TEA_STALL, WATER_LEVEL, WORLD } from './plan';
 import { railGround, railShare } from './railway';
 import { onRoad, roadCover, roadEdge, roadGround } from './roads';
 import { BRIDGE, SANKO, bridgeDeck, bridgeEnds, bridgeFrame, bridgeSoffit, bridgeToWorld, onBridge, onSanko, sankoEnds, type Point2 } from './sites';
@@ -17,6 +17,7 @@ import {
   bilReach,
   charShare,
   journeyAt,
+  journeyDistance,
   journeyFrame,
   journeyHalfWidth,
   riverLevee,
@@ -158,18 +159,77 @@ export function bilDepth(x: number, z: number): number {
   return bed * smoothstep(1, 0.72, e) + 0.04;
 }
 
-/** The ground the bil leaves at (x, z): its bowl, then a low marshy rim rising slowly to the fields. */
+/** The lane across the bil (m): its depth below the bil's mean water, its flat middle's half-width, and the width of its sides. */
+const BIL_LANE = { depth: 1.5, half: 4, side: 14 };
+
+/**
+ * How deep the lane the boat's way keeps from the khal's mouth across the bil lies (m below the bil's mean
+ * water; 0 off it): a beel keeps a deeper channel where its khal's water runs through it, and in the dry months
+ * that is all the water left across its rim, so the boat still goes in. Only within the bil and its rim.
+ */
+function bilLane(x: number, z: number): number {
+  if (!nearBil(x, z) || bilReach(x, z) > 1.45) return 0;
+  return BIL_LANE.depth * smoothstep(BIL_LANE.half + BIL_LANE.side, BIL_LANE.half, journeyDistance(x, z));
+}
+
+/** The ground the bil leaves at (x, z): its bowl, then a low marshy rim rising slowly to the fields; the boat's lane through both. */
 function bilGround(x: number, z: number, ground: number): number {
   if (!nearBil(x, z)) return ground;
   const e = bilReach(x, z);
-  if (e < 1) return BIL.level - bilDepth(x, z);
-  if (e < 1.45) return Math.min(ground, BIL.level - 0.04 + (ground - BIL.level + 0.04) * smoothstep(1, 1.45, e));
+  const lane = BIL.level - bilLane(x, z);
+  if (e < 1) return Math.min(ground, BIL.level - bilDepth(x, z), lane);
+  if (e < 1.45) return Math.min(ground, BIL.level - 0.04 + (ground - BIL.level + 0.04) * smoothstep(1, 1.45, e), lane);
   return ground;
+}
+
+/**
+ * How far (x, z) lies outside the land the village keeps to (m): the boat's way and the bil's water, from which
+ * the land runs `CORRIDOR.clear` m (glsl.ts) before it fades into the haze. The user asked for the land either side
+ * of the waters cut to a third, nothing grown on the rest and nobody let out onto it.
+ */
+export function corridorDistance(x: number, z: number): number {
+  const way = journeyDistance(x, z);
+  if (Math.hypot(x - BIL.x, z - BIL.z) > BIL.halfLen + 600) return way;
+  // the bil's reach is in its own half-sizes: about its narrower half-width a unit beyond its shore
+  return Math.min(way, Math.max(0, bilReach(x, z) - 1) * BIL.halfWid);
 }
 
 /** Distance from (x, z) to the boat's way: the lilies and the floating plants leave it open. */
 export function routeGap(x: number, z: number): number {
   return journeyFrame(x, z)?.d ?? Infinity;
+}
+
+// ---------- the salt field ----------
+
+/** The salt field's floor (m): graded flat a little below the fields, so the brine stands in its beds. */
+const SALT_LEVEL = PLAIN - 0.3;
+
+/** (x, z) in the salt field's frame (m): `u` along its length from its east end, `v` across it from its north side. The result is reused. */
+const saltAt = { u: 0, v: 0 };
+export function saltLocal(x: number, z: number): { u: number; v: number } {
+  const s = Math.sin(SALT_FIELD.yaw);
+  const c = Math.cos(SALT_FIELD.yaw);
+  const dx = x - SALT_FIELD.x;
+  const dz = z - SALT_FIELD.z;
+  saltAt.u = dx * s + dz * c + SALT_FIELD.w / 2;
+  saltAt.v = dx * c - dz * s + SALT_FIELD.d / 2;
+  return saltAt;
+}
+
+/** A point of the salt field's frame in the world. */
+export function saltPoint(u: number, v: number): { x: number; z: number } {
+  const s = Math.sin(SALT_FIELD.yaw);
+  const c = Math.cos(SALT_FIELD.yaw);
+  const a = u - SALT_FIELD.w / 2;
+  const b = v - SALT_FIELD.d / 2;
+  return { x: SALT_FIELD.x + a * s + b * c, z: SALT_FIELD.z + a * c - b * s };
+}
+
+/** How much of (x, z) is the salt field's ground (0..1): all of it inside its edge, none 3 m beyond. */
+export function saltShare(x: number, z: number): number {
+  const { u, v } = saltLocal(x, z);
+  const d = Math.max(-u, u - SALT_FIELD.w, -v, v - SALT_FIELD.d);
+  return smoothstep(3, 0, d);
 }
 
 // ---------- the ground ----------
@@ -193,7 +253,8 @@ export function hillHeight(x: number, z: number): number {
     const b = dx * c - dz * s;
     const d = (Math.hypot(a, b) / hill.r) * (0.85 + 0.3 * fbm(x * 0.006 + hill.x * 0.01, z * 0.006, 3, 51));
     if (d >= 1) continue;
-    const dome = (1 - d * d) ** 2;
+    // a dome, or (steep) a low foot and then a steep climb to the top
+    const dome = hill.steep !== undefined ? (1 - smoothstep(hill.steep, 1, d)) ** 1.5 : (1 - d * d) ** 2;
     h = Math.max(h, hill.h * dome * (0.72 + 0.56 * fbm(x * 0.014 + 3, z * 0.014, 3, 53)));
   }
   return h;
@@ -226,6 +287,8 @@ function landHeight(x: number, z: number): number {
   const char = charShare(x, z);
   let h = PLAIN + unevenness(x, z) * (1 - char) + riverLevee(x, z) - 0.6 * char + hillHeight(x, z);
   h = Math.max(h, moundGround(x, z), PLAIN + MOUND * 0.8 * groveShare(x, z));
+  const salt = saltShare(x, z);
+  if (salt > 0) h += (SALT_LEVEL - h) * salt;
   h = roadGround(x, z, h);
   h = railGround(x, z, h);
   return pondGround(x, z, h);
@@ -242,12 +305,52 @@ function pondSurface(x: number, z: number): number | null {
   return null;
 }
 
-/** The surface of the water standing at (x, z): the river's, the khals' and the bil's, or a pond's; −∞ on dry ground. */
-export function waterLevelAt(x: number, z: number): number {
-  if (nearBil(x, z) && bilReach(x, z) < 1.05) return BIL.level;
+// ---------- the season's water ----------
+
+let rise = 0;
+
+/** Sets the season's rise of the waters above their mean level (m; main.ts, each frame, from env/season.ts `water`). */
+export function setWaterRise(metres: number): void {
+  rise = metres;
+}
+
+/** The season's rise of the river, the khals and the bil above their mean level (m; negative in the dry months). */
+export function waterRise(): number {
+  return rise;
+}
+
+/**
+ * The surface of the water standing at (x, z) at its mean level: the river's, the khals' and the bil's, or a
+ * pond's; −∞ on dry ground. The maps baked once (the water's level map, the ground's wet band) read this.
+ */
+export function meanWaterLevelAt(x: number, z: number): number {
+  if (nearBil(x, z) && (bilReach(x, z) < 1.05 || bilLane(x, z) > 0.2)) return BIL.level;
   const w = waterwayAt(x, z);
   if (w && w.d < w.half + 1) return WATER_LEVEL;
   return pondSurface(x, z) ?? -Infinity;
+}
+
+/** Where a water whose mean level is `mean` stands this season: the waterways and the bil raised by all the rise, a pond by POND_RISE of it. */
+export function risenLevel(mean: number): number {
+  return mean + rise * (mean > (WATER_LEVEL + POND_LEVEL) / 2 ? POND_RISE : 1);
+}
+
+/** How far out from a waterway's water (m), or the bil's rim (its half-widths), a rising water can spill up the bank: the level map's reach (water.ts). */
+const SPILL = { way: 40, bil: 1.6 };
+
+/**
+ * The surface of the water standing at (x, z) this season: the mean raised or lowered by the season's rise
+ * (GLSL waterLevels does the same), and in the rains the risen water out over the banks' foot and the bil's
+ * low rim; −∞ on dry ground. In the dry months it may lie below the ground where the water has drawn back.
+ */
+export function waterLevelAt(x: number, z: number): number {
+  const mean = meanWaterLevelAt(x, z);
+  if (Number.isFinite(mean)) return risenLevel(mean);
+  if (rise <= 0) return mean;
+  const top = WATER_LEVEL + rise;
+  const w = waterwayAt(x, z);
+  const near = (w !== null && w.d < w.half + SPILL.way) || (nearBil(x, z) && bilReach(x, z) < SPILL.bil);
+  return near && terrainHeight(x, z) < top ? top : -Infinity;
 }
 
 /**
@@ -255,7 +358,7 @@ export function waterLevelAt(x: number, z: number): number {
  * water's own where (x, z) is under it; −∞ away from them. The ground's wet band reads it.
  */
 export function shoreLevel(x: number, z: number): number {
-  const here = waterLevelAt(x, z);
+  const here = meanWaterLevelAt(x, z);
   if (Number.isFinite(here)) return here;
   if (bankStrip(x, z) > 0) return WATER_LEVEL;
   if (nearBil(x, z) && bilReach(x, z) < 1.5) return BIL.level;
@@ -265,7 +368,7 @@ export function shoreLevel(x: number, z: number): number {
 
 /** Whether (x, z) holds water: the river, a khal, the bil or a pond. */
 export function inlandWaterAt(x: number, z: number): boolean {
-  if (nearBil(x, z) && bilReach(x, z) < 1) return true;
+  if (nearBil(x, z) && (bilReach(x, z) < 1 || bilLane(x, z) > 0.3)) return true;
   const w = waterwayAt(x, z);
   if (w && w.d < w.half) return true;
   return pondSurface(x, z) !== null;
@@ -275,7 +378,7 @@ export function inlandWaterAt(x: number, z: number): boolean {
 export function nearBackwater(x: number, z: number, margin: number): boolean {
   const w = waterwayAt(x, z);
   if (w && w.d < w.half + margin) return true;
-  if (nearBil(x, z) && bilReach(x, z) < 1 + margin / BIL.halfWid) return true;
+  if (nearBil(x, z) && (bilReach(x, z) < 1 + margin / BIL.halfWid || bilLane(x, z) > 0)) return true;
   const n = pondNear(x, z);
   return n !== null && pondReach(n.pond, x, z) < 1 + margin / Math.max(4, Math.min(n.pond.hu, n.pond.hv));
 }
@@ -307,10 +410,12 @@ export interface LandUse {
   verge: number;
   sand: number;
   marsh: number;
+  /** The salt field's beds and bunds. */
+  salt: number;
   field: number;
 }
 
-const use: LandUse = { yard: 0, mound: 0, verge: 0, sand: 0, marsh: 0, field: 0 };
+const use: LandUse = { yard: 0, mound: 0, verge: 0, sand: 0, marsh: 0, salt: 0, field: 0 };
 
 /** How much of (x, z) is each kind of ground (see LandUse). The result is reused. */
 export function landUse(x: number, z: number): LandUse {
@@ -341,12 +446,14 @@ export function landUse(x: number, z: number): LandUse {
   mound = Math.max(mound, hillShare(x, z), groveShare(x, z));
   const sand = charShare(x, z) * (1 - mound);
   const marsh = bilMarsh(x, z);
+  const salt = saltShare(x, z);
   use.yard = yard;
   use.mound = Math.max(0, mound - yard);
-  use.verge = Math.max(0, verge * (1 - mound) - sand);
+  use.verge = Math.max(0, verge * (1 - mound) - sand - salt);
   use.sand = sand;
   use.marsh = marsh;
-  use.field = Math.max(0, 1 - mound - use.verge - sand - marsh);
+  use.salt = salt;
+  use.field = Math.max(0, 1 - mound - use.verge - sand - marsh - salt);
   return use;
 }
 
@@ -357,6 +464,9 @@ export function onLandmark(x: number, z: number, margin = 0): boolean {
   if (onBridge(x, z, margin + 1) || onSanko(x, z, margin + 0.5)) return true;
   if (Math.hypot(x - BANYAN.x, z - BANYAN.z) < 5 + margin) return true;
   if (Math.hypot(x - TEA_STALL.x, z - TEA_STALL.z) < 4 + margin) return true;
+  // the salt field: its beds and bunds are worked ground
+  const salt = saltLocal(x, z);
+  if (Math.max(-salt.u, salt.u - SALT_FIELD.w, -salt.v, salt.v - SALT_FIELD.d) < margin) return true;
   for (const m of MOUNDS) if (!m.home && m.id !== 'banyan' && shapeDistance(m, x, z) < margin - 4) return true;
   return false;
 }

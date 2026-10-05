@@ -5,6 +5,7 @@ import { MeshBuilder, mixRgb, rgb, type RGB } from '../render/builder';
 import { instanced, type Placement } from '../render/instancing';
 import { patchMaterial } from '../render/patch';
 import { PONDS, pondReach, shapePoint, terrainHeight } from './geography';
+import { POND_RISE } from './plan';
 
 // Shapla (water lilies) on the village's old ponds: notched pads lying flat in loose rafts toward the edges,
 // and here and there a white or pink flower held just above the water, with clumps of reeds (nol-khagra)
@@ -124,9 +125,16 @@ export function buildPondLife(): Group {
       }
     }
   }
-  const leafMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.32, side: DoubleSide }), { grime: 0.25 });
+  // the pads and their flowers float: they rise and fall with the pond (its share of the season's rise)
+  const afloat = {
+    key: 'pond-rise',
+    pars: '',
+    code: `transformed.y += uWaterRise * ${POND_RISE.toFixed(2)} / length((modelMatrix * instanceMatrix)[0].xyz);`,
+  };
+  const leafMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.32, side: DoubleSide }), { grime: 0.25, vertex: afloat });
   const flowerMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.6, side: DoubleSide }), {
     translucency: 1.4,
+    vertex: afloat,
   });
   const add = (g: BufferGeometry, mat: MeshStandardMaterial, items: Placement[]) => {
     if (!items.length) return;

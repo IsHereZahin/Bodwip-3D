@@ -1,0 +1,104 @@
+/* The map: the village drawn flat beside the list of places to go, in the help sheet's glass. */
+
+#mapdlg {
+  width: min(1100px, calc(100vw - 32px));
+  height: calc(100vh - 48px);
+  box-sizing: border-box;
+  padding: 18px 22px 20px;
+  border-radius: 18px;
+  border: 1px solid rgba(236, 211, 168, 0.18);
+  background: rgba(18, 15, 12, 0.95);
+  color: var(--ink);
+  font-family: var(--font);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+#mapdlg[open] {
+  display: flex;
+  flex-direction: column;
+}
+#mapdlg::backdrop {
+  background: rgba(5, 4, 3, 0.45);
+}
+#mapdlg h2 {
+  margin: 0 0 12px;
+  font-size: 22px;
+  font-weight: 500;
+}
+#mapdlg .close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+.map-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 18px;
+}
+.map-frame {
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+.map-view {
+  height: 100%;
+  max-width: 100%;
+  object-fit: contain;
+  border-radius: 10px;
+  border: 1px solid rgba(236, 211, 168, 0.15);
+  cursor: pointer;
+}
+.map-side {
+  flex: 1 1 280px;
+  min-width: 240px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.map-note {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--ink-dim);
+}
+.map-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 4px 0 0;
+  overflow-y: auto;
+  flex: 1;
+}
+.map-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px 10px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+}
+.map-list li.chosen {
+  border-color: rgba(255, 210, 122, 0.45);
+  background: rgba(255, 210, 122, 0.06);
+}
+.map-list .ways {
+  display: flex;
+  gap: 6px;
+}
+.map-list .chip {
+  font-size: 12px;
+  padding: 3px 9px;
+}
+
+@media (max-width: 760px) {
+  .map-body {
+    flex-direction: column;
+  }
+  .map-frame {
+    height: 52%;
+  }
+}
