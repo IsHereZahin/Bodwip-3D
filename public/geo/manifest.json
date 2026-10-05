@@ -1,5 +1,5 @@
 {
-  "made": "2026-10-04",
+  "made": "2026-10-05",
   "projection": {
     "kind": "transverse Mercator on the origin meridian, WGS84 (src/geo/project.ts)",
     "origin": {
@@ -10,10 +10,10 @@
   },
   "grid": {
     "spacing": 30,
-    "east0": -12000,
-    "north1": 14130,
-    "width": 575,
-    "height": 693,
+    "east0": -4350,
+    "north1": 3900,
+    "width": 130,
+    "height": 110,
     "rows": "north to south",
     "columns": "west to east",
     "note": "cell centre (c, r): east = east0 + (c + 0.5)·spacing, north = north1 − (r + 0.5)·spacing, ground metres"
@@ -74,22 +74,12 @@
       "encoding": "deflate-raw",
       "type": "JSON",
       "counts": {
-        "road": 2428,
-        "rail": 2,
-        "waterway": 145,
-        "site": 10,
-        "structure": 80,
-        "power": 12,
-        "towers": 116,
-        "nodes": 28
+        "road": 111,
+        "waterway": 5,
+        "towers": 0,
+        "nodes": 0
       },
       "licence": "ODbL (OpenStreetMap)"
-    },
-    "channel": {
-      "file": "channel.json",
-      "points": 320,
-      "worldKm": 6.4,
-      "medianHalfWidth": 105
     },
     "places": {
       "file": "places.json",
@@ -110,7 +100,7 @@
         "commercial": 7,
         "industrial": 8
       },
-      "count": 4928,
+      "count": 423,
       "names": "buildings.json",
       "note": "a ninth of the ordinary buildings (by a hash of their id) and every one OSM names or tags as more than a house, kept clear of each other on the 1:3 map; OSM's footprints, and Microsoft's where OSM has none",
       "licence": "ODbL (OpenStreetMap; Microsoft Global ML Building Footprints)"
@@ -127,19 +117,17 @@
     }
   },
   "coverKm2": {
-    "water": 120,
-    "saltpan": 33,
-    "bare": 4.4,
-    "sand": 6.5,
-    "grass": 8.2,
-    "pond": 23,
-    "marsh": 5.8,
-    "crop": 44.1,
-    "tree": 58.1,
-    "mud": 15.4,
-    "built": 4.1,
-    "mangrove": 35.9,
-    "shrub": 0
+    "tree": 7.3,
+    "crop": 3.6,
+    "mud": 0.1,
+    "grass": 0.1,
+    "sand": 0,
+    "pond": 1.2,
+    "built": 0.3,
+    "marsh": 0,
+    "mangrove": 0.1,
+    "saltpan": 0.1,
+    "bare": 0
   },
   "tide": {
     "source": "Cox's Bazar gauge fit (tide-coxs-bazar.json), UHSLC h136a",
@@ -209,11 +197,10 @@
     }
   },
   "areaKm2": {
-    "sea": 120,
-    "land": 161.3,
-    "inland": 23,
-    "tidal": 18.4,
-    "mangrove": 35.9
+    "land": 11.5,
+    "tidal": 0.1,
+    "inland": 1.2,
+    "mangrove": 0.1
   },
   "licence": "each layer its own: terrain and kind CC BY-NC-SA 4.0 (from FABDEM V1-2), cover ODbL, canopy CC BY 4.0",
   "attribution": [

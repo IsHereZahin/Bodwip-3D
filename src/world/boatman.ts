@@ -19,7 +19,7 @@ import type { BodyDrive } from './paddle';
 // left down the shaft; his arms reach them from his shoulders. His sando is fitted to him; his lungi and
 // gamchha are cloth: they follow him a beat late, swing and settle, and stir in the wind. Where his weight is
 // goes back to the boat, which heels and trims under it. He faces +z, so his right side is −x; he paddles on
-// his left (+x). The fishermen are boatmen too, older (`jele`).
+// his left (+x).
 
 const UP = new Vector3(0, 1, 0);
 /** Balance: how fast he rights himself as the deck tilts, and how far (he leaves a little to the deck). */

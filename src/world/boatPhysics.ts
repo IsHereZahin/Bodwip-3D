@@ -2,13 +2,14 @@ import { Vector3 } from 'three';
 import { G } from '../core/globals';
 import { angleDelta, smoothstep } from '../core/mathx';
 import { windAt } from '../env/wind';
-import { downstream, halfWidth, riverX, streamSpeed } from './geography';
+import { KHAL_LEVEL, khalAt, khalFrame, khalHalfWidth, waterLevelAt } from './geography';
+import { KHAL_CURRENT } from './khal';
 import { HERO_HULL, heroBeamAtWater } from './hull';
 import { CRUISE, PADDLE_MOMENT, STROKE_SECONDS, paddleForce, strokePhase, type PaddleForce } from './paddle';
 import { SHELTERED, hullWaves, type HullWaves } from './waves';
 
 // The hero boat as a floating body. In the plane: mass and added mass, drag through the water (light
-// fore and aft, heavy sideways, like a keel), the river's current, the paddle's pulses of drive from one
+// fore and aft, heavy sideways, like a keel), the khal's slow current, the paddle's pulses of drive from one
 // side, and the boatman's steering. Out of it: heave, pitch and roll, each a damped spring toward the wave
 // surface as the hull averages it (short chop cancels along a 9 m hull; long swell lifts it), plus the
 // boatman's weight as he leans into each stroke. Angles are the group's Euler x (bow down +) and z
@@ -16,23 +17,34 @@ import { SHELTERED, hullWaves, type HullWaves } from './waves';
 // holds the paddle up at the end of its recovery, ready for the next catch; tied up, a line holds her.
 
 /**
- * Surface current (m/s): fastest mid-river and through the narrows, slack at the banks and in the
- * backwaters, and as the season has it (full and fast in the rains), as in the water shader's flow field.
+ * Surface current (m/s): the khal drifting slowly down its length, fastest in its middle and slack at its
+ * banks, as in the water shader's flow field; the bil lies still.
  */
 export function currentAt(x: number, z: number, out: { x: number; z: number }): { x: number; z: number } {
-  const t = (x - riverX(z)) / halfWidth(z);
-  const speed = streamSpeed(z) * Math.max(0, 1 - t * t) * G.uFlowScale.value;
-  const [dx, dz] = downstream(z);
-  out.x = dx * speed;
-  out.z = dz * speed;
+  out.x = 0;
+  out.z = 0;
+  const f = khalFrame(x, z);
+  if (!f) return out;
+  const t = f.d / khalHalfWidth(f.s);
+  // faster in the rains (the season's runoff, as the water shows it)
+  const speed = KHAL_CURRENT * G.uFlowScale.value * Math.max(0, 1 - t * t);
+  const p = khalAt(f.s);
+  out.x = -Math.sin(p.heading) * speed;
+  out.z = -Math.cos(p.heading) * speed;
   return out;
+}
+
+/** The surface of the water she floats on at (x, z): the khal's (or a pond's, should she be put on one). */
+function waterUnder(x: number, z: number): number {
+  const level = waterLevelAt(x, z);
+  return Number.isFinite(level) ? level : KHAL_LEVEL;
 }
 
 const MASS = 380; // the boat ≈ 240 kg, the boatman 65, cargo 75
 const SURGE_MASS = MASS * 1.05;
 const SWAY_MASS = MASS * 1.9;
 const YAW_INERTIA = 6200;
-const DRAG = { lin: 20, quad: 45 }; // ≈ 130 N at 1.5 m/s through the water
+const DRAG = { lin: 20, quad: 45 }; // ≈ 89 N at 1.2 m/s through the water
 const SWAY_DRAG = { lin: 450, quad: 900 };
 const YAW_DAMP = 2600;
 /** From the middle of the boat to where his steering acts, m. */
@@ -81,7 +93,7 @@ const strokeHash = (n: number, k: number) => {
 function strokePower(n: number, speed: number): number {
   let p = 1 + 1.8 * (CRUISE - speed);
   p *= 0.9 + 0.2 * strokeHash(n, 1);
-  if (strokeHash(n, 2) < 0.18 || strokeHash(n - 1, 2) < 0.08) p *= 1.4;
+  if (strokeHash(n, 2) < 0.1 || strokeHash(n - 1, 2) < 0.05) p *= 1.4;
   return Math.max(0.65, Math.min(MAX_POWER, p));
 }
 /** The hardest he can pull, against his steady stroke. */
@@ -128,7 +140,7 @@ export class BoatBody {
   /** Where a line holds her (and the way she lies there), or null when she is free. */
   moor: { x: number; z: number; heading: number } | null = null;
   private vHeave = 0;
-  /** The sea's level when she last moved: she rises and falls with the tide as it is, the spring only rides the waves. */
+  /** The water's level when she last moved: she rises and falls with it as it is, the spring only rides the waves. */
   private level = Number.NaN;
   /** The wind's push across her now (N, + to starboard), for her heel. */
   private windSide = 0;
@@ -138,8 +150,8 @@ export class BoatBody {
 
   /** Puts the boat at (x, z) heading along `heading`, already cruising, the water calm under it. */
   place(x: number, z: number, heading: number): void {
-    this.pos.set(x, G.uWaterLevel.value, z);
-    this.level = G.uWaterLevel.value;
+    this.pos.set(x, waterUnder(x, z), z);
+    this.level = this.pos.y;
     this.heading = this.course = heading;
     currentAt(x, z, tmp);
     const cruise = CRUISE;
@@ -235,11 +247,12 @@ export class BoatBody {
     rollTarget += (-MAN_MASS * GRAVITY * crew.x - stroke.side * PUSH_HEIGHT - this.windSide * WINDAGE.height) / ROLL_STIFF;
     rollTarget = MAX_HEEL * Math.tanh(rollTarget / MAX_HEEL);
     pitchTarget += (MAN_MASS * GRAVITY * crew.z) / PITCH_STIFF - 0.003 * ur * ur;
-    // she floats on the tide's water, riding the waves on it (a jump of the level, as a film scene sets its
-    // hour, carries her with it rather than leaving her to fall or float up through it)
-    if (Number.isFinite(this.level)) this.pos.y += G.uWaterLevel.value - this.level;
-    this.level = G.uWaterLevel.value;
-    [this.pos.y, this.vHeave] = spring(this.pos.y, this.vHeave, G.uWaterLevel.value + mean, HEAVE.f, HEAVE.zeta, dt);
+    // she floats on the water under her, riding the waves on it (a jump of its level carries her with it
+    // rather than leaving her to fall or float up through it)
+    const level = waterUnder(this.pos.x, this.pos.z);
+    if (Number.isFinite(this.level)) this.pos.y += level - this.level;
+    this.level = level;
+    [this.pos.y, this.vHeave] = spring(this.pos.y, this.vHeave, level + mean, HEAVE.f, HEAVE.zeta, dt);
     [this.rotX, this.vRotX] = spring(this.rotX, this.vRotX, pitchTarget, PITCH.f, PITCH.zeta, dt);
     [this.rotZ, this.vRotZ] = spring(this.rotZ, this.vRotZ, rollTarget, ROLL.f, ROLL.zeta, dt);
   }

@@ -3,7 +3,6 @@ import type { PerspectiveCamera } from 'three';
 import { clamp, damp, lerp, smoothstep } from '../core/mathx';
 import type { WeatherChoice } from '../env/weather';
 import { terrainHeight, waterLevelAt } from '../world/geography';
-import type { ShipPhase } from '../world/ships';
 
 // The film tour's engine: it plays a list of scenes (rig/tour.ts), each a camera move in its own place,
 // season, hour and weather, joined by dissolves. Before a cut the last frame is held; the next scene's
@@ -34,16 +33,6 @@ export interface Stage {
   /** The boat now: where she is, and which way she is going. */
   readonly boatPos: Vector3;
   readonly boatCourse: number;
-  /** Asks a fisherman to let his net soak a moment and then haul it: a bank net, or a fishing boat's. */
-  haul(kind: 'bank' | 'boat', index: number): void;
-  /** Where a fisherman's net is (its middle), where he works it, and the way out over the water from him. */
-  net(kind: 'bank' | 'boat', index: number): { centre: Vector3; man: Vector3; out: Vector3 };
-  /** Puts the port's container ship at a point of her round (a phase, and how far into it). */
-  ship(phase: ShipPhase, along: number): void;
-  /** Where the container ship is now, her heading and her length. */
-  readonly shipFocus: { x: number; z: number; heading: number; length: number };
-  /** Lets the beach's red crabs round a point out of their burrows now. */
-  crabs(at: Vector3): void;
   /** Sends the flocks of birds across, near a point and heading. */
   birds(at: Vector3, heading: number): void;
   readonly sunDir: Vector3;
@@ -58,7 +47,7 @@ export interface Scene {
   world: SceneWorld;
   /** Where the boat is on her journey as the scene opens, for scenes in her waters; else she goes on. */
   journey?: number;
-  /** Once, as the scene opens and after its world is set: choose subjects, cue the fishermen and the birds. */
+  /** Once, as the scene opens and after its world is set: cue the birds. */
   begin?(stage: Stage): void;
   /** The camera at `u` (0..1 through the scene, eased): where it is and what it looks at. */
   pose(u: number, stage: Stage, pos: Vector3, look: Vector3): void;

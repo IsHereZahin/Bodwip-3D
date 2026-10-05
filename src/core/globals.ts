@@ -39,9 +39,9 @@ export const G = {
   uSwell: { value: new Vector4() },
   /** The sea state: x its significant wave height (m), y the length of its main waves (m). */
   uSea: { value: new Vector2(0, 3) },
-  /** The sea's surface (m about mean sea level): the tide, with the season's mean sea level in it (env/tide.ts). */
+  /** The sea's surface (m about mean sea level). This world has no sea: main.ts holds it at the khal's level, for what still reads it. */
   uWaterLevel: { value: 0 },
-  /** The last high water's level (m): the flats below it are still wet. */
+  /** The last high water's level (m): the flats below it are still wet. Held at the khal's level too. */
   uTideHigh: { value: 0 },
   /**
    * Which water stands where, over the map (world/water.ts levelTexture): r inland water's level, g the sea's
@@ -54,7 +54,7 @@ export const G = {
    * pond's, the bil's or the khal's (world/water.ts mirrorLevelAt); water at other levels shows the sky.
    */
   uMirrorLevel: { value: 0 },
-  /** The current, against a spring tide's strongest: positive ebbing toward the sea, negative flooding (main.ts). */
+  /** The khal's current against its mean (world/khal.ts KHAL_CURRENT): the season's runoff (main.ts). */
   uFlowScale: { value: 1 },
   /** The season on the land: x leafiness, y dryness, z share of trees in flower, w kash in plume. */
   uSeasonA: { value: new Vector4(0.95, 0.1, 0, 1) },

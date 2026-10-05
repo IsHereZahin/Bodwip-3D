@@ -8,7 +8,6 @@ import type { SkyEvent, SkyEventKind } from './env/clock';
 import { Environment } from './env/environment';
 import { YEAR, applySeason, dayOfYear, makeSeasonState, moonAgeOn, seasonAt, seasonIndex, seasonMiddle } from './env/season';
 import { setSunDay } from './env/astro';
-import { Tide } from './env/tide';
 import { Weather, type WeatherChoice } from './env/weather';
 import { Wind } from './env/wind';
 import { Pipeline } from './render/pipeline';
@@ -18,21 +17,15 @@ import { Director, type Stage } from './rig/director';
 import { tourScenes } from './rig/tour';
 import { Rig, VIEWS } from './rig/rig';
 import type { ViewName } from './rig/rig';
-import { EVENT_NOW, clockLabel, tideLabel } from './ui/bangla';
-import { toWorld } from './geo/project';
+import { EVENT_NOW, clockLabel } from './ui/bangla';
 import { Controls } from './ui/controls';
 import { WEATHER_PICKS } from './ui/controls';
 import type { CameraChoice, WeatherPick } from './ui/controls';
 import { Hud } from './ui/hud';
 import { Bil } from './world/bil';
-import { buildSaltWorks } from './world/coast';
-import { RiverTraffic } from './world/boats';
-import { JOURNEY_Z0, JOURNEY_Z1, WETLANDS, terrainHeight, waterLevelAt } from './world/geography';
+import { KHAL_LEVEL, terrainHeight } from './world/geography';
 import { Drift } from './world/drift';
-import { sea, setSwell, swellFactor, updateSea } from './world/waves';
-import { exposureAt } from './world/exposure';
-import { PLACES, coverAt, kindAt, type Place } from './geo/data';
-import { Fishing, fishingClearings } from './world/fishing';
+import { sea, updateSea } from './world/waves';
 import { HeroBoat } from './world/hero';
 import { Life } from './world/life';
 import { Crops } from './world/crops';
@@ -40,28 +33,13 @@ import { Meadow } from './world/meadow';
 import { buildPondLife } from './world/ponds';
 import { buildRain } from './world/rain';
 import { buildRoads } from './world/roads';
-import { Crabs } from './world/crabs';
-import { Mudskippers } from './world/mudskippers';
-import { Ferries } from './world/ferries';
 import { BRIDGE_CLEARING, bridgeTrees, buildBridge } from './world/bridge';
 import { Girl } from './world/girl';
-import { buildMoheshkhali } from './world/moheshkhali';
-import { Beacons } from './world/beacons';
-import { PowerPlant } from './world/powerPlant';
-import { buildPowerLines } from './world/powerLines';
-import { WindFarm } from './world/windFarm';
-import { Port } from './world/port';
-import { buildLightPools } from './world/lightPools';
-import { MapPanel, type MapActions } from './ui/mapPanel';
-import { setWalls } from './world/walkable';
-import { ambienceAt } from './world/ambience';
-import { routeLength } from './world/navigation';
-import { Ships } from './world/ships';
 import { cullBeyond, setCullReach, updateCulling } from './render/cull';
 import { buildSky } from './world/sky';
 import { Terrain } from './world/terrain';
 import { buildVegetation } from './world/vegetation';
-import { buildVillages, planHuts, type HutPlan } from './world/village';
+import { buildVillages, planGhats, planHuts, type HutPlan } from './world/village';
 import { buildBuildings, planBuildings } from './world/buildings';
 import { buildWater } from './world/water';
 
@@ -73,10 +51,6 @@ const START_HOUR = 17.5;
 const OPENING_BEFORE_SUNSET = 0.7;
 /** The opening minutes stay clear whatever the season (s); then its weather comes. */
 const OPENING_CLEAR_SECONDS = 300;
-/** How fast the sea's level may move (m/s): a jump of the tide (a picked moon or season) eases in rather than popping. */
-const TIDE_EASE = 1;
-/** How much each unit of the season's runoff adds to the ebb, as a share of a spring tide's strongest current. */
-const RUNOFF = 0.15;
 /** A chosen season comes on as the year turns to it over this many seconds; a chosen moon waxes or wanes to its phase over this many. */
 const YEAR_TURN_SECONDS = 6;
 const MOON_TURN_SECONDS = 4;
@@ -140,45 +114,19 @@ async function main(hud: Hud): Promise<void> {
   scene.add(water.mesh, water.inland);
   hud.progress(0.42);
   await nextTask();
-  // the map's buildings: the houses by the villages on the channel as detailed huts, the rest in cells
+  // the map's buildings: the houses by the khal as detailed huts with their ghats, the rest in cells
   const { huts, rest } = planHuts(planBuildings());
-  scene.add(buildVillages(huts));
+  const ghats = planGhats(huts);
+  scene.add(buildVillages(huts, ghats));
   const buildings = buildBuildings(rest);
   scene.add(buildings);
   cullBeyond(buildings, 1800);
   // everything standing, for the trees and the grass to keep clear of
   const standing: HutPlan[] = [...huts, ...rest.map((b) => ({ x: b.x, y: b.y, z: b.z, ry: b.ry, l: b.l, w: b.w, roof: 'tin' as const, wall: [1, 1, 1] as [number, number, number] }))];
-  // small things far off are left undrawn (render/cull.ts): the salt works' bunds and heaps, the betel
-  // gardens and dry-fish yards, and the trees beyond the haze
-  const saltWorks = buildSaltWorks();
-  scene.add(saltWorks);
-  cullBeyond(saltWorks, 1100);
-  const landmarks = buildMoheshkhali();
-  scene.add(landmarks.seen, landmarks.near);
-  cullBeyond(landmarks.near, 1500);
-  // the Matarbari power plant, the power lines and substations, the wind farm across from Gorakghata, and the
-  // lights they show at night
-  const plant = new PowerPlant();
-  scene.add(plant.group);
-  const powerLines = buildPowerLines(plant.lineEnd);
-  scene.add(powerLines);
-  cullBeyond(powerLines, 4500);
-  const windFarm = new WindFarm();
-  scene.add(windFarm.group);
-  // Matarbari's deep-sea port, finished, and the ships that use it
-  const port = new Port();
-  scene.add(port.group);
-  const ships = new Ships();
-  scene.add(ships.group);
-  const beacons = new Beacons([...plant.lights, ...windFarm.lights, ...port.lights, ...landmarks.lights]);
-  scene.add(beacons.points);
-  // the light the plant's and the port's lamps throw on their grounds at night
-  const lightPools = buildLightPools([...plant.lights, ...port.lights]);
-  scene.add(lightPools);
-  cullBeyond(lightPools, 4000);
   hud.progress(0.52);
   await nextTask();
-  const vegetation = buildVegetation(standing, surfaces.bark, [...fishingClearings(), BRIDGE_CLEARING], bridgeTrees());
+  // the trees (left undrawn beyond the haze: render/cull.ts)
+  const vegetation = buildVegetation(standing, surfaces.bark, [BRIDGE_CLEARING], bridgeTrees());
   scene.add(vegetation);
   cullBeyond(vegetation, 1900);
   // the roads, in 1 km cells: the far ones are left undrawn
@@ -191,31 +139,20 @@ async function main(hud: Hud): Promise<void> {
   scene.add(buildPondLife());
   const bil = new Bil();
   scene.add(bil.group);
-  const meadow = new Meadow(standing);
+  const meadow = new Meadow(standing, ghats);
   scene.add(meadow.group);
   const crops = new Crops();
   scene.add(crops.group);
   const drift = new Drift();
   scene.add(drift.group);
-  const fishing = new Fishing();
-  scene.add(fishing.group);
   hud.progress(0.78);
   await nextTask();
 
   const hero = new HeroBoat();
   hero.setShadows(false);
   scene.add(hero.group);
-  const traffic = new RiverTraffic();
-  scene.add(traffic.group);
   const life = new Life();
   scene.add(life.group);
-  const crabs = new Crabs();
-  // the mudskippers out on the mud the tide leaves bare by the mangroves
-  const skippers = new Mudskippers();
-  scene.add(skippers.group);
-  scene.add(crabs.group);
-  const ferries = new Ferries();
-  scene.add(ferries.group);
   const today = new Date();
   const clock = new Clock(START_HOUR, moonAgeOn(today), dayOfYear(today));
   // golden hour whatever the time of year: winter's sun is down well before half past five
@@ -224,7 +161,6 @@ async function main(hud: Hud): Promise<void> {
   // the moon as it really is: from the day's moon at the start, going on with the clock's days
   const naturalMoon = { age: clock.moonAge, time: clock.time };
   const season = makeSeasonState();
-  const tide = new Tide();
   const weather = new Weather();
   weather.clearUntil = OPENING_CLEAR_SECONDS;
   const wind = new Wind();
@@ -237,13 +173,9 @@ async function main(hud: Hud): Promise<void> {
   const SHADOW_BEST = Math.min(4096, renderer.capabilities.maxTextureSize) >= 4096 && devicePixelRatio <= 1.5 ? 4096 : 2048;
   env.setShadowMapSize(SHADOW_BEST);
   const rig = new Rig(camera, canvas);
-  // the viewer on foot, and the walls he cannot walk through (the huts and the map's buildings)
-  scene.add(rig.walker.group);
-  setWalls(standing);
-  rig.onNotice = (text) => hud.toast(text, null);
 
   // ---- the film tour's stage: what its scenes set in the world (season, hour, moon, weather, the boat,
-  // the fishermen, the birds) and read from it; the viewer's own world is kept and put back after ----
+  // the birds) and read from it; the viewer's own world is kept and put back after ----
   let kept: { time: number; day: number; moon: number; speed: number; playing: boolean; weather: WeatherChoice; wind: number | null; journey: number } | null = null;
   const settleWorld = () => {
     updateSky(0, true);
@@ -279,7 +211,7 @@ async function main(hud: Hud): Promise<void> {
         playing: clock.playing,
         weather: weather.choice,
         wind: wind.override,
-        journey: (rig.boat.pos.z - JOURNEY_Z0) / (JOURNEY_Z1 - JOURNEY_Z0),
+        journey: rig.progress,
       };
     },
     restore() {
@@ -302,13 +234,6 @@ async function main(hud: Hud): Promise<void> {
     get boatCourse() {
       return rig.boat.course;
     },
-    haul: (kind, index) => fishing.haul(kind, index),
-    net: (kind, index) => fishing.view(kind, index),
-    ship: (phase, along) => ships.jump(phase, along),
-    get shipFocus() {
-      return ships.focus;
-    },
-    crabs: (at) => crabs.wake(at),
     birds: (at, heading) => life.launchAll(at, heading, 60),
     get sunDir() {
       return env.sunDir;
@@ -323,10 +248,9 @@ async function main(hud: Hud): Promise<void> {
       crops.update(at, true);
     },
   };
-  const director = new Director(tourScenes(), stage);
+  const director = new Director(tourScenes(ghats), stage);
   const sound = new Soundscape();
   hero.onStroke = (power) => sound.splash(power);
-  ships.onHorn = (x, z, blasts) => sound.horn(Math.hypot(camera.position.x - x, camera.position.z - z), blasts);
   hud.progress(0.85);
   await nextTask();
 
@@ -347,7 +271,7 @@ async function main(hud: Hud): Promise<void> {
   if (QUALITY_ASKED === 'low') setQuality('low');
 
   // ---- size and adaptive resolution ----
-  const perf = { scale: 1, acc: 0, n: 0, frames: 0, cool: 0, locked: false, ms: 16, driftMs: 0, fishMs: 0 };
+  const perf = { scale: 1, acc: 0, n: 0, frames: 0, cool: 0, locked: false, ms: 16, driftMs: 0 };
   const resize = () => {
     const w = Math.max(1, innerWidth);
     const h = Math.max(1, innerHeight);
@@ -361,9 +285,6 @@ async function main(hud: Hud): Promise<void> {
     camera.updateProjectionMatrix();
     pipeline.setSize(W, H);
     life.setPixelRatio(k);
-    beacons.setPixelRatio(k);
-    port.setPixelRatio(k);
-    ships.setPixelRatio(k);
   };
   resize();
   window.addEventListener('resize', resize);
@@ -551,97 +472,14 @@ async function main(hud: Hud): Promise<void> {
     season: chooseSeason,
     weather: chooseWeather,
     sound: toggleSound,
-    map: () => mapPanel.toggle(),
     touched: noteInput,
   });
 
-  /** The GIS reference mode's readout and overlay (`?debug&geo`), once it has loaded. */
-  let geoMode: { update(dt: number): void } | null = null;
-
-  // ---- the map: the ways to a place, by the boat, on foot or from above ----
-  /** A jump through mist (s each way): it thickens, the act happens unseen, it clears. */
-  const MAP_JUMP = 0.9;
-  let mapJump: { at: number; act: (() => void) | null } | null = null;
-  const jumpThroughMist = (act: () => void) => {
-    noteInput();
-    if (director.active) setFilm(false);
-    mapJump = { at: performance.now(), act };
-  };
-  const jumpFade = (now: number) => {
-    if (!mapJump) return 0;
-    const t = (now - mapJump.at) / 1000 / MAP_JUMP;
-    if (t >= 1 && mapJump.act) {
-      mapJump.act();
-      mapJump.act = null;
-    }
-    if (t >= 2) mapJump = null;
-    return smooth(t < 1 ? t : Math.max(0, 2 - t));
-  };
-  /** Somewhere to stand near (x, z), dry ground first, looked for outward in rings; null if none within 90 m. */
-  const standNear = (x: number, z: number): { x: number; z: number } | null => {
-    let wet: { x: number; z: number } | null = null;
-    for (let r = 0; r <= 90; r += 3) {
-      const n = Math.max(1, Math.round((r * Math.PI * 2) / 4));
-      for (let k = 0; k < n; k++) {
-        const px = x + Math.sin((k / n) * Math.PI * 2) * r;
-        const pz = z + Math.cos((k / n) * Math.PI * 2) * r;
-        if (!rig.walker.canStand(px, pz)) continue;
-        if (waterLevelAt(px, pz) < terrainHeight(px, pz)) return { x: px, z: pz };
-        wet ??= { x: px, z: pz };
-      }
-    }
-    return wet;
-  };
-  /** A voyage longer than this (m) passes through the mist to the last SAIL_NEAR of it; she rows the rest. */
-  const SAIL_SKIP = 900;
-  const SAIL_NEAR = 350;
-  const goTo: MapActions = {
-    sail: (place: Place) => {
-      const way = rig.routeTo(place.world.x, place.world.z);
-      if (!way) {
-        hud.toast(`${place.name}: এখন জলপথে যাওয়া যাচ্ছে না (হয়তো ভাটা)`, null);
-        return;
-      }
-      const length = routeLength(rig.boat.pos.x, rig.boat.pos.z, way);
-      const go = (rest: { x: number; z: number }[]) => {
-        rig.sail(rest, place.name);
-        hud.toast(`নৌকা চলল: ${place.name}`, null);
-      };
-      if (rig.mode === 'follow' && length <= SAIL_SKIP) {
-        noteInput();
-        if (director.active) setFilm(false);
-        go(way);
-      } else
-        jumpThroughMist(() => {
-          const rest = length > SAIL_SKIP ? rig.skipAlong(way, SAIL_NEAR) : way;
-          rig.aboard(false);
-          go(rest);
-        });
-    },
-    walk: (place: Place) => {
-      const at = standNear(place.world.x, place.world.z);
-      if (!at) {
-        hud.toast(`${place.name}: সেখানে দাঁড়ানোর মতো জায়গা পাওয়া গেল না`, null);
-        return;
-      }
-      jumpThroughMist(() => rig.walkFrom(at.x, at.z, Math.atan2(place.world.x - at.x, place.world.z - at.z)));
-    },
-    fly: (place: Place) => {
-      const y = terrainHeight(place.world.x, place.world.z);
-      jumpThroughMist(() => rig.placeFree(place.world.x + 160, Math.max(y, 0) + 170, place.world.z + 160, Math.atan2(-160, -160), -0.62));
-    },
-  };
-  const mapPanel = new MapPanel(goTo);
 
   // ---- keyboard: one place for every shortcut (the help sheet lists them) ----
   const held = new Set<string>();
   window.addEventListener('keydown', (e) => {
     if (controls.helpOpen || e.ctrlKey || e.metaKey || e.altKey) return;
-    // the map takes the keys while open, but L closes it again
-    if (mapPanel.isOpen) {
-      if (e.code === 'KeyL') mapPanel.close();
-      return;
-    }
     // leave keys to a focused dropdown, and arrows to the focused timeline
     const target = e.target;
     if (target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement) return;
@@ -707,18 +545,6 @@ async function main(hud: Hud): Promise<void> {
       case 'KeyH':
         controls.toggleUi();
         break;
-      case 'KeyG':
-        // ashore from the boat, or back aboard
-        chooseCamera(rig.mode === 'walk' ? 'follow' : 'walk');
-        break;
-      case 'KeyK':
-        noteInput();
-        if (director.active) setFilm(false);
-        rig.toggleHelm();
-        break;
-      case 'KeyL':
-        mapPanel.toggle();
-        break;
     }
   });
   window.addEventListener('keyup', (e) => {
@@ -748,20 +574,13 @@ async function main(hud: Hud): Promise<void> {
       gusts: Math.min(1, season.gusts + weather.squall * 0.4),
       angle: season.windAngle,
     });
-    // the waves the wind and the rain raise: the boats, the floating plants and the water all ride them
+    // the ripples the wind and the rain raise: the boat, the floating plants and the water all ride them
     updateSea(ease, G.uWind.value.z, G.uWind.value.w, weather.rain, settle);
-    // the Bay's swell, as the season has it, a little higher under a strong wind
-    setSwell(season.swell * (0.8 + 0.2 * Math.min(2, G.uWind.value.z)));
     G.uWet.value = weather.wet;
     G.uRain.value = weather.rain;
     rain.visible = weather.rain > 0.003;
-    // the sea's level and current from the tide, for the day and the moon shown
-    tide.update(shownDay(), shownMoon());
-    const level = G.uWaterLevel.value;
-    G.uWaterLevel.value = settle ? tide.level : level + clamp(tide.level - level, -TIDE_EASE * dt, TIDE_EASE * dt);
-    G.uTideHigh.value = tide.high;
-    G.uFlowScale.value = tide.flow + RUNOFF * season.flow;
-    water.mesh.position.y = G.uWaterLevel.value;
+    // the khal drifts down to its sluice faster when the season's runoff is high (the rains), slower in the dry months
+    G.uFlowScale.value = season.flow;
     // the clouds drift on the wind
     const w = G.uWind.value;
     sky.shift.x += w.x * (0.4 + 0.6 * w.z) * dt * 0.0035;
@@ -785,33 +604,14 @@ async function main(hud: Hud): Promise<void> {
     water.boat.set(b.pos.x, b.pos.z, b.heading, b.speed);
     water.oar.set(hero.bladeLocal.x, hero.bladeLocal.z, hero.bladeDrive, hero.bladeWet);
     water.swirl.copy(hero.swirl);
-    traffic.update(dt, t, b.pos.z);
-    ferries.update(dt, t);
-    plant.update(dt);
-    windFarm.update(dt);
-    port.update(t);
-    // the ships move and float; the three nearest moving ones make their waves on the water
-    ships.update(dt, t, camera.position);
-    for (let i = 0; i < 3; i++) {
-      water.ships[i].copy(ships.wakes[i]);
-      water.shipSizes[i].copy(ships.wakeSizes[i]);
-    }
     const simStart = performance.now();
-    // the hyacinth meets the hero's hull and blade, and the fishermen's boats, poles and nets
-    drift.update(dt, t, camera.position, b, hero.blade, fishing.obstacles());
+    // the hyacinth meets the hero's hull and blade
+    drift.update(dt, t, camera.position, b, hero.blade);
     // the bil's lilies give way to her hull and blade and are drawn back by their stems
     bil.update(dt, t, b, hero.blade, hero.bladeWet);
     perf.driftMs += (performance.now() - simStart - perf.driftMs) * 0.1;
-    // the fishermen work their nets; the two nearest ring the water
-    const fishStart = performance.now();
-    fishing.update(dt, t, camera.position, water.nets);
-    perf.fishMs += (performance.now() - fishStart - perf.fishMs) * 0.1;
     // birds and fireflies gather round whoever is being watched: the boat, or the free camera
     life.update(dt, t, director.active ? director.focus : rig.subject, director.active ? rig.boat.course : rig.subjectHeading, env.night, weather.rain);
-    // the beach's crabs round the camera (none away from the beaches), wary of the viewer on foot
-    crabs.unseen = director.active;
-    crabs.update(dt, camera.position, rig.mode === 'walk' ? [rig.subject] : [], weather.rain);
-    skippers.update(dt, camera.position, rig.mode === 'walk' ? [rig.subject, rig.boat.pos] : [rig.boat.pos]);
     sky.mesh.position.copy(camera.position);
     terrain.update(camera.position);
     water.update(camera.position.x, camera.position.z);
@@ -823,9 +623,11 @@ async function main(hud: Hud): Promise<void> {
     focus.set(Math.round(focus.x / 12) * 12, 0, Math.round(focus.z / 12) * 12);
     if (env.aimShadow(focus, false)) renderer.shadowMap.needsUpdate = true;
     if (weather.struck) sound.thunder();
-    const near = ambienceAt(camera.position, clock.hour, dt);
-    sound.update(dt, env.night, G.uWind.value.z, weather.rain, { plant: plant.loudness(camera.position), surf: near.surf, market: near.market });
+    sound.update(dt, env.night, G.uWind.value.z, weather.rain);
   };
+  // the khal and the bil stand at one level, held by the khal's sluice: what reads the sea's level reads it
+  G.uWaterLevel.value = KHAL_LEVEL;
+  G.uTideHigh.value = KHAL_LEVEL;
   updateSky(0, true);
   step(0);
   terrain.update(camera.position, true);
@@ -847,9 +649,8 @@ async function main(hud: Hud): Promise<void> {
     if (!director.active && !reducedMotion && !watch.event && now - lastInput > FILM_IDLE_MS) setFilm(true);
     if (sessionUntil && now > sessionUntil && !director.active) backToToday();
     const cut = clamp(1 - (now - readyAt) / 2600, 0, 1);
-    // the journey's mist fade belongs to the boat; a free camera elsewhere doesn't see the boat loop; a jump
-    // from the map passes through mist too
-    const loop = Math.max(rig.mode === 'follow' || director.active ? rig.fade : 0, jumpFade(now));
+    // the journey's mist fade belongs to the boat; a free camera elsewhere doesn't see the boat loop
+    const loop = rig.mode === 'follow' || director.active ? rig.fade : 0;
     updateCulling(camera.position);
     pipeline.render(renderer, scene, camera, {
       exposure: env.exposure,
@@ -861,10 +662,7 @@ async function main(hud: Hud): Promise<void> {
       dissolve: director.dissolve,
     });
     hud.setCaption(director.caption, director.captionAlpha, pipeline.bar);
-    controls.update(clock, director.active ? 'film' : rig.mode, soundOn, tideLabel(tide.flow, tide.level));
-    const who = rig.subject;
-    mapPanel.update(who.x, who.z, rig.subjectHeading);
-    geoMode?.update(raw);
+    controls.update(clock, director.active ? 'film' : rig.mode, soundOn);
 
     // adaptive resolution: hold ~45–60 fps by trading pixels, never below 60% scale
     perf.frames++;
@@ -895,14 +693,6 @@ async function main(hud: Hud): Promise<void> {
   readyAt = performance.now();
   hud.ready();
   controls.show();
-
-  if (DEBUG && new URLSearchParams(location.search).has('geo')) {
-    import('./ui/geoMode')
-      .then(({ GeoMode }) => {
-        geoMode = new GeoMode(scene, camera, canvas, () => ({ level: G.uWaterLevel.value, flow: tide.flow, tide: tideLabel(tide.flow, tide.level) }));
-      })
-      .catch((err: unknown) => console.error('geo mode:', err));
-  }
 
   if (DEBUG) {
     // hooks for headless stills: put the boat, the day and the camera where you want them and freeze
@@ -945,9 +735,6 @@ async function main(hud: Hud): Promise<void> {
           watch.event = null;
           watch.asked = false;
           updateSky(0, true);
-          plant.settle();
-          windFarm.update(0, true);
-          ships.settle();
           // the boat goes in after the river has its level
           if (o.journey !== undefined) rig.place(o.journey);
           env.update(clock.hour, clock.moonAge);
@@ -982,25 +769,21 @@ async function main(hud: Hud): Promise<void> {
           const b = rig.boat;
           drift.placeMats(b.pos.x + Math.sin(b.heading) * ahead, b.pos.z + Math.cos(b.heading) * ahead, count);
         },
-        /** Puts `count` mats of water hyacinth at (x, z) (to watch them meet a net or a moored boat). */
+        /** Puts `count` mats of water hyacinth at (x, z). */
         matsAt(x: number, z: number, count = 3) {
           drift.placeMats(x, z, count);
-        },
-        /** How many floating plants the nets are holding up now. */
-        caught() {
-          return drift.caughtCount;
         },
         /** The boat's motion now, for checking the physics. */
         boatState() {
           const r = (v: number, k = 1000) => Math.round(v * k) / k;
-          return { x: r(b0().pos.x, 100), z: r(b0().pos.z, 100), heave: r(b0().pos.y), pitch: r(b0().rotX), roll: r(b0().rotZ), heading: r(b0().heading), course: r(b0().course), speed: r(b0().speed), power: r(b0().power, 100), crew: { x: r(hero.crew.x), z: r(hero.crew.z) }, reach: r(hero.reach), depth: r(-terrainHeight(b0().pos.x, b0().pos.z), 100) };
+          return { x: r(b0().pos.x, 100), z: r(b0().pos.z, 100), heave: r(b0().pos.y), pitch: r(b0().rotX), roll: r(b0().rotZ), heading: r(b0().heading), course: r(b0().course), speed: r(b0().speed), power: r(b0().power, 100), crew: { x: r(hero.crew.x), z: r(hero.crew.z) }, reach: r(hero.reach), depth: r(KHAL_LEVEL - terrainHeight(b0().pos.x, b0().pos.z), 100) };
         },
         /**
          * Runs the world forward `seconds` (in 1/30 s steps, without drawing) and samples the boat every
          * `every` seconds: where she is, the water under her, the boatman's reach. For checking her route.
          */
         trace(seconds: number, every = 5) {
-          const out: { z: number; x: number; depth: number; reach: number; speed: number }[] = [];
+          const out: { z: number; x: number; along: number; depth: number; reach: number; speed: number }[] = [];
           const r = (v: number, k = 100) => Math.round(v * k) / k;
           debug.freeze = false;
           clock.playing = true;
@@ -1010,7 +793,7 @@ async function main(hud: Hud): Promise<void> {
             worst = Math.max(worst, hero.reach);
             if (i % Math.max(1, Math.round(every * 30)) === 0) {
               const b = b0();
-              out.push({ z: r(b.pos.z, 10), x: r(b.pos.x, 10), depth: r(-terrainHeight(b.pos.x, b.pos.z)), reach: r(worst), speed: r(b.speed) });
+              out.push({ z: r(b.pos.z, 10), x: r(b.pos.x, 10), along: r(rig.progress, 1000), depth: r(KHAL_LEVEL - terrainHeight(b.pos.x, b.pos.z)), reach: r(worst), speed: r(b.speed) });
               worst = 0;
             }
           }
@@ -1018,14 +801,7 @@ async function main(hud: Hud): Promise<void> {
           clock.playing = false;
           return out;
         },
-        /** Each lift net's state: where it is, what its fisherman is doing, the lever, his force, the net's load. */
-        nets() {
-          return fishing.state();
-        },
-        /** Where the small wetlands are. */
-        wetlands() {
-          return WETLANDS.map((w) => ({ x: Math.round(w.x), z: Math.round(w.z), r: w.r }));
-        },
+
         /** Today's sky events, as { kind, hour }. */
         events() {
           return clock.today().map((ev) => ({ kind: ev.kind, hour: Math.round(hourOf(ev) * 100) / 100 }));
@@ -1053,22 +829,6 @@ async function main(hud: Hud): Promise<void> {
           });
           return Object.fromEntries(Object.entries(out).sort((a, b) => b[1].tris - a[1].tris).slice(0, 40));
         },
-        /** The sea at (x, z): how open it is to the Bay, the ground and the depth now, the share of the swell standing there, the swell's crest (m), and the map's cover and kind. */
-        seaAt(x: number, z: number) {
-          const r = (v: number) => Math.round(v * 1000) / 1000;
-          return { exposure: r(exposureAt(x, z)), ground: r(terrainHeight(x, z)), depth: r(G.uWaterLevel.value - terrainHeight(x, z)), swell: r(swellFactor(x, z)), crest: r(G.uSwell.value.w), cover: coverAt(x, z), kind: kindAt(x, z) };
-        },
-        /** The ferries: their route's length and points, and where each is. */
-        ferries() {
-          return { way: ferries.way, boats: ferries.state };
-        },
-        /** How many crab burrows and crabs are made round the camera, and how many crabs are out. */
-        crabs() {
-          return crabs.counts;
-        },
-        skippers() {
-          return skippers.counts;
-        },
         /** Hides every object with this name (debugging what draws where). */
         hide(name: string) {
           scene.traverse((o) => {
@@ -1076,49 +836,12 @@ async function main(hud: Hud): Promise<void> {
           });
           step(0);
         },
-        /** Shows again every object with this name (after `hide`, or the walker seen from the free camera). */
+        /** Shows again every object with this name (after `hide`). */
         show(name: string) {
           scene.traverse((o) => {
             if (o.name === name) o.visible = true;
           });
           step(0);
-        },
-        /** On foot at (x, z) facing `heading` (the boat tied up where she is); returns where he stands. */
-        walk(x: number, z: number, heading = 0) {
-          rig.walkFrom(x, z, heading);
-          step(0);
-          return { x: rig.walker.x, y: rig.walker.y, z: rig.walker.z, mode: rig.mode };
-        },
-        /** The boat's voyage, and the walker's place. */
-        voyage() {
-          const b = rig.boat;
-          return { voyage: rig.voyage, mode: rig.mode, boat: { x: Math.round(b.pos.x), z: Math.round(b.pos.z), speed: Math.round(b.speed * 10) / 10, rowing: b.rowing }, walker: { x: Math.round(rig.walker.x * 10) / 10, y: Math.round(rig.walker.y * 10) / 10, z: Math.round(rig.walker.z * 10) / 10, wading: Math.round(rig.walker.wading * 100) / 100 } };
-        },
-        /** The free camera `height` m over a real place (WGS84), looking down at it from the south; returns its world point. */
-        goto(lat: number, lon: number, height = 150) {
-          const p = toWorld(lat, lon);
-          const y = Math.max(terrainHeight(p.x, p.z), G.uWaterLevel.value);
-          rig.placeFree(p.x, y + height, p.z - height * 0.7, 0, -Math.atan2(height, height * 0.7));
-          return { x: Math.round(p.x), z: Math.round(p.z) };
-        },
-        /** Goes to a place (its id) the way the map's buttons do: by the boat, on foot or from above. */
-        go(id: string, how: keyof MapActions = 'sail') {
-          const p = PLACES.find((q) => q.id === id);
-          if (p) goTo[how](p);
-          return !!p;
-        },
-        /** The container ship's round (where she is, her phase and speed); with a phase, put her there first. */
-        ships(phase?: Parameters<Ships['jump']>[0], along?: number) {
-          if (phase) ships.jump(phase, along);
-          return ships.state;
-        },
-        /** Whether the Matarbari plant runs (its plume shows); with an argument, set it. */
-        plant(on?: boolean) {
-          if (on !== undefined) {
-            plant.running = on;
-            plant.settle();
-          }
-          return plant.running;
         },
         birds(ahead = 40) {
           life.launchAll(rig.boat.pos, rig.boat.heading, ahead);
@@ -1133,10 +856,8 @@ async function main(hud: Hud): Promise<void> {
           return {
             boatman: at(hero.man.body.bone('head')),
             girl: at(girl.body.bone('head')),
-            walker: at(rig.walker.body.bone('head')),
             heading: rig.boat.heading,
             girlYaw: girl.group.rotation.y,
-            walkerHeading: rig.walker.heading,
           };
         },
         resume() {
@@ -1154,7 +875,7 @@ async function main(hud: Hud): Promise<void> {
             moon: r(shownMoon()),
             crops: G.uCrops.value.toArray().map((v) => r(v)),
             level: r(G.uWaterLevel.value),
-            tide: { flow: r(tide.flow), high: r(tide.high), rising: tide.rate > 0, at: new Date(tide.instant(shownDay(), shownMoon())).toISOString() },
+            flow: r(G.uFlowScale.value),
             rain: r(weather.rain),
             cloud: r(weather.cloud),
             wind: r(G.uWind.value.z),
@@ -1167,7 +888,7 @@ async function main(hud: Hud): Promise<void> {
         },
         info() {
           const cam = camera.position.toArray().map((v) => Math.round(v * 10) / 10);
-          return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, scale: perf.scale, ms: Math.round(perf.ms * 10) / 10, programs: renderer.info.programs?.length, camera: cam, mode: director.active ? 'film' : rig.mode, quality, time: Math.round(G.uTime.value * 100) / 100, hour: Math.round(clock.hour * 100) / 100, driftMs: Math.round(perf.driftMs * 100) / 100, fishMs: Math.round(perf.fishMs * 100) / 100, rain: Math.round(G.uRain.value * 100) / 100, rainShown: rain.visible, wind: Math.round(G.uWind.value.z * 100) / 100, seaWind: Math.round(sea.wind * 10) / 10, waveHeight: Math.round(sea.height * 100) / 100, wavePeak: Math.round(sea.peak * 10) / 10, chop: Math.round(sea.chop * 100) / 100 };
+          return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, scale: perf.scale, ms: Math.round(perf.ms * 10) / 10, programs: renderer.info.programs?.length, camera: cam, mode: director.active ? 'film' : rig.mode, quality, time: Math.round(G.uTime.value * 100) / 100, hour: Math.round(clock.hour * 100) / 100, driftMs: Math.round(perf.driftMs * 100) / 100, rain: Math.round(G.uRain.value * 100) / 100, rainShown: rain.visible, wind: Math.round(G.uWind.value.z * 100) / 100, seaWind: Math.round(sea.wind * 10) / 10, waveHeight: Math.round(sea.height * 100) / 100, wavePeak: Math.round(sea.peak * 10) / 10, chop: Math.round(sea.chop * 100) / 100 };
         },
       },
     });

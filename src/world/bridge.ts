@@ -6,15 +6,15 @@ import { brickTexture, plasterTexture } from '../render/textures';
 import { BRIDGE, bridgeDeck, bridgeSoffit, bridgeToWorld, terrainHeight } from './geography';
 import type { FeaturedTree } from './vegetation';
 
-// The old bridge over the channel where the boat's way leaves the river for the bil: a humped arch of thin
-// Bengal brick, plastered in lime and washed ochre long ago, of the kind that carries a village footpath
-// over a khal. One segmental arch spans the channel, its ring of brick voussoirs showing in the plaster;
+// The old bridge over the khal through Bara Moheshkhali, on the boat's way up to the bil: a humped arch of
+// thin Bengal brick, plastered in lime and washed ochre long ago, of the kind that carries a village footpath
+// over a khal. One segmental arch spans the khal, its ring of brick voussoirs showing in the plaster;
 // the deck humps over it between low parapets with a worn coping, easing down ramps to the banks, where
 // the parapets end in squat pillars. Years of floods have left their line on it: the plaster dark and damp
 // low down, mossy green at the water, the barrel's brick stained; ferns grow from its joints. It is part of
-// the world like any other: it casts shadows and takes them, shows in the river's mirror, darkens and
+// the world like any other: it casts shadows and takes them, shows in the khal's mirror, darkens and
 // shines in the rain, and the boat passes under it on her way into the bil.
-// Built in the bridge's own frame (geography.ts → BRIDGE): x along it, z along the channel; heights are
+// Built in the bridge's own frame (geography.ts → BRIDGE): x along it, z along the khal; heights are
 // the world's.
 
 const HALF_SPAN = BRIDGE.span / 2;
@@ -27,7 +27,7 @@ const BRICK_TILE = 0.6;
 /** The arch's circle: its radius and the height of its centre. */
 const RADIUS = (HALF_SPAN * HALF_SPAN + BRIDGE.rise * BRIDGE.rise) / (2 * BRIDGE.rise);
 const CENTRE_Y = BRIDGE.springing + BRIDGE.rise - RADIUS;
-/** Below the channel's bed, where the abutments' footings are. */
+/** Below the khal's bed, where the abutments' footings are. */
 const FOOTING = -2.3;
 
 const PLASTER: RGB = [1, 1, 1];
@@ -136,7 +136,7 @@ function archRing(b: MeshBuilder, rng: Rng): void {
   }
 }
 
-/** The barrel under the arch: brick courses along the channel, darker and stained toward the springings. */
+/** The barrel under the arch: brick courses along the khal, darker and stained toward the springings. */
 function barrel(b: MeshBuilder, rng: Rng): void {
   const N = 40;
   const a0 = Math.asin(HALF_SPAN / RADIUS);
@@ -303,8 +303,8 @@ export const BRIDGE_CLEARING = { x: BRIDGE.x, z: BRIDGE.z, r: BRIDGE.half + 4 };
 
 /**
  * The trees round the bridge, set where they frame it: a broad rain tree and a mango behind it on the
- * bil's side, their dark crowns behind whoever stands on it, leaning over the channel; a bamboo clump
- * and a date palm on the river's side; bananas by the far ramp.
+ * bil's side, their dark crowns behind whoever stands on it, leaning over the khal; a bamboo clump
+ * and a date palm on the downstream side; bananas by the far ramp.
  */
 export function bridgeTrees(): FeaturedTree[] {
   const at = (kind: FeaturedTree['kind'], bx: number, bz: number, s: number, ry: number): FeaturedTree => ({ kind, ...bridgeToWorld(bx, bz), s, ry });

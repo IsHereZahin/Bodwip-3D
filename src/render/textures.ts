@@ -410,40 +410,6 @@ export function weaveTexture(seed: number): DataTexture {
   return toTexture(ctx, { repeat: true });
 }
 
-/** Patchwork sail: panels of cloth in faded colours, darker seams. */
-export function sailTexture(seed: number): DataTexture {
-  const S = 256;
-  const rng = new Rng(seed);
-  const cloth = ['#d9ccb0', '#c9b38a', '#b98a5c', '#a85b3c', '#ddd5c2', '#8d7c5d', '#c8a56b', '#9a4f36'];
-  const ctx = paint(S, S, (c) => {
-    const split = (x: number, y: number, w: number, h: number, depth: number): void => {
-      if (depth > 4 || (depth > 1 && rng.next() < 0.3) || w < 30 || h < 30) {
-        c.fillStyle = rng.pick(cloth);
-        c.fillRect(x, y, w, h);
-        c.strokeStyle = 'rgba(60,40,25,0.55)';
-        c.lineWidth = 2;
-        c.strokeRect(x + 1, y + 1, w - 2, h - 2);
-        return;
-      }
-      if (w > h) {
-        const cut = w * rng.range(0.3, 0.7);
-        split(x, y, cut, h, depth + 1);
-        split(x + cut, y, w - cut, h, depth + 1);
-      } else {
-        const cut = h * rng.range(0.3, 0.7);
-        split(x, y, w, cut, depth + 1);
-        split(x, y + cut, w, h - cut, depth + 1);
-      }
-    };
-    split(0, 0, S, S, 0);
-    for (let i = 0; i < 900; i++) {
-      c.fillStyle = `rgba(70,50,30,${rng.range(0.02, 0.08)})`;
-      c.fillRect(rng.range(0, S), rng.range(0, S), rng.range(2, 9), rng.range(2, 9));
-    }
-  });
-  return toTexture(ctx);
-}
-
 /** Woven check cloth (lungi, gamchha). Tiles. */
 export function checkTexture(base: string, stripe: string, thin: string): DataTexture {
   const S = 128;
@@ -708,61 +674,6 @@ export function hullPlankTexture(seed: number): { map: DataTexture; normal: Data
   return { map, normal: normalFromHeight(hgt, 3.2) };
 }
 
-/**
- * Profiled steel cladding (the power plant's halls and galleries), 3 m a tile: trapezoidal ribs running up v,
- * painted pale (tinted by vertex colour), with the faint grime the sea air streaks down it. Tiles.
- */
-export function claddingTexture(seed: number): DataTexture {
-  const S = 256;
-  const rng = new Rng(seed);
-  const ctx = paint(S, S, (c) => {
-    // twelve ribs a tile: a lit face, the rib's top, its shaded face, the flat pan between
-    const pitch = S / 12;
-    for (let x = 0; x < S; x++) {
-      const f = (x % pitch) / pitch;
-      const v = f < 0.12 ? 232 : f < 0.22 ? 246 : f < 0.32 ? 200 : 222;
-      c.fillStyle = `rgb(${v},${v},${v})`;
-      c.fillRect(x, 0, 1, S);
-    }
-    // streaks of grime from the sheet laps
-    for (let i = 0; i < 70; i++) {
-      c.fillStyle = `rgba(90,86,78,${rng.range(0.03, 0.1)})`;
-      c.fillRect(rng.range(0, S), rng.range(-S * 0.2, S), rng.range(1, 4), rng.range(30, 160));
-    }
-    // the horizontal laps between sheets
-    c.fillStyle = 'rgba(70,70,70,0.25)';
-    c.fillRect(0, 0, S, 2);
-  });
-  return toTexture(ctx, { repeat: true });
-}
-
-/** Tarred, weathered planks laid along u. Tiles. */
-export function plankTexture(seed: number): DataTexture {
-  const S = 256;
-  const rng = new Rng(seed);
-  const ctx = paint(S, S, (c) => {
-    const plank = 32;
-    for (let y = 0; y < S; y += plank) {
-      c.fillStyle = css([46, 35, 26], rng.range(0.8, 1.2));
-      c.fillRect(0, y, S, plank);
-      for (let i = 0; i < 70; i++) {
-        c.fillStyle = `rgba(${110 + rng.int(0, 40)},${88 + rng.int(0, 30)},${62 + rng.int(0, 20)},${rng.range(0.05, 0.22)})`;
-        c.fillRect(rng.range(0, S), y + rng.range(2, plank - 2), rng.range(20, 90), rng.range(1, 2));
-      }
-      c.fillStyle = 'rgba(10,6,3,0.8)';
-      c.fillRect(0, y, S, 2);
-    }
-    for (let i = 0; i < 16; i++) {
-      const g = c.createRadialGradient(rng.range(0, S), rng.range(0, S), 0, rng.range(0, S), rng.range(0, S), rng.range(20, 60));
-      g.addColorStop(0, 'rgba(130,110,80,0.18)');
-      g.addColorStop(1, 'rgba(130,110,80,0)');
-      c.fillStyle = g;
-      c.fillRect(0, 0, S, S);
-    }
-  });
-  return toTexture(ctx, { repeat: true });
-}
-
 /** Palm bark: grey-brown with the ring scars of fallen fronds (rings run across v). Tiles. */
 export function palmBarkTexture(seed: number): DataTexture {
   const W = 64;
@@ -781,24 +692,6 @@ export function palmBarkTexture(seed: number): DataTexture {
     }
   });
   return toTexture(ctx, { repeat: true });
-}
-
-/** Fishing net: a thin diamond mesh, transparent between the cords. Tiles. */
-export function netTexture(): DataTexture {
-  const S = 128;
-  const ctx = paint(S, S, (c) => {
-    c.strokeStyle = 'rgba(52,46,36,1)';
-    c.lineWidth = 1.6;
-    for (let k = -S; k < S * 2; k += 16) {
-      c.beginPath();
-      c.moveTo(k, 0);
-      c.lineTo(k + S, S);
-      c.moveTo(k + S, 0);
-      c.lineTo(k, S);
-      c.stroke();
-    }
-  });
-  return toTexture(ctx, { repeat: true, bleed: true });
 }
 
 /** A soft round shadow, dark in the middle and gone at the rim (alpha only), for contact shadows. */

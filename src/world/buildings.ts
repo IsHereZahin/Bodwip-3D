@@ -13,9 +13,8 @@ import { clearOfRoads } from './roads';
 // size and heading, moved clear of the roads it lines, left out where it would stand in water, on a landmark or
 // on a steep slope. How each is built, by its kind:
 // - houses: a raised mud plinth, walls of mud, brick or plaster, a do-chala roof of tin or thatch (the village
-//   huts near the channel are world/village.ts's, more detailed);
-// - pucca buildings: plastered blocks of one to four storeys (the hotels and flats of Cox's Bazar more), flat
-//   roofs with parapets, rows of dark windows;
+//   huts by the khal are world/village.ts's, more detailed);
+// - pucca buildings: plastered blocks of one to three storeys, flat roofs with parapets, rows of dark windows;
 // - mosques with a dome and a minaret; temples with a spire; the Rakhine pagodas' white stupas; schools long and
 //   low under tin; mills and stores as big tin sheds.
 // Storeys, walls, roofs and colours are [মডেল] where OSM does not say: Microsoft's footprints carry no tags.
@@ -258,13 +257,16 @@ function shed(s: Sets, p: BuildingPlan): void {
   chala(s, p, p.l, p.w, p.y + 4.8, Math.min(2.5, p.w * 0.15), 'tin', c);
 }
 
-/** Storeys for a pucca building OSM does not count: by its kind and its size [মডেল]. */
+/**
+ * Storeys for a pucca building OSM does not count, by its kind and its size [মডেল]: Bara Moheshkhali is a rural
+ * union, its big footprints schools, madrasas and stores of one to three storeys.
+ */
 function storeysOf(p: BuildingPlan, rng: Rng): number {
   if (p.levels > 0) return Math.min(12, p.levels);
   const area = p.l * p.w;
-  if (p.kind === BUILDING.commercial) return rng.int(area > 400 ? 4 : 2, area > 400 ? 8 : 4);
+  if (p.kind === BUILDING.commercial) return rng.int(2, area > 400 ? 4 : 3);
   if (p.kind === BUILDING.civic) return rng.int(2, 3);
-  return area > 300 ? rng.int(2, 4) : rng.int(1, 2);
+  return area > 300 ? rng.int(1, 3) : rng.int(1, 2);
 }
 
 /** Buildings are drawn in cells of this size (m), so those out of view, or far off, are left undrawn. */

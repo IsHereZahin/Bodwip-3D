@@ -1,13 +1,13 @@
 // Where a real place (WGS84 lat/lon) lies in the world, and back. The world is the real map at 1:3
 // (GEOGRAPHY_PLAN.md §5.1): distances on the ground shrink three times, heights and objects keep their size.
-// On the compact map (the user's compact tourism Moheshkhali) the ground is also drawn together where nobody
-// looks: the places people come for keep the 1:3 map's scale, the rural and empty stretches between them are
-// squeezed (`WARP`), and the far edges are cut off (`CROP`). One continuous world still: the warp only shrinks.
+// It is a small window of that map (`CROP`): the khal that winds through Bara Moheshkhali under the old
+// bridge, and the shapla bil at its head among the hills' feet, with the ground round them (the user's small
+// cinematic river journey, 2026-10-05).
 //
 // The ground is mapped by a transverse Mercator projection centred on the origin's meridian (Krüger's
-// series, Karney 2011): over the whole area (±25 km) its scale differs from 1 by less than 10 ppm, so a
-// metre east is a metre wherever it is measured. The world keeps the scene's frame: +x west, +z north,
-// y up (the river ran south down −z; `env/astro.ts` relies on it).
+// series, Karney 2011): over the area its scale differs from 1 by far less than 10 ppm, so a metre east is a
+// metre wherever it is measured. The world keeps the scene's frame: +x west, +z north, y up (`env/astro.ts`
+// relies on it).
 //
 // The bake scripts import this file too (Node strips the types), so the data and the scene agree.
 
@@ -68,103 +68,20 @@ function forward(lat: number, lon: number, lon0: number = ORIGIN.lon): [number, 
 
 const NORTH0 = forward(ORIGIN.lat, ORIGIN.lon)[1];
 
-// ---------- the compact map's warp ----------
-//
-// Each axis of the plain 1:3 world (x west, z north, its metres) is drawn at a scale that changes from stretch to
-// stretch: 1 round the places people come for, less across the rural and empty ground between them. The scales
-// ease from one to the next over EASE m, so slopes do not kink at the joins; the origin (Gorakghata jetty) stays.
+/** The world's extent (world m: x west, z north): the khal from below the old bridge to its head, the bil, and the ground round them. */
+export const CROP = { x0: 150, x1: 1450, z0: 200, z1: 1300 } as const;
 
-/** Where each stretch begins (plain world m) and the scale it is drawn at, from −∞ upward. */
-interface Axis {
-  breaks: readonly number[];
-  scales: readonly number[];
-}
-/** West–east: the far mainland, the channel and both its banks, the island's west lowland, its west coast with Matarbari's plant and port, the open Bay. */
-const AXIS_X: Axis = { breaks: [-1300, 1600, 2750, 4300], scales: [0.35, 1, 0.4, 1, 0.3] };
-/** South–north: Cox's Bazar, Gorakghata–Adinath–Sonadia, the island's rural middle and its hills, Matarbari, the north. */
-const AXIS_Z: Axis = { breaks: [-1300, 1000, 5600, 7900], scales: [0.4, 1, 0.3, 1, 0.3] };
-/** How far the scale takes to change from one stretch to the next (plain world m). */
-const EASE = 200;
-/** The plain world's extent the compact map keeps (plain world m); beyond it the map is cut off. */
-export const CROP = { x0: -2600, x1: 5600, z0: -3600, z1: 8000 } as const;
+/** The same extent in ground metres (east from the origin, north from it). */
+export const CROP_GROUND = { east0: -CROP.x1 * MAP_SCALE, east1: -CROP.x0 * MAP_SCALE, north0: CROP.z0 * MAP_SCALE, north1: CROP.z1 * MAP_SCALE } as const;
 
-/** One axis's warp as a table every STEP m over [MIN, MAX] (plain): forward by interpolation, back by search. */
-const STEP = 5;
-const MIN = -12000;
-const MAX = 16000;
-function axisWarp(a: Axis): { fwd: (v: number) => number; inv: (v: number) => number } {
-  const scaleAt = (v: number) => {
-    let s = a.scales[0];
-    a.breaks.forEach((b, i) => {
-      const t = Math.min(1, Math.max(0, (v - b + EASE / 2) / EASE));
-      s += (a.scales[i + 1] - a.scales[i]) * t * t * (3 - 2 * t);
-    });
-    return s;
-  };
-  const n = Math.round((MAX - MIN) / STEP) + 1;
-  const table = new Float64Array(n);
-  for (let i = 1; i < n; i++) table[i] = table[i - 1] + (scaleAt(MIN + (i - 0.5) * STEP)) * STEP;
-  // the origin stays where it is
-  const zero = table[Math.round(-MIN / STEP)];
-  for (let i = 0; i < n; i++) table[i] -= zero;
-  const fwd = (v: number) => {
-    const f = (Math.min(MAX, Math.max(MIN, v)) - MIN) / STEP;
-    const i = Math.min(n - 2, Math.floor(f));
-    return table[i] + (table[i + 1] - table[i]) * (f - i);
-  };
-  const inv = (w: number) => {
-    let lo = 0;
-    let hi = n - 1;
-    while (hi - lo > 1) {
-      const mid = (lo + hi) >> 1;
-      if (table[mid] <= w) lo = mid;
-      else hi = mid;
-    }
-    const t = (w - table[lo]) / Math.max(1e-9, table[hi] - table[lo]);
-    return MIN + (lo + Math.min(1, Math.max(0, t))) * STEP;
-  };
-  return { fwd, inv };
-}
-const WARP_X = axisWarp(AXIS_X);
-const WARP_Z = axisWarp(AXIS_Z);
-
-/** A point of the plain 1:3 world, where it lies on the compact map (what was laid out on the plain map keeps its place). */
-export function plain(x: number, z: number): { x: number; z: number } {
-  return { x: WARP_X.fwd(x), z: WARP_Z.fwd(z) };
-}
-
-/** A plain 1:3 world north (z), on the compact map (the warp's axes are separate). */
-export function plainZ(z: number): number {
-  return WARP_Z.fwd(z);
-}
-
-/** How much the compact map shrinks the ground round (x, z) of its own (1 where it keeps the 1:3 scale), per axis. */
-export function squeeze(x: number, z: number): { x: number; z: number } {
-  const px = WARP_X.inv(x);
-  const pz = WARP_Z.inv(z);
-  return { x: (WARP_X.fwd(px + 1) - WARP_X.fwd(px - 1)) / 2, z: (WARP_Z.fwd(pz + 1) - WARP_Z.fwd(pz - 1)) / 2 };
-}
-
-/** Plain ground metres (east, north) to the compact map's, and back. */
-const warpGround = (east: number, north: number) => ({ east: -WARP_X.fwd(-east / MAP_SCALE) * MAP_SCALE, north: WARP_Z.fwd(north / MAP_SCALE) * MAP_SCALE });
-const unwarpGround = (east: number, north: number) => ({ east: -WARP_X.inv(-east / MAP_SCALE) * MAP_SCALE, north: WARP_Z.inv(north / MAP_SCALE) * MAP_SCALE });
-
-/** The compact map's extent in its ground metres (east from the origin, north from it). */
-export const CROP_GROUND = (() => {
-  const a = warpGround(-CROP.x1 * MAP_SCALE, CROP.z0 * MAP_SCALE);
-  const b = warpGround(-CROP.x0 * MAP_SCALE, CROP.z1 * MAP_SCALE);
-  return { east0: a.east, east1: b.east, north0: a.north, north1: b.north };
-})();
-
-/** Metres east and north of the origin, on the compact map's ground (not shrunk by MAP_SCALE). */
+/** Metres east and north of the origin on the ground (not shrunk by MAP_SCALE). */
 export function toGround(lat: number, lon: number): { east: number; north: number } {
   const [east, north] = forward(lat, lon);
-  return warpGround(east, north - NORTH0);
+  return { east, north: north - NORTH0 };
 }
 
-/** The real place at `east`, `north` metres from the origin on the compact map's ground. */
-export function fromGround(warpedEast: number, warpedNorth: number): LatLon {
-  const { east, north } = unwarpGround(warpedEast, warpedNorth);
+/** The real place at `east`, `north` metres from the origin on the ground. */
+export function fromGround(east: number, north: number): LatLon {
   const xi = (north + NORTH0) / RECT;
   const eta = east / RECT;
   let xi1 = xi;
@@ -183,17 +100,4 @@ export function fromGround(warpedEast: number, warpedNorth: number): LatLon {
 export function toWorld(lat: number, lon: number): { x: number; z: number } {
   const g = toGround(lat, lon);
   return { x: -g.east / MAP_SCALE, z: g.north / MAP_SCALE };
-}
-
-/** The real place under a point of the world. */
-export function toLatLon(x: number, z: number): LatLon {
-  return fromGround(-x * MAP_SCALE, z * MAP_SCALE);
-}
-
-/** UTM (WGS84, northern hemisphere) for a real place: its zone and easting and northing in metres (the GIS readout). */
-export function toUtm(lat: number, lon: number): { zone: number; east: number; north: number } {
-  const zone = Math.floor((lon + 180) / 6) + 1;
-  const [east, north] = forward(lat, lon, zone * 6 - 183);
-  const K0 = 0.9996;
-  return { zone, east: 500000 + K0 * east, north: K0 * north };
 }

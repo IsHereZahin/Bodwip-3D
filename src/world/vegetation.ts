@@ -17,33 +17,28 @@ import {
   needleTexture,
   palmFrondTexture,
 } from '../render/textures';
-import { COVER, GRID_H, GRID_W, KIND, LAYERS, LINES, canopyAt, cellCentre, kindAt, place } from '../geo/data';
+import { COVER, GRID_H, GRID_W, KIND, LAYERS, canopyAt, cellCentre } from '../geo/data';
 import {
   BIL,
-  CHANNEL_SPAN,
-  GORAKGHATA,
+  JOURNEY,
+  KHAL_LEVEL,
   PONDS,
-  VILLAGES,
-  VILLAGE_CENTERS,
   WETLANDS,
-  bankAt,
-  bankInfo,
   bilDepth,
   bilReach,
-  edgeHalfWidth,
   inlandWaterAt,
+  khalAt,
+  khalFrame,
+  khalHalfWidth,
   nearBackwater,
-  riverX,
   routeGap,
   mangroveZone,
   onBridge,
   onLandmark,
   onRoad,
-  onTempleHill,
-  saltPan,
-  sandCover,
   terrainHeight,
 } from './geography';
+import { bilPoint, khalDistance } from './khal';
 import type { HutPlan } from './village';
 
 const UP = new Vector3(0, 1, 0);
@@ -367,14 +362,26 @@ function tuft(rng: Rng, count: [number, number], height: [number, number], width
 
 // ---------- placement ----------
 
-/** The stretch of the channel the bank plantings run along, head to mouth. */
-const BANKS = { z0: CHANNEL_SPAN.north, z1: CHANNEL_SPAN.south };
-/** Kash stands only above this (m): beyond the spring tides' reach. */
-const KASH_ABOVE = 1.9;
+/** Kash stands only this far above the khal's water (m): where the bank stays dry. */
+const KASH_ABOVE = 0.4;
+/** The khal's banks: the mud slope up from the water, before the levee's top (m; geography.ts BANK). */
+const BANK_SLOPE = 5;
 
-/** Whether the bank on `side` of the channel at `z` is in one of the stretches kash grows along (the film finds them too). */
-export function kashStretch(z: number, side: 1 | -1): boolean {
-  return fbm(z * 0.01, side * 9.3, 2, 62) >= 0.55;
+/** Whether the bank on `side` of the khal `s` m along it is in one of the stretches kash grows along. */
+function kashStretch(s: number, side: 1 | -1): boolean {
+  return fbm(s * 0.012, side * 9.3, 2, 62) >= 0.55;
+}
+
+/** Where the kash stands thickest along the khal (set when the vegetation is built): the film's kash scene stands in it. */
+let thickestKash: { x: number; z: number } | null = null;
+export function kashStand(): { x: number; z: number } | null {
+  return thickestKash;
+}
+
+/** A point `out` m out from the khal's middle on `side`, `s` m along it. */
+function besideKhal(s: number, side: number, out: number): { x: number; z: number } {
+  const p = khalAt(s);
+  return { x: p.x + Math.cos(p.heading) * out * side, z: p.z - Math.sin(p.heading) * out * side };
 }
 
 interface Spot {
@@ -422,16 +429,15 @@ export interface FeaturedTree {
   s: number;
 }
 
+/** Dry ground at least `minInland` m back from the khal's water's edge, off the ponds, the bil's rim, the roads and the bridge. */
 function onDryLand(x: number, z: number, minInland: number): boolean {
-  const info = bankInfo(x, z);
-  if (info.inland < minInland) return false;
+  const f = khalFrame(x, z);
+  if (f && f.d - khalHalfWidth(f.s) < minInland) return false;
+  if (bilReach(x, z) < 1.3) return false;
   for (const p of PONDS) if (Math.hypot(x - p.x, z - p.z) < p.r * 1.35) return false;
   for (const w of WETLANDS) if (Math.hypot(x - w.x, z - w.z) < w.r * 1.5) return false;
-  // nothing grows on the salt pans, nor (but the mangroves and casuarinas, set apart) at the sea's edge
-  if (saltPan(x, z) > 0.2) return false;
-  if (sandCover(x, z) > 0.4) return false;
   const h = terrainHeight(x, z);
-  if (h < 0.3 || mangroveZone(x, z, h) > 0.3 || onLandmark(x, z, 3) || onTempleHill(x, z) || onRoad(x, z, 1.5)) return false;
+  if (h < KHAL_LEVEL + 0.3 || mangroveZone(x, z, h) > 0.3 || onLandmark(x, z, 3) || onRoad(x, z, 1.5)) return false;
   return !nearBackwater(x, z, 3);
 }
 
@@ -442,7 +448,7 @@ function at(x: number, z: number, rng: Rng, s: number, sink = 0.15): Placement {
 // ---------- assembly ----------
 
 /** `bark`: the photo bark for broadleaf trunks; without it they keep a painted brown. */
-/** `clear`: other places to keep trees off (x, z and a radius), such as the fishermen's platforms. */
+/** `clear`: other places to keep trees off (x, z and a radius), such as the old bridge's clearing. */
 /** `featured`: trees set by hand where a scene wants them (round the old bridge), placed whatever the rest do. */
 export function buildVegetation(
   huts: readonly HutPlan[],
@@ -597,38 +603,32 @@ export function buildVegetation(
   const put = (b: Bucket, p: Placement) => b.items[rng.int(0, b.items.length - 1)].push(p);
   for (const f of featured) put(B[f.kind], { x: f.x, y: terrainHeight(f.x, f.z) - 0.15, z: f.z, ry: f.ry, s: f.s });
 
-  // the houses' joba bushes by the villages on the channel: one or two beside a hut, by the door or the yard
-  VILLAGES.forEach((v, i) => {
-    const c = VILLAGE_CENTERS[i];
-    for (const h of huts) {
-      if (Math.hypot(h.x - c.x, h.z - c.z) > v.radius * 1.3 || rng.next() < 0.45) continue;
-      const a = rng.range(0, Math.PI * 2);
-      const d = Math.max(h.l, h.w) * 0.5 + rng.range(1.2, 2.4);
-      const x = h.x + Math.cos(a) * d;
-      const z = h.z + Math.sin(a) * d;
-      // clear of every hut's walls (the huts' own clearance rings are meant for trees, not bushes)
-      if (!onDryLand(x, z, 3) || huts.some((o) => Math.abs(o.x - x) < 12 && Math.hypot(o.x - x, o.z - z) < Math.max(o.l, o.w) * 0.5 + 0.8)) continue;
-      put(B.joba, at(x, z, rng, rng.range(0.85, 1.2), 0.05));
-    }
-  });
+  // the homesteads' joba bushes by the huts along the khal: one or two beside a hut, by the door or the yard
+  for (const h of huts) {
+    if (rng.next() < 0.45) continue;
+    const a = rng.range(0, Math.PI * 2);
+    const d = Math.max(h.l, h.w) * 0.5 + rng.range(1.2, 2.4);
+    const x = h.x + Math.cos(a) * d;
+    const z = h.z + Math.sin(a) * d;
+    // clear of every hut's walls (the huts' own clearance rings are meant for trees, not bushes)
+    if (!onDryLand(x, z, 3) || huts.some((o) => Math.abs(o.x - x) < 12 && Math.hypot(o.x - x, o.z - z) < Math.max(o.l, o.w) * 0.5 + 0.8)) continue;
+    put(B.joba, at(x, z, rng, rng.range(0.85, 1.2), 0.05));
+  }
 
   // round the bil: groves standing back from its marshy rim, and hijol trees out in its shallows
   for (let k = 0; k < 260; k++) {
     const a = rng.range(0, Math.PI * 2);
     const e = rng.range(1.5, 1.9);
-    const z = BIL.z + Math.cos(a) * BIL.halfLen * e;
-    const x = riverX(z) + BIL.u + Math.sin(a) * BIL.halfWid * e;
+    const { x, z } = bilPoint(Math.cos(a) * BIL.halfLen * e, Math.sin(a) * BIL.halfWid * e);
     if (fbm(z * 0.01, x * 0.01, 2, 23) < 0.42 || !onDryLand(x, z, 20) || !occ.free(x, z, 3.5)) continue;
     occ.add(x, z, 3.5);
     const r = rng.next();
     put(r < 0.4 ? B.mango : r < 0.6 ? B.rain : r < 0.85 ? B.date : B.coconut, at(x, z, rng, rng.range(0.85, 1.2)));
   }
   for (let k = 0, placed = 0; k < 400 && placed < 9; k++) {
-    const z = BIL.z + rng.range(-1, 1) * BIL.halfLen;
-    const u = BIL.u + rng.range(-1.2, 1.2) * BIL.halfWid;
-    const e = bilReach(z, u);
-    const depth = bilDepth(z, u);
-    const x = riverX(z) + u;
+    const { x, z } = bilPoint(rng.range(-1, 1) * BIL.halfLen, rng.range(-1.2, 1.2) * BIL.halfWid);
+    const e = bilReach(x, z);
+    const depth = bilDepth(x, z);
     if (e < 0.88 || e > 0.98 || depth < 0.1 || depth > 0.45 || routeGap(x, z) < 15 || !occ.free(x, z, 6)) continue;
     occ.add(x, z, 6);
     // their trunks stand in the water
@@ -681,13 +681,16 @@ export function buildVegetation(
     const c = cellCentre(i % GRID_W, Math.floor(i / GRID_W));
     const x = c.x + (hash(i, 2) - 0.5) * 8;
     const z = c.z + (hash(i, 3) - 0.5) * 8;
-    if (inlandWaterAt(x, z) || onRoad(x, z, 1.5) || onLandmark(x, z, 3) || onTempleHill(x, z) || onBridge(x, z, 1) || !occ.free(x, z, 1.2)) continue;
+    if (inlandWaterAt(x, z) || onRoad(x, z, 1.5) || onLandmark(x, z, 3) || onBridge(x, z, 1) || bilReach(x, z) < 1.25 || !occ.free(x, z, 1.2)) continue;
+    // none on the khal's mud bank (its levee's top is the homesteads')
+    const f = khalFrame(x, z);
+    if (f && f.d < khalHalfWidth(f.s) + 2) continue;
     const h = terrainHeight(x, z);
-    if (!mangrove && h < 0.3) continue;
+    if (!mangrove && h < KHAL_LEVEL + 0.3) continue;
     const r = hash(i, 4);
-    // the trees the channel looks at are drawn in full; those farther inland are cheap crowns that read the
-    // same at a distance (the palms are cheap anyway)
-    const seen = bankInfo(x, z).inland < 500;
+    // the trees the khal looks at are drawn in full; those farther off are cheap crowns that read the same at a
+    // distance (the palms are cheap anyway)
+    const seen = khalDistance(x, z) < 300;
     const home = nearHome(x, z);
     let tree: Bucket;
     // the mangroves: fewer than the cells, as the forest's crowns crowd into one another
@@ -702,9 +705,9 @@ export function buildVegetation(
       tree = r < 0.45 ? B.far : r < 0.65 ? B.supariFar : r < 0.8 ? B.coconutFar : r < 0.9 ? B.banana : B.dateFar;
     }
     // the hills' forest: big, cheap crowns, a quarter as many as the cells (scaled up below to close the canopy)
-    else if (h > 8) {
+    else if (h > KHAL_LEVEL + 8) {
       if (hash(i, 8) > 0.25) continue;
-      // (planted akashmoni on the slopes the channel sees)
+      // (planted akashmoni on the slopes the khal sees)
       tree = seen && r < 0.06 ? B.rain : seen && r < 0.1 ? B.mango : seen && r < 0.25 ? B.akashmoni : B.hill;
     }
     // the lone trees along the fields and roads: fewer of them stand out of the fields than the canopy's cells
@@ -716,92 +719,9 @@ export function buildVegetation(
     put(tree, { x, y: h - (mangrove ? 0.1 : 0.2), z, ry: hash(i, 6) * Math.PI * 2, s });
   }
 
-  // casuarina belts on the sand above the spring tides' reach (the beaches' backs and dunes on the island,
-  // Sonadia and the Cox's Bazar shore), cell by cell where the map has sand
-  const jhauAt = (x: number, z: number) => {
-    const h = terrainHeight(x, z);
-    if (h < 2.2 || saltPan(x, z) > 0.2 || onLandmark(x, z, 3) || onRoad(x, z, 1.5) || !occ.free(x, z, 2.2)) return;
-    occ.add(x, z, 2.2);
-    put(B.jhau, { x, y: h - 0.15, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.85, 1.2) });
-  };
-  for (let i = 0; i < GRID_W * GRID_H; i++) {
-    if (LAYERS.cover[i] !== COVER.sand || rng.next() > 0.3) continue;
-    const c = cellCentre(i % GRID_W, Math.floor(i / GRID_W));
-    jhauAt(c.x + rng.range(-4, 4), c.z + rng.range(-4, 4));
-  }
-
-  // the two ways up to Adinath temple (D9): the Dighi Road from the town, and the roads from the Adinath jetty;
-  // trees close along both sides wherever the canopy map has trees beside them (the homestead's and the hills'
-  // kinds), so the way runs under them. The jetties' own approaches (the long road up from the Adinath jetty
-  // toward Mainak hill, and the way into the town from Gorakghata's) are green on both sides all along: a
-  // roadside row each side, as Bangladesh's roads are planted, the canopy map's gaps or not.
-  const temple = place('adinath-temple').world;
-  const landing = place('adinath-jetty-land').world;
-  const gorakLanding = place('gorakghata-jetty-land').world;
-  const APPROACH = [
-    { at: landing, reach: 700 },
-    { at: gorakLanding, reach: 400 },
-  ];
-  for (const l of LINES) {
-    if (l.k !== 'road') continue;
-    const p = l.points;
-    let near = l.n === 'Dhighi Road';
-    for (let k = 0; k < p.length && !near; k += 2)
-      near = Math.hypot(p[k] - temple.x, p[k + 1] - temple.z) < 70 || APPROACH.some((a) => Math.hypot(p[k] - a.at.x, p[k + 1] - a.at.z) < 70);
-    if (!near) continue;
-    for (let k = 0; k + 3 < p.length; k += 2) {
-      const len = Math.hypot(p[k + 2] - p[k], p[k + 3] - p[k + 1]);
-      if (len < 1e-3) continue;
-      for (let d = 0; d < len; d += rng.range(5, 8)) {
-        const t = d / len;
-        const cx = p[k] + (p[k + 2] - p[k]) * t;
-        const cz = p[k + 1] + (p[k + 3] - p[k + 1]) * t;
-        const approach = APPROACH.some((a) => Math.hypot(cx - a.at.x, cz - a.at.z) < a.reach);
-        for (const side of approach ? [-1, 1] : [rng.sign()]) {
-          const off = rng.range(3.5, 6.5);
-          const x = cx + ((p[k + 3] - p[k + 1]) / len) * side * off;
-          const z = cz - ((p[k + 2] - p[k]) / len) * side * off;
-          if ((!approach && canopyAt(x, z).cover < 0.05) || !onDryLand(x, z, 3) || !occ.free(x, z, 2.5)) continue;
-          occ.add(x, z, 2.5);
-          const r = rng.next();
-          put(r < 0.3 ? B.akashmoni : r < 0.55 ? B.mango : r < 0.7 ? B.coconut : r < 0.85 ? B.rain : r < 0.95 ? B.supari : B.date, at(x, z, rng, rng.range(0.9, 1.2)));
-        }
-      }
-    }
-  }
-
-  // the mangroves the jetties cross: keora and baen on the tidal mud both sides of Gorakghata's pair and of the
-  // Adinath jetty, from near the shore most of the way out; the last stretch to each head stays open water for
-  // the boats, and the jetties' own line stays clear (onLandmark)
-  const g = GORAKGHATA;
-  for (const j of [
-    { ...g.jetty, clear: g.jetty.width + g.newJetty.offset + g.newJetty.width / 2 + 3 },
-    { ...g.adinathJetty, clear: g.adinathJetty.width + 3 },
-  ]) {
-    const ux = (j.toX - j.x) / j.length;
-    const uz = (j.toZ - j.z) / j.length;
-    for (let d = j.length * 0.06; d < j.length * 0.82; d += rng.range(3.5, 5.5)) {
-      for (const side of [-1, 1]) {
-        for (let k = 0; k < 3; k++) {
-          const off = j.clear + rng.range(0, 48) * (k === 0 ? 0.35 : 1);
-          const x = j.x + ux * d - uz * side * off + rng.range(-1.5, 1.5);
-          const z = j.z + uz * d + ux * side * off + rng.range(-1.5, 1.5);
-          const h = terrainHeight(x, z);
-          // on the mud between mean sea level's reach and the spring tides' (≈ −1 m to +2.6 m), the sea's ground
-          const kind = kindAt(x, z);
-          if (h < -1 || h > 2.6 || (kind !== KIND.tidal && kind !== KIND.mangrove) || onLandmark(x, z, 2) || !occ.free(x, z, 2.2)) continue;
-          // in clumps, as they colonise the mud
-          if (fbm(x * 0.03, z * 0.03, 2, 77) < 0.38) continue;
-          occ.add(x, z, 2.2);
-          put(rng.next() < 0.65 ? B.keora : B.baen, { x, y: h - 0.1, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.8, 1.25) });
-        }
-      }
-    }
-  }
-
-  // the trees by the water and on the hills show in the water's mirror; those far inland on the plain are left
-  // out of it (from any water they stand behind the banks' own trees)
-  const mirrored = (p: Placement) => p.y > 8 || bankInfo(p.x, p.z).inland < 600;
+  // the trees by the water and on the hills show in the water's mirror; those far off on the plain are left out
+  // of it (from the khal they stand behind the banks' own trees)
+  const mirrored = (p: Placement) => p.y > KHAL_LEVEL + 8 || khalDistance(p.x, p.z) < 350;
   for (const [name, b] of Object.entries(B)) {
     b.parts.forEach((parts, i) => {
       const items = b.items[i];
@@ -820,36 +740,36 @@ export function buildVegetation(
     });
   }
 
-  // kash in stretches along the bank's top, on the real shore just above the spring tides' reach (≈1.8 m), where
-  // the bank stays dry; not on the roads, the salt pans or the landmarks
+  // kash in stretches along the khal's open banks, on the levee's top where it stays dry (not below the
+  // homesteads' trees, on the roads or at the ghats' bridge); the season keeps its plumes to the autumn
   const kashItems: Placement[][] = kash.map(() => []);
   for (const side of [-1, 1] as const) {
-    for (let z = BANKS.z0; z > BANKS.z1; z -= 2.8) {
-      if (!kashStretch(z, side)) continue;
-      const bank = bankAt(z, side, KASH_ABOVE);
-      if (!bank || bank.d <= 0) continue;
-      const ux = (bank.x - riverX(z)) / bank.d;
-      const uz = (bank.z - z) / bank.d;
+    for (let s = 20; s < JOURNEY.head - 20; s += 2.8) {
+      if (!kashStretch(s, side)) continue;
+      const half = khalHalfWidth(s);
       for (let k = 0; k < 4; k++) {
-        const d = rng.range(0.5, 12);
-        const jitter = rng.range(-1.4, 1.4);
-        const x = bank.x + ux * d - uz * jitter;
-        const zz = bank.z + uz * d + ux * jitter;
-        const h = terrainHeight(x, zz);
-        if (h < KASH_ABOVE || h > 3.5 || !onDryLand(x, zz, 0)) continue;
-        kashItems[rng.int(0, kash.length - 1)].push({ x, y: h - 0.05, z: zz, ry: rng.range(0, Math.PI * 2), s: rng.range(0.75, 1.1) });
+        const { x, z } = besideKhal(s + rng.range(-1.4, 1.4), side, half + BANK_SLOPE + rng.range(0.5, 9));
+        const h = terrainHeight(x, z);
+        if (h < KHAL_LEVEL + KASH_ABOVE || canopyAt(x, z).cover > 0.4 || !onDryLand(x, z, 0) || !occ.free(x, z, 0.5)) continue;
+        kashItems[rng.int(0, kash.length - 1)].push({ x, y: h - 0.05, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.75, 1.1) });
       }
     }
   }
   kash.forEach((g, i) => kashItems[i].length && group.add(instanced(g, mats.kash, kashItems[i], { receive: true })));
+  const tufts = kashItems.flat();
+  let most = 0;
+  for (const a of tufts) {
+    const n = tufts.reduce((k, b) => k + (Math.hypot(a.x - b.x, a.z - b.z) < 7 ? 1 : 0), 0);
+    if (n > most) (most = n), (thickestKash = { x: a.x, z: a.z });
+  }
 
-  // grass tufts on the bank tops and round the villages
+  // grass tufts along the khal's banks: thickest along the lip of the levee, where it shows from the boat
   const grassItems: Placement[][] = grass.map(() => []);
   for (const side of [-1, 1] as const) {
-    for (let z = BANKS.z0; z > BANKS.z1; z -= 1.1) {
-      // thickest along the lip of the bank, where it shows from the river
-      for (const inland of [rng.range(0.5, 4), rng.range(2, 18)]) {
-        const x = riverX(z) + side * (edgeHalfWidth(z, side) + 3 + inland);
+    for (let s = 0; s < JOURNEY.head; s += 1.1) {
+      const half = khalHalfWidth(s);
+      for (const inland of [rng.range(0.3, 3), rng.range(2, 14)]) {
+        const { x, z } = besideKhal(s, side, half + BANK_SLOPE + inland);
         if (!onDryLand(x, z, 0) || rng.next() < 0.3) continue;
         grassItems[rng.int(0, grass.length - 1)].push(at(x, z, rng, rng.range(0.8, 1.35), 0.05));
       }

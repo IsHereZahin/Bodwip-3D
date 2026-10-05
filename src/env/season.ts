@@ -5,7 +5,7 @@ import { compass } from './astro';
 
 // The six seasons (ষড়ঋতু) of the Bangla year. A day of the year (0 = 1 January) gives every seasonal
 // quantity by easing between six keys, one in the middle of each season: how much the land's runoff
-// pushes the channel's ebb, how silty the water is, how green or dusty the land, which crops stand in the paddy plots,
+// quickens the khal's drift, how silty the water is, how green or dusty the land, which crops stand in the paddy plots,
 // which trees are in flower, whether the kash is in plume and the lilies in bloom, how cloudy and rainy
 // and foggy it is, and the wind. The land, the water, the sky, the weather and the wind all read it, so a
 // season is one state of the whole world rather than a change of paint.
@@ -38,7 +38,7 @@ export interface SeasonState {
   day: number;
   /** Which of SEASON_NAMES it is. */
   index: number;
-  /** The land's runoff down the channel, against autumn's: in the rains it strengthens the ebb (main.ts). */
+  /** The land's runoff down the khal, against autumn's: in the rains its drift quickens (main.ts). */
   flow: number;
   /** The river's colour (its silt), as a multiplier on the light it sends back. */
   readonly silt: Color;
@@ -163,7 +163,7 @@ export function seasonAt(day: number, out: SeasonState): SeasonState {
   return out;
 }
 
-/** Writes the season's land into the shared uniforms (the sea's level and current come from the tide, in main.ts). */
+/** Writes the season's land into the shared uniforms (the khal's current comes from its runoff, in main.ts). */
 export function applySeason(s: SeasonState): void {
   G.uSeasonA.value.set(s.green, s.dry, s.blossom, s.kash);
   G.uSeasonB.value.set(s.lily, s.flood, s.soilWet, s.salt);

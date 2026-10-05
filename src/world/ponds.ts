@@ -6,13 +6,22 @@ import { instanced, type Placement } from '../render/instancing';
 import { patchMaterial } from '../render/patch';
 import { PONDS, WETLANDS, terrainHeight, wetlandPoint, wetlandReach } from './geography';
 
-// Shapla (water lilies) on the village ponds and the small wetlands: notched pads lying flat in loose
+// Shapla (water lilies) on some of the village ponds and the small wetlands: notched pads lying flat in loose
 // rafts toward the edges, and here and there a white or pink flower held just above the water. The
 // wetlands also have reeds (nol-khagra) standing round their rims, swaying in the wind, and rafts of water
 // hyacinth (kochuripana) afloat on their open water. The lilies lie on each pond's own water (its level in
 // the map); the wetlands' hyacinth rides the season's. They are set only over beds that stay under water.
 
 const UP = new Vector3(0, 1, 0);
+
+/**
+ * The ponds shapla grows on: about one in three (a village's fish ponds are kept clear, its old and fallow
+ * ones lie under lilies) [মডেল], chosen once.
+ */
+export const LILY_PONDS = (() => {
+  const rng = new Rng(52);
+  return PONDS.filter(() => rng.next() < 0.35);
+})();
 
 /** A round pad with the lily's notch, its rim turned up a little. */
 function pad(): BufferGeometry {
@@ -148,7 +157,7 @@ export function buildPondLife(): Group {
   // middles stay wet through the dry months)
   // (`bed`: how far under the water's surface a bed must lie for lilies)
   const waters = [
-    ...PONDS.map((p) => ({ ...p, reach: 0.8, rafts: rng.int(3, 4), bed: 0.25, inside: (x: number, z: number) => Math.hypot(x - p.x, z - p.z) < p.r * 0.92 })),
+    ...LILY_PONDS.map((p) => ({ ...p, reach: 0.8, rafts: rng.int(3, 4), bed: 0.25, inside: (x: number, z: number) => Math.hypot(x - p.x, z - p.z) < p.r * 0.92 })),
     ...WETLANDS.map((w) => ({ ...w, level: 0, reach: 0.5, rafts: rng.int(6, 8), bed: 0.75, inside: (x: number, z: number) => wetlandReach(w, x, z) < 0.9 })),
   ];
   for (const p of waters) {

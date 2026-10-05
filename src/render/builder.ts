@@ -109,48 +109,6 @@ export function slab(b: MeshBuilder, cx: number, cy: number, cz: number, sx: num
   face([[-hx, -hy, -hz], [hx, -hy, -hz], [hx, -hy, hz], [-hx, -hy, hz]], [0, -1, 0], sx, sz);
 }
 
-const strutBasis = new Matrix4();
-const strutX = new Vector3();
-const strutY = new Vector3();
-const strutZ = new Vector3();
-
-/**
- * A square beam of side `w` (`h` deep, if given) from (ax, ay, az) to (bx, by, bz): girders, braces, conveyor
- * galleries. Its depth stays upright where it can (a level beam's top faces up); texture in metres over `tile`.
- */
-export function strut(b: MeshBuilder, ax: number, ay: number, az: number, bx: number, by: number, bz: number, w: number, c: RGB, h = w, tile = 3): void {
-  strutZ.set(bx - ax, by - ay, bz - az);
-  const len = strutZ.length();
-  if (len < 1e-4) return;
-  strutZ.divideScalar(len);
-  // across it, level; for an upright piece, along x
-  strutX.set(strutZ.z, 0, -strutZ.x);
-  if (strutX.lengthSq() < 1e-6) strutX.set(1, 0, 0);
-  strutX.normalize();
-  strutY.crossVectors(strutZ, strutX);
-  const hx = w / 2;
-  const hy = h / 2;
-  strutBasis.makeBasis(strutX, strutY, strutZ).setPosition((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2);
-  const corner = (x: number, y: number, z: number) => new Vector3(x, y, z).applyMatrix4(strutBasis);
-  const dir = (x: number, y: number, z: number) => new Vector3(x, y, z).transformDirection(strutBasis);
-  const L = len / 2;
-  const face = (k: readonly (readonly [number, number, number])[], n: readonly [number, number, number], u: number, v: number) => {
-    const nn = dir(n[0], n[1], n[2]);
-    const s = b.vertexCount;
-    b.vertex(corner(...k[0]), nn, 0, 0, c);
-    b.vertex(corner(...k[1]), nn, u / tile, 0, c);
-    b.vertex(corner(...k[2]), nn, u / tile, v / tile, c);
-    b.vertex(corner(...k[3]), nn, 0, v / tile, c);
-    b.quad(s, s + 1, s + 2, s + 3);
-  };
-  face([[-hx, hy, -L], [-hx, hy, L], [hx, hy, L], [hx, hy, -L]], [0, 1, 0], len, w);
-  face([[hx, -hy, -L], [hx, -hy, L], [-hx, -hy, L], [-hx, -hy, -L]], [0, -1, 0], len, w);
-  face([[hx, hy, -L], [hx, hy, L], [hx, -hy, L], [hx, -hy, -L]], [1, 0, 0], len, h);
-  face([[-hx, -hy, -L], [-hx, -hy, L], [-hx, hy, L], [-hx, hy, -L]], [-1, 0, 0], len, h);
-  face([[-hx, -hy, L], [hx, -hy, L], [hx, hy, L], [-hx, hy, L]], [0, 0, 1], w, h);
-  face([[hx, -hy, -L], [-hx, -hy, -L], [-hx, hy, -L], [hx, hy, -L]], [0, 0, -1], w, h);
-}
-
 const tmpT = new Vector3();
 const tmpN = new Vector3();
 const tmpB = new Vector3();

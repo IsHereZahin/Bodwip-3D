@@ -33,15 +33,6 @@ export function clockLabel(hour: number): string {
 const TITHI = ['প্রতিপদ', 'দ্বিতীয়া', 'তৃতীয়া', 'চতুর্থী', 'পঞ্চমী', 'ষষ্ঠী', 'সপ্তমী', 'অষ্টমী', 'নবমী', 'দশমী', 'একাদশী', 'দ্বাদশী', 'ত্রয়োদশী', 'চতুর্দশী'];
 
 /** The lunar day as a Bangla calendar names it, e.g. "কৃষ্ণপক্ষ · দ্বিতীয়া". */
-/**
- * The tide in words, from its current (`flow`: + ebbing, − flooding, as a share of a spring tide's strongest)
- * and the sea's level (m): rising, falling, or slack at high or low water.
- */
-export function tideLabel(flow: number, level: number): string {
-  if (Math.abs(flow) < 0.1) return level > 0 ? 'ভরা জোয়ার' : 'ভাটার শেষ';
-  return flow < 0 ? 'জোয়ার' : 'ভাটা';
-}
-
 export function tithiLabel(age: number): string {
   const n = Math.floor((age / SYNODIC_MONTH) * 30) % 30;
   if (n === 14) return 'পূর্ণিমা';

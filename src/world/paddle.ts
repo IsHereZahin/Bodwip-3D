@@ -9,8 +9,8 @@ import { smoothstep } from '../core/mathx';
 // power (1 his steady stroke), which the boat chooses as it goes (see boatPhysics.ts); a strong stroke
 // digs deeper, has him bend and sink further into it, and drives her harder.
 
-/** Seconds per stroke. */
-export const STROKE_SECONDS = 1.9;
+/** Seconds per stroke: an unhurried stroke, for a slow journey up the khal. */
+export const STROKE_SECONDS = 2.2;
 /** The part of each stroke the blade is in the water, pulling. */
 const PULL = 0.44;
 /** From the cross-grip at the top of the shaft to the middle of the blade, m. */
@@ -23,9 +23,9 @@ const EXIT_Z = -3.2;
 const BLADE_X = 1.08;
 const DEPTH = 0.3;
 /** The mean drive (N) that holds her at cruising speed against the water's drag; it comes in pulses. */
-export const MEAN_THRUST = 130;
+export const MEAN_THRUST = 89;
 /** Her speed through the water (m/s) at his steady stroke. */
-export const CRUISE = 1.49;
+export const CRUISE = 1.2;
 
 export const strokePhase = (t: number) => (((t / STROKE_SECONDS) % 1) + 1) % 1;
 

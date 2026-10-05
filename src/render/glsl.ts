@@ -160,6 +160,8 @@ vec3 underwater(vec3 col, vec3 wpos) {
 }
 
 // Aerial perspective: analytic exponential height fog plus a thin river mist that hugs the water
+// how quickly the land beyond the map's edges fades into the haze (per m beyond them): nearly gone 300 m out
+#define EDGE_HAZE 0.009
 vec3 applyAtmosphere(vec3 col, vec3 wpos) {
   vec3 ro = uCamPos;
   vec3 rd = wpos - ro;
@@ -188,10 +190,18 @@ vec3 applyAtmosphere(vec3 col, vec3 wpos) {
   float km = rd.y * 0.45;
   float banks = 0.35 + 1.3 * vnoise(wpos.xz * 0.005 + vec2(uTime * 0.004, uTime * 0.0025));
   float odM = uMist * banks * (abs(km) > 1e-5 ? (exp(-y0 * 0.45) - exp(-y1 * 0.45)) / km : dist * exp(-y0 * 0.45));
-  float od = odF + odM;
+  // the world is a small window of the land, the baked map (uLevelMap: its west and north edges, 1 / its
+  // extent): beyond its edges, where the edge cells only run on, the land fades into the haze
+  float odE = 0.0;
+  if (uLevelMap.z > 0.0) {
+    vec2 hi = uLevelMap.xy;
+    vec2 lo = hi - 1.0 / uLevelMap.zw;
+    odE = length(max(max(lo - wpos.xz, wpos.xz - hi), 0.0)) * EDGE_HAZE;
+  }
+  float od = odF + odM + odE;
   vec3 hc = hazeColor(rd);
   vec3 mc = hc * 1.06 + uGlow * 0.05;
-  vec3 fc = (hc * odF + mc * odM) / max(od, 1e-5);
+  vec3 fc = (hc * (odF + odE) + mc * odM) / max(od, 1e-5);
   return mix(col, fc, 1.0 - exp(-od));
 }
 `;

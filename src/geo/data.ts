@@ -1,6 +1,6 @@
 // The baked map (public/geo/, made by scripts/geo/bake.mjs) loaded before anything is built: this module
 // awaits its files at the top level, so everything that imports it (world/geography.ts and through it the
-// whole scene) can ask about the ground synchronously. ≈2 MB, deflated.
+// whole scene) can ask about the ground synchronously. ≈90 kB for this small window, deflated.
 //
 // The grid is 30 m on the ground, 10 m in the 1:3 world. Rows run north to south, columns west to east;
 // in the world x points west and z north (src/geo/project.ts), so a column further east lies at smaller x.
@@ -73,14 +73,13 @@ async function load() {
     const baked = manifest.layers[name].codes ?? {};
     for (const [k, v] of Object.entries(codes)) if (baked[k] !== v) throw new Error(`geo/manifest.json: ${name} code ${k} is ${baked[k]}, the scene expects ${v}`);
   }
-  const [terrain, kind, level, cover, canopy, vectors, channel, places, buildings] = await Promise.all([
+  const [terrain, kind, level, cover, canopy, vectors, places, buildings] = await Promise.all([
     inflated(manifest.layers.terrain.file),
     inflated(manifest.layers.kind.file),
     inflated(manifest.layers.level.file),
     inflated(manifest.layers.cover.file),
     inflated(manifest.layers.canopy.file),
     inflated(manifest.layers.vectors.file),
-    json<{ points: [number, number, number, number][] }>(manifest.layers.channel.file),
     json<(Omit<Place, 'world'> & { world: { x: number; z: number } })[]>(manifest.layers.places.file),
     inflated(manifest.layers.buildings.file),
   ]);
@@ -96,7 +95,6 @@ async function load() {
       towers: number[];
       nodes: { t: 'crane' | 'chimney' | 'wind_turbine'; mw?: number; p: [number, number] }[];
     },
-    channel: channel.points,
     places,
     buildings: new DataView(buildings),
   };
@@ -208,9 +206,6 @@ export const LAYERS = { terrain, kind, level, cover, canopy } as const;
 
 /** Mean low water at the satellite's passes (m, about MSL), how much the gauge's tide was scaled up, and its harmonic constants. */
 export const TIDE_BAKE = data.manifest.tide;
-
-/** The Moheshkhali channel's middle, mouth to Badarkhali, every 20 m of the world: [x, z, west half-width, east half-width]. */
-export const CHANNEL_POINTS: readonly (readonly [number, number, number, number])[] = data.channel;
 
 /** The landmarks (scripts/geo/places.mjs), with their world points. */
 export const PLACES: readonly Place[] = data.places.map((p) => ({ ...p, world: p.world }));

@@ -55,28 +55,6 @@ export const CHARACTERS = {
     hair: { proxy: 'hair/short04', tint: '#15100c' },
     wear: ['sando', 'lungi'],
   },
-  // the fishermen: older, thinner, greying
-  jele: {
-    macro: { gender: 1, age: 0.78, muscle: 0.46, weight: 0.2, height: 0.4, race: { caucasian: 0.5, asian: 0.22, african: 0.28 } },
-    height: 1.62,
-    skin: { light: 'skins/old_asian_male/old_lightskinned_male_diffuse2.png', dark: 'skins/old_african_male/old_darkskinned_male_diffuse.png', tone: '#7d5036', stubble: 0.75 },
-    eyes: 'eyes/materials/brown_eye.png',
-    brows: 'eyebrows/eyebrow010',
-    lashes: 'eyelashes/eyelashes01',
-    hair: { proxy: 'hair/short02', tint: '#3a3632' },
-    wear: ['sando', 'lungi'],
-  },
-  // someone on foot (the viewer's walker): a young villager in a fatua and a long lungi
-  pathik: {
-    macro: { gender: 1, age: 0.54, muscle: 0.55, weight: 0.3, height: 0.5, race: { caucasian: 0.58, asian: 0.24, african: 0.18 } },
-    height: 1.66,
-    skin: { light: 'skins/middleage_asian_male/middleage_lightskinned_male_diffuse2.png', dark: 'skins/middleage_african_male/middleage_darkskinned_male_diffuse.png', tone: '#946243', stubble: 0.45 },
-    eyes: 'eyes/materials/brown_eye.png',
-    brows: 'eyebrows/eyebrow001',
-    lashes: 'eyelashes/eyelashes01',
-    hair: { proxy: 'hair/short02', tint: '#110c09' },
-    wear: ['fatua', 'lungi'],
-  },
   // the girl on the bridge: a slight young woman
   meye: {
     macro: { gender: 0, age: 0.5, muscle: 0.42, weight: 0.4, height: 0.4, race: BENGALI },

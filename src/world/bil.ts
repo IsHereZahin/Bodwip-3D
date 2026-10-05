@@ -28,7 +28,8 @@ import { instanced, type Placement } from '../render/instancing';
 import { patchMaterial, type PatchOptions } from '../render/patch';
 import { lilyCarpetTexture } from '../render/textures';
 import type { BoatBody } from './boatPhysics';
-import { BIL, bilDepth, bilReach, riverX, routeGap } from './geography';
+import { BIL, bilDepth, bilReach, routeGap } from './geography';
+import { bilLocal, bilPoint } from './khal';
 import { HERO_HULL, heroBeamAtWater } from './hull';
 import { SHELTERED, waveHeightGlsl, waveSlopeGlsl } from './waves';
 
@@ -356,13 +357,14 @@ class Egret {
   }
 }
 
-/** How thickly the painted rafts cover (z, u): patchy, in water deep enough, clear of the boat's way. */
-function carpetCover(x: number, z: number, u: number): number {
-  const e = bilReach(z, u);
+/** How thickly the painted rafts cover (x, z): patchy, in water deep enough, clear of the boat's way. */
+function carpetCover(x: number, z: number): number {
+  const e = bilReach(x, z);
   if (e > 0.99) return 0;
+  const { a, c } = bilLocal(x, z);
   return (
-    smoothstep(0.38, 0.52, fbm(z * 0.028 + 5, u * 0.028, 3, 91)) *
-    smoothstep(0.2, 0.45, bilDepth(z, u)) *
+    smoothstep(0.38, 0.52, fbm(a * 0.028 + 5, c * 0.028, 3, 91)) *
+    smoothstep(0.2, 0.45, bilDepth(x, z)) *
     smoothstep(0.985, 0.9, e) *
     smoothstep(9, 16, routeGap(x, z))
   );
@@ -371,8 +373,9 @@ function carpetCover(x: number, z: number, u: number): number {
 /** A mesh over the bil whose painted pads show where `carpetCover` says; its colours' alpha carries the cover. */
 function carpetGeometry(): BufferGeometry {
   const STEP = 3;
-  const z0 = BIL.z - BIL.halfLen * 1.35;
-  const u0 = BIL.u - BIL.halfWid * 1.4;
+  // a grid along the bil's long axis (j) and across it (i)
+  const a0 = -BIL.halfLen * 1.35;
+  const c0 = -BIL.halfWid * 1.4;
   const nz = Math.ceil((BIL.halfLen * 2.7) / STEP) + 1;
   const nu = Math.ceil((BIL.halfWid * 2.8) / STEP) + 1;
   const pos = new Float32Array(nz * nu * 3);
@@ -382,14 +385,11 @@ function carpetGeometry(): BufferGeometry {
   const bed = new Float32Array(nz * nu);
   const cover = new Float32Array(nz * nu);
   for (let j = 0; j < nz; j++) {
-    const z = z0 + j * STEP;
-    const cx = riverX(z);
     for (let i = 0; i < nu; i++) {
-      const u = u0 + i * STEP;
-      const x = cx + u;
+      const { x, z } = bilPoint(a0 + j * STEP, c0 + i * STEP);
       const k = j * nu + i;
-      cover[k] = carpetCover(x, z, u);
-      bed[k] = bilDepth(z, u);
+      cover[k] = carpetCover(x, z);
+      bed[k] = bilDepth(x, z);
       pos.set([x, 0.022, z], k * 3);
       uv.set([x / 6, z / 6], k * 2);
       col.set([1, 1, 1, cover[k]], k * 4);
@@ -523,11 +523,9 @@ export class Bil {
       let cz = 0;
       let found = false;
       for (let tries = 0; tries < 30 && !found; tries++) {
-        const z = BIL.z + rng.range(-0.95, 0.95) * BIL.halfLen;
-        const u = BIL.u + rng.range(-0.95, 0.95) * BIL.halfWid;
-        const x = riverX(z) + u;
-        const d = bilDepth(z, u);
-        if (bilReach(z, u) < 0.93 && d > 0.35 && d < 2.1 && routeGap(x, z) > 2.5) {
+        const { x, z } = bilPoint(rng.range(-0.95, 0.95) * BIL.halfLen, rng.range(-0.95, 0.95) * BIL.halfWid);
+        const d = bilDepth(x, z);
+        if (bilReach(x, z) < 0.93 && d > 0.35 && d < 2.1 && routeGap(x, z) > 2.5) {
           cx = x;
           cz = z;
           found = true;
@@ -544,8 +542,7 @@ export class Bil {
         const a = k * 2.39996 + turn;
         const x = cx + Math.cos(a) * rr + rng.range(-0.12, 0.12);
         const z = cz + Math.sin(a) * rr * stretch + rng.range(-0.12, 0.12);
-        const u = x - riverX(z);
-        if (bilReach(z, u) > 0.985 || bilDepth(z, u) < 0.12) continue;
+        if (bilReach(x, z) > 0.985 || bilDepth(x, z) < 0.12) continue;
         // thinner along the boat's way, where boats have kept a lane open
         const g = routeGap(x, z);
         if (g < 1.4 || (g < 4.5 && rng.next() > smoothstep(1.4, 4.5, g))) continue;
@@ -557,10 +554,8 @@ export class Bil {
     }
     // flowers and buds held up out of the painted rafts farther off
     for (let k = 0; k < 2400; k++) {
-      const z = BIL.z + rng.range(-1, 1) * BIL.halfLen;
-      const u = BIL.u + rng.range(-1.3, 1.3) * BIL.halfWid;
-      const x = riverX(z) + u;
-      if (carpetCover(x, z, u) < 0.7 || rng.next() < 0.6) continue;
+      const { x, z } = bilPoint(rng.range(-1, 1) * BIL.halfLen, rng.range(-1.3, 1.3) * BIL.halfWid);
+      if (carpetCover(x, z) < 0.7 || rng.next() < 0.6) continue;
       if (rng.next() < 0.8) add(x, z, flowerKind(), rng.range(1.0, 1.35), 0.15);
       else add(x, z, BUD, rng.range(0.9, 1.3), 0.15);
     }
@@ -590,7 +585,7 @@ export class Bil {
       this.az[i] = this.pz[i] = zs[src];
       this.meshOf[i] = kind;
       this.slot[i] = counts[kind]++;
-      beds[kind].push(bilDepth(zs[src], xs[src] - riverX(zs[src])));
+      beds[kind].push(bilDepth(xs[src], zs[src]));
       this.scale[i] = sizes[src];
       this.slack[i] = slacks[src];
       const pad = kind === PAD_A || kind === PAD_B;
@@ -646,13 +641,13 @@ export class Bil {
     const reedShapes = [0, 1, 2].map((i) => reedClump(new Rng(500 + i)));
     const reeds: Placement[][] = reedShapes.map(() => []);
     for (let k = 0; k < 9000 && reeds.reduce((a, l) => a + l.length, 0) < 420; k++) {
-      const z = BIL.z + rng.range(-1.1, 1.1) * BIL.halfLen;
-      const u = BIL.u + rng.range(-1.4, 1.4) * BIL.halfWid;
-      const e = bilReach(z, u);
-      if (e < 0.88 || e > 1.03 || fbm(z * 0.02, u * 0.02, 2, 97) < 0.45) continue;
-      const x = riverX(z) + u;
+      const la = rng.range(-1.1, 1.1) * BIL.halfLen;
+      const lc = rng.range(-1.4, 1.4) * BIL.halfWid;
+      const { x, z } = bilPoint(la, lc);
+      const e = bilReach(x, z);
+      if (e < 0.88 || e > 1.03 || fbm(la * 0.02, lc * 0.02, 2, 97) < 0.45) continue;
       if (routeGap(x, z) < 12) continue;
-      reeds[rng.int(0, reeds.length - 1)].push({ x, y: BIL.level - bilDepth(z, u) * 0.5, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.8, 1.2) });
+      reeds[rng.int(0, reeds.length - 1)].push({ x, y: BIL.level - bilDepth(x, z) * 0.5, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.8, 1.2) });
     }
     const reedMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.7, side: DoubleSide }), {
       wind: 0.12,
@@ -663,14 +658,11 @@ export class Bil {
 
     const leaves: Placement[] = [];
     const blooms: Placement[] = [];
-    const lotusZ = BIL.z - 140;
-    const lotusU = BIL.u - 60;
+    // the lotus stand to one side of the boat's way, a little in from where the khal comes in
     for (let k = 0; k < 900 && leaves.length < 160; k++) {
-      const z = lotusZ + rng.range(-1, 1) * 16;
-      const u = lotusU + rng.range(-1, 1) * 11;
-      const d = bilDepth(z, u);
-      if (d < 0.4 || bilReach(z, u) > 0.95) continue;
-      const x = riverX(z) + u;
+      const { x, z } = bilPoint(-40 + rng.range(-1, 1) * 16, -42 + rng.range(-1, 1) * 11);
+      const d = bilDepth(x, z);
+      if (d < 0.4 || bilReach(x, z) > 0.95) continue;
       if (routeGap(x, z) < 14) continue;
       if (rng.next() < 0.13) blooms.push({ x, y: BIL.level + rng.range(0.6, 0.95), z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.9, 1.2) });
       else leaves.push({ x, y: BIL.level + rng.range(0.12, 0.6), z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.24, 0.4), tx: rng.range(-0.25, 0.25), tz: rng.range(-0.25, 0.25) });
@@ -705,16 +697,15 @@ export class Bil {
     const rng = new Rng(91);
     for (let k = 0; k < 160 && this.spots.length < 18; k++) {
       const a = rng.range(0, Math.PI * 2);
-      const dz = Math.cos(a) * BIL.halfLen;
-      const du = Math.sin(a) * BIL.halfWid;
-      const edge = bilReach(BIL.z + dz, BIL.u + du);
+      const da = Math.cos(a) * BIL.halfLen;
+      const dc = Math.sin(a) * BIL.halfWid;
+      const rim = bilPoint(da, dc);
+      const edge = bilReach(rim.x, rim.z);
       for (let e = 1.3; e > 0.6; e -= 0.03) {
-        const z = BIL.z + (dz * e) / edge;
-        const u = BIL.u + (du * e) / edge;
+        const { x, z } = bilPoint((da * e) / edge, (dc * e) / edge);
         // the bed here, below the bil's water (its own bed, or the marsh beyond its edge)
-        const bed = e < 1 ? -bilDepth(z, u) : -0.04 + 0.3 * (e - 1);
+        const bed = e < 1 ? -bilDepth(x, z) : -0.04 + 0.3 * (e - 1);
         if (-bed < 0.06 || -bed > 0.32) continue;
-        const x = riverX(z) + u;
         if (routeGap(x, z) >= 8) this.spots.push({ x, y: BIL.level + bed, z, busy: false });
         break;
       }
@@ -726,7 +717,7 @@ export class Bil {
   update(dt: number, t: number, boat: BoatBody, blade: Vector3, bladeWet: number): void {
     this.wash.set(boat.pos.x, boat.pos.z, Math.max(0, boat.speed), 0);
     const h = Math.min(dt, 1 / 30);
-    const near = bilReach(boat.pos.z, boat.pos.x - riverX(boat.pos.z)) < 1.15;
+    const near = bilReach(boat.pos.x, boat.pos.z) < 1.15;
     if (h > 0 && (near || this.awakeList.length)) this.simulate(h, boat, blade, bladeWet > 0.3, near);
     for (const egret of this.egrets) egret.update(dt, t, boat.pos, boat.speed, this.spots, this.rng);
   }

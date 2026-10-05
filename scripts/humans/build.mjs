@@ -593,43 +593,6 @@ for (const [name, spec] of Object.entries(CHARACTERS)) {
         },
         { top: L.chest[1] + 0.02, bottom: L.hip[1] + 0.02, back: true },
       );
-    } else if (garment === 'fatua') {
-      // a fatua: a loose cotton shirt to the waist, half sleeves, a round neck
-      const sleeve = (i) => {
-        const side = P[i * 3] > 0 ? 0 : 1;
-        const a = L.gh[side];
-        const b = L.elbow[side];
-        const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-        const len = Math.hypot(...ab);
-        const d = [P[i * 3] - a[0], P[i * 3 + 1] - a[1], P[i * 3 + 2] - a[2]];
-        return { t: (d[0] * ab[0] + d[1] * ab[1] + d[2] * ab[2]) / (len * len), len };
-      };
-      // its hem over the lungi's top (rolled at the waist, world/walker.ts), above the hips' fullness
-      const hem = L.pelvis[1] + 0.03;
-      shell(
-        'fatua',
-        (i) => {
-          const c = cat(i);
-          const p = pos(i);
-          const { t, len } = sleeve(i);
-          const arm = smooth(0.2, 0.6, arms(c));
-          return Math.min(
-            p[1] - hem,
-            N[1] + 0.03 - p[1],
-            outside(p, [0, N[1] + 0.012, N[2] + 0.025], 0.064, 0.075, 0.1, 0.11),
-            0.1 * (1 - arm) + (0.62 - t) * len * arm,
-            (0.5 - c.head) * 0.1,
-          );
-        },
-        (i) => {
-          const c = cat(i);
-          const y = P[i * 3 + 1];
-          const arm = smooth(0.2, 0.6, arms(c));
-          // loose, the more so toward its hem, which stands off the lungi's top
-          return 0.01 + 0.024 * smooth(L.chest[1], hem, y) * (1 - arm) + arm * 0.016 * smooth(0.1, 0.62, sleeve(i).t);
-        },
-        { top: L.chest[1] + 0.03, bottom: hem - 0.02, back: true },
-      );
     } else if (garment === 'salwar') {
       // loose trousers from the drawstring at the waist (under the kameez) to the cuffs gathered at the ankles
       const cuff = L.ankle[1] + 0.03;

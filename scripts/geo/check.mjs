@@ -149,12 +149,6 @@ function drawLines(rgb, vectors) {
       for (let s = 0; s <= steps; s++) plot(e0 + ((e1 - e0) * s) / steps, n0 + ((n1 - n0) * s) / steps, col);
     }
   }
-  // the channel's baked centre line, and its banks either side
-  for (const [x, z, west, east] of channel.points) {
-    plot(-x * MAP_SCALE, z * MAP_SCALE, [0, 255, 0]);
-    plot(-(x + west) * MAP_SCALE, z * MAP_SCALE, [0, 160, 0]);
-    plot(-(x - east) * MAP_SCALE, z * MAP_SCALE, [0, 160, 0]);
-  }
   for (const p of PLACES) {
     const q = toGround(p.lat, p.lon);
     for (let d = -3; d <= 3; d++) {
@@ -197,7 +191,6 @@ function crop(rgb, lat, lon, size, zoom) {
 }
 
 const vectors = JSON.parse(inflateRawSync(await readFile(`${GEO}vectors.bin`)).toString());
-const channel = JSON.parse(await readFile(`${GEO}channel.json`, 'utf8'));
 const shore = await shoreline();
 const marks = landmarks();
 const satellite = await sentinelOnGrid();
@@ -206,11 +199,9 @@ drawLines(satellite, vectors);
 drawLines(relief, vectors);
 await writeFile(`${VIEW}overlay-satellite.png`, encodePng(satellite, W, H, 3));
 await writeFile(`${VIEW}overlay-terrain.png`, encodePng(relief, W, H, 3));
-for (const [name, lat, lon, size, zoom] of [
-  ['gorakghata', 21.522, 91.972, 4000, 4],
-  ['matarbari', 21.7, 91.875, 6000, 3],
-  ['sonadia', 21.487, 91.88, 7000, 2],
-]) {
+// the khal through Bara Moheshkhali, from below the old bridge to the bil at its head
+const bridge = PLACES.find((p) => p.id === 'arch-bridge');
+for (const [name, lat, lon, size, zoom] of [['khal', bridge.lat, bridge.lon, 3000, 4]]) {
   await writeFile(`${VIEW}${name}-satellite.png`, crop(satellite, lat, lon, size, zoom));
   await writeFile(`${VIEW}${name}-terrain.png`, crop(relief, lat, lon, size, zoom));
 }

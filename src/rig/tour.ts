@@ -1,73 +1,36 @@
 import { Vector3 } from 'three';
-import { G } from '../core/globals';
 import { angleDelta, lerp } from '../core/mathx';
-import { canopyAt, place } from '../geo/data';
-import { plainZ } from '../geo/project';
-import {
-  ADINATH,
-  BIL,
-  BRIDGE,
-  GORAKGHATA,
-  JOURNEY_Z0,
-  JOURNEY_Z1,
-  PONDS,
-  VILLAGES,
-  bankAt,
-  edgeHalfWidth,
-  halfWidth,
-  khalPoint,
-  riverX,
-  saltPan,
-  terrainHeight,
-  waterLevelAt,
-} from '../world/geography';
-import { stairAt } from '../world/moheshkhali';
-import { PLANT } from '../world/plantSite';
-import { berthPoint } from '../world/portSite';
-import { onRoad } from '../world/roads';
+import { BUILDINGS, canopyAt } from '../geo/data';
+import { BIL, JOURNEY, KHAL_LEVEL, khalAt, khalFrame, khalHalfWidth, terrainHeight } from '../world/geography';
+import { bilPoint } from '../world/khal';
+import { LILY_PONDS } from '../world/ponds';
 import { groundAt } from '../world/terrain';
-import { kashStretch } from '../world/vegetation';
-import { GHATS } from '../world/village';
+import { kashStand } from '../world/vegetation';
+import type { Ghat } from '../world/village';
 import type { Scene, Stage } from './director';
 
-// The film tour: a year and a day on the Moheshkhali channel, as a short documentary would show it. A winter dawn in
-// mist and the boatman at sunrise, mustard in the fields and a village ghat; spring's blossom and the
-// narrows; summer's fishermen at their nets, a khal at golden hour and a nor'wester; the monsoon's rain and
-// its flooded fields; under the old bridge into the shapla bil, a wetland and the kash of autumn; the golden harvest;
-// Adinath hill over Gorakghata in the morning, the island's salt fields under its hills, Sonadia and the estuary in
-// winter; and the evening on the river: sunset, moonrise and night.
-// Each scene sets its own season, hour and weather (director.ts), so every part of the world is shown at
-// its best, wherever the viewer's boat happens to be.
+// The film tour: a year and a day on the khal, as a short documentary would show it. A winter dawn in mist and
+// the boatman at sunrise, mustard in the fields and a village ghat; spring's blossom and a nor'wester; the
+// monsoon's rain and its flooded fields; under the old bridge and out into the shapla bil, a village pond and
+// the kash of autumn; the golden harvest; and the evening on the khal: sunset, moonrise and night.
+// Each scene sets its own season, hour and weather (director.ts). The khal is narrow and its banks are
+// wooded, so the low shots look along it, from its water; the sun and the moon are framed by placing the
+// boat where the khal runs toward them.
 
-const UP = new Vector3(0, 1, 0);
+/** The journey's fraction at `s` m along the khal (for placing the boat). */
+const journeyAt = (s: number) => s / JOURNEY.length;
 
-/** The journey's fraction at z (for placing the boat). */
-const journeyAt = (z: number) => (z - JOURNEY_Z0) / (JOURNEY_Z1 - JOURNEY_Z0);
-/** Height above the water as it stands now. */
-const onWater = (h: number) => G.uWaterLevel.value + h;
-/** A point over the bridge's khal `d` m along it from the bridge, `side` m to its right, `up` m above its water. */
-function onKhal(d: number, up: number, side: number, out: Vector3): Vector3 {
-  const k = khalPoint(d);
-  const level = waterLevelAt(k.x, k.z);
-  return out.set(k.x + Math.cos(k.heading) * side, (Number.isFinite(level) ? level : BRIDGE.water) + up, k.z - Math.sin(k.heading) * side);
+/** A point `side` m to the left of the khal's middle (going up it), `s` m along it, `up` m above its water. */
+function onKhal(s: number, side: number, up: number, out: Vector3): Vector3 {
+  const p = khalAt(s);
+  return out.set(p.x + Math.cos(p.heading) * side, KHAL_LEVEL + up, p.z - Math.sin(p.heading) * side);
 }
-/** A point across the river at z: `u` from the centre line. */
-const across = (z: number, u: number, y: number, out: Vector3) => out.set(riverX(z) + u, y, z);
+
+/** How far along the khal a point is (m). */
+const alongOf = (p: Vector3) => khalFrame(p.x, p.z)?.s ?? 0;
 
 const tmpA = new Vector3();
 const tmpB = new Vector3();
-
-/** Off to the side by this much (rad): where the sun or moon sits in a shot of it, beside the boat, not behind her. */
-const ASIDE = 0.45;
-
-/**
- * The bearing to look along so that a body in direction `dir` sits ASIDE off the middle of the frame,
- * turned toward the boat's way ahead (`course`), so the river ahead stays in the shot.
- */
-function besideBearing(dir: Vector3, course: number): number {
-  const bearing = Math.atan2(dir.x, dir.z);
-  return bearing - Math.sign(angleDelta(course, bearing)) * ASIDE;
-}
 
 /** A point relative to the boat: `a` m ahead, `s` m to her starboard (+x), `h` m above the water. */
 function rel(stage: Stage, a: number, s: number, h: number, out: Vector3): Vector3 {
@@ -76,143 +39,113 @@ function rel(stage: Stage, a: number, s: number, h: number, out: Vector3): Vecto
     .copy(stage.boatPos)
     .addScaledVector(tmpA.set(Math.sin(c), 0, Math.cos(c)), a)
     .addScaledVector(tmpB.set(Math.cos(c), 0, -Math.sin(c)), s)
-    .setY(onWater(h));
+    .setY(KHAL_LEVEL + h);
 }
 
 /**
- * A stretch of paddy fields to fly over: on `side`, as near `z0` along the channel as there is one, a 60 m run
- * parallel to it all in field plots (the fields lie behind the flats, the mangroves and the ghers, up to
- * 1.5 km inland). Returns its start, and its end downstream.
+ * Where on the khal (m along it, from its start to its head) it runs most nearly toward `dir` turned `aside`
+ * rad off it, so a camera behind a boat there, looking up the khal, has the sun or the moon in the frame off to
+ * one side of her.
  */
-function fieldRun(z0: number, side: 1 | -1): { from: Vector3; to: Vector3 } {
-  for (let k = 0; k < 240; k++) {
-    const z = z0 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 25;
-    for (let inland = 70; inland <= 1500; inland += 16) {
-      const at = (zz: number) => riverX(zz) + side * (edgeHalfWidth(zz, side) + inland);
-      const ok = [0, 20, 40, 60].every((d) => groundAt(at(z - d), z - d).zone > 0.85);
-      if (ok) return { from: new Vector3(at(z), 0, z), to: new Vector3(at(z - 60), 0, z - 60) };
-    }
+function facing(dir: Vector3, aside: number): number {
+  const bearing = Math.atan2(dir.x, dir.z);
+  let best = 40;
+  let err = Infinity;
+  for (let s = 40; s < JOURNEY.head - 60; s += 4) {
+    const h = khalAt(s).heading;
+    const e = Math.min(Math.abs(angleDelta(h, bearing - aside)), Math.abs(angleDelta(h, bearing + aside)));
+    // and the khal keeps on that way for a while, so the boat stays in the shot
+    const on = Math.abs(angleDelta(h, khalAt(s + 30).heading));
+    if (e + on < err) (err = e + on), (best = s);
   }
-  const z = z0 - 300;
-  return { from: new Vector3(riverX(z) + side * 150, 0, z), to: new Vector3(riverX(z - 60) + side * 150, 0, z - 60) };
+  return best;
 }
 
-/** Salt pans to crane over: a run of 50 m all in pans, on `side`, as near `z0` along the channel as there is one. */
-function saltRun(z0: number, side: 1 | -1): { from: Vector3; to: Vector3 } {
-  for (let k = 0; k < 300; k++) {
-    const z = z0 + (k % 2 ? 1 : -1) * Math.ceil(k / 2) * 20;
-    for (let inland = 60; inland <= 1500; inland += 20) {
-      const at = (zz: number) => riverX(zz) + side * (edgeHalfWidth(zz, side) + inland);
-      if ([0, 25, 50].every((d) => saltPan(at(z - d), z - d) > 0.95)) return { from: new Vector3(at(z), 0, z), to: new Vector3(at(z - 50), 0, z - 50) };
-    }
-  }
-  const z = z0 - 100;
-  return { from: new Vector3(riverX(z) + side * 300, 0, z), to: new Vector3(riverX(z - 50) + side * 300, 0, z - 50) };
+/** How many buildings stand within `r` m of (x, z) (their footprints reaching in). */
+function buildingsNear(x: number, z: number, r: number): number {
+  let n = 0;
+  for (let i = 0; i < BUILDINGS.count; i++) if (Math.hypot(BUILDINGS.x[i] - x, BUILDINGS.z[i] - z) < r + BUILDINGS.l[i] / 2) n++;
+  return n;
 }
 
 /**
- * Over the ground along a run (above whatever grows there), looking ahead and a touch toward the river;
- * `back` flies it the other way (to keep the sun behind the camera).
+ * Where the paddy fields come down to the khal: within 400 m along it of `s0`, the bank (`s`, `side`) with the
+ * most open plots (no trees over them) just beyond its levee, 12–70 m out, over 60 m of it, and the fewest
+ * buildings round them (the film looks across them from the khal's water, the village's houses beyond).
  */
-function glide(run: { from: Vector3; to: Vector3 }, side: 1 | -1, height: number, u: number, pos: Vector3, look: Vector3, back = false): void {
-  const from = back ? run.to : run.from;
-  const to = back ? run.from : run.to;
-  pos.lerpVectors(from, to, u);
-  pos.y = Math.max(terrainHeight(pos.x, pos.z), waterLevelAt(pos.x, pos.z)) + height;
-  const dir = tmpA.subVectors(to, from).normalize();
-  look.copy(pos).addScaledVector(dir, 45).addScaledVector(tmpB.set(-side, 0, 0), 14);
-  look.y = pos.y - height * 0.7;
-}
-
-// places found once, at load (deterministic); the tour is re-authored for the real map later (plan's step L),
-// these keep each scene on a real place meanwhile
-const MUSTARD = fieldRun(plainZ(4200), -1);
-const FLOODED = fieldRun(plainZ(2600), -1);
-const HARVEST = fieldRun(plainZ(1800), -1);
-const SALT = saltRun(plainZ(1200), 1);
-/** A stretch of the island's bank under trees (the satellites' canopy) for spring's blossom, south from `z0`. */
-const BLOSSOM_Z = (() => {
-  for (let z = plainZ(2400); z > 0; z -= 10) if (canopyAt(riverX(z) + edgeHalfWidth(z, 1) + 18, z).cover > 0.5) return z;
-  return 2400;
-})();
-const VILLAGE_GHAT = GHATS[Math.min(2, GHATS.length - 1)];
-const STORM_VILLAGE = VILLAGES[Math.min(1, VILLAGES.length - 1)];
-/** A village pond to walk round in the morning (in place of the made-up wetlands); the bil if there is none. */
-const POND = PONDS[0] ?? { x: riverX(BIL.z) + BIL.u, z: BIL.z, r: BIL.halfWid, level: BIL.level };
-const SONADIA_BEACH = place('sonadia-beach').world;
-const TEMPLE = place('adinath-temple').world;
-/** Where the film watches the red crabs: Sonadia's beach, among their burrows (crabs.ts `habitat`). */
-const CRAB_BEACH = (() => {
-  const p = SONADIA_BEACH;
-  return { x: p.x, y: terrainHeight(p.x, p.z), z: p.z };
-})();
-/** Gorakghata's jetty: its land end, the run out to its head, and the unit normal to its north side. */
-const JETTY = (() => {
-  const land = place('gorakghata-jetty-land').world;
-  const head = place('gorakghata-jetty-head').world;
-  const ax = head.x - land.x;
-  const az = head.z - land.z;
-  const len = Math.hypot(ax, az);
-  return { land, ax, az, nx: az / len, nz: -ax / len };
-})();
-
-/**
- * A stand of kash on the channel's bank for the film: the first along the journey that runs at least 40 m on a
- * bank whose top is wide (10 m of it above the spring tides and off the roads, where vegetation.ts plants it), the
- * camera a few metres in from the edge.
- */
-const KASH = (() => {
-  const top = (h: number) => h >= 1.9 && h <= 3.5;
-  for (let z = JOURNEY_Z0 - 400; z > JOURNEY_Z1 + 400; z -= 10) {
+function fieldBank(s0: number): { s: number; side: 1 | -1 } {
+  const at = (s: number, side: number, out: number) => {
+    const p = khalAt(s);
+    return { x: p.x + Math.cos(p.heading) * side * out, z: p.z - Math.sin(p.heading) * side * out };
+  };
+  let best = { score: -Infinity, s: s0, side: 1 as 1 | -1 };
+  for (let s = Math.max(20, s0 - 400); s <= Math.min(JOURNEY.head - 60, s0 + 400); s += 10) {
     for (const side of [1, -1] as const) {
-      if (![0, 10, 20, 30, 40].every((d) => kashStretch(z - d, side))) continue;
-      const bank = bankAt(z, side, 1.9);
-      if (!bank || bank.d <= 0 || bank.d > halfWidth(z) * 2) continue;
-      const ux = (bank.x - riverX(z)) / bank.d;
-      const uz = (bank.z - z) / bank.d;
-      let wide = 0;
-      for (let d = 0; d < 14; d++) {
-        const x = bank.x + ux * d;
-        const zz = bank.z + uz * d;
-        if (top(terrainHeight(x, zz)) && !onRoad(x, zz, 1.5)) wide++;
+      let score = 0;
+      for (const d of [0, 15, 30, 45, 60]) {
+        for (let out = khalHalfWidth(s + d) + 12; out <= 70; out += 8) {
+          const p = at(s + d, side, out);
+          if (groundAt(p.x, p.z).zone > 0.85 && canopyAt(p.x, p.z).cover < 0.15) score++;
+        }
       }
-      if (wide < 10) continue;
-      const x = bank.x + ux * 4;
-      const zz = bank.z + uz * 4;
-      return { x, y: terrainHeight(x, zz), z: zz, ux, uz };
+      const view = at(s + 40, side, 70);
+      score -= 4 * buildingsNear(view.x, view.z, 90);
+      if (score > best.score) best = { score, s, side };
     }
   }
-  return { x: riverX(0), y: G.uWaterLevel.value, z: 0, ux: 1, uz: 0 };
-})();
-const SONADIA = place('sonadia').world;
+  return best;
+}
 
-export function tourScenes(): Scene[] {
+/** Low over the khal by the fields' bank, drifting up it and looking across the plots beyond the levee. */
+function acrossFields(bank: { s: number; side: 1 | -1 }, height: number, u: number, pos: Vector3, look: Vector3): void {
+  onKhal(bank.s + lerp(0, 18, u), -bank.side * 2, height, pos);
+  onKhal(bank.s + 40, bank.side * (khalHalfWidth(bank.s + 40) + 35), 0.6, look);
+}
+
+// places found once, at load (deterministic)
+/** The fields the film comes back to through the year: mustard in winter, the aman planted in the rains' water, ripe in Hemanta. */
+const FIELDS = fieldBank(JOURNEY.bridge + 160);
+/** A stretch of the khal's bank under trees (the satellites' canopy) for spring's blossom. */
+const BLOSSOM = (() => {
+  for (let s = JOURNEY.bridge + 60; s < JOURNEY.head - 60; s += 6) {
+    for (const side of [1, -1] as const) {
+      const p = khalAt(s);
+      const out = khalHalfWidth(s) + 14;
+      if (canopyAt(p.x + Math.cos(p.heading) * side * out, p.z - Math.sin(p.heading) * side * out).cover > 0.5) return { s, side };
+    }
+  }
+  return { s: JOURNEY.bridge + 120, side: 1 as const };
+})();
+/** A village pond for a morning: the widest with lilies within 200 m of the khal; the bil if there is none. */
+const POND = LILY_PONDS.filter((p) => (khalFrame(p.x, p.z)?.d ?? Infinity) < 200).sort((a, b) => b.r - a.r)[0] ?? { x: BIL.x, z: BIL.z, r: BIL.halfWid, level: BIL.level };
+
+/** The film's scenes; `ghats` are the village's (world/village.ts planGhats). */
+export function tourScenes(ghats: readonly Ghat[]): Scene[] {
   // per-scene choices made as each scene opens
   const a = new Vector3();
-  const b = new Vector3();
-  const c = new Vector3();
-  let bearing = 0;
+  const ghat = ghats[Math.min(1, ghats.length - 1)] ?? { s: JOURNEY.bridge + 90, side: 1 as const };
+  const stormGhat = ghats[Math.min(2, ghats.length - 1)] ?? ghat;
 
   return [
     {
       caption: 'শীতের ভোর',
       seconds: 15,
       world: { day: 14, hour: { at: 'sunrise', offset: 0 }, weather: 'clear', wind: 0.2 },
-      journey: journeyAt(60),
+      journey: journeyAt(40),
       begin: (s) => s.birds(s.boatPos, s.boatCourse + Math.PI),
-      // down out of the sky over the misty river onto the boat coming down it, the sunrise behind her
+      // down out of the sky over the misty khal onto the boat coming up it
       pose: (u, s, pos, look) => {
-        rel(s, lerp(170, 26, u), lerp(42, 13, u), lerp(52, 6, u), pos);
-        look.lerpVectors(rel(s, -260, 0, 14, a), rel(s, 0, 0, 1.4, b), Math.pow(u, 0.8));
+        onKhal(alongOf(s.boatPos) + lerp(70, 22, u), 0, lerp(30, 3.2, u), pos);
+        rel(s, 0, 0, lerp(0.4, 1.4, u), look);
       },
     },
     {
       caption: 'মাঝি',
       seconds: 12,
       world: { day: 14, hour: { at: 'sunrise', offset: 0.08 }, weather: 'clear', wind: 0.2 },
-      // close beside the boatman as he paddles, the low sun behind him
+      // close beside the boatman as he paddles
       pose: (u, s, pos, look) => {
-        rel(s, -7, lerp(3.6, -0.8, u), 1.6, pos);
+        rel(s, -7, lerp(2.6, -0.8, u), 1.6, pos);
         rel(s, -2.8, 0, 1.55, look).lerp(rel(s, 12, 0, 2, a), 0.2);
       },
     },
@@ -220,165 +153,81 @@ export function tourScenes(): Scene[] {
       caption: 'সরিষার মাঠ',
       seconds: 12,
       world: { day: 20, hour: 8.6, weather: 'clear', wind: 0.5 },
-      pose: (u, _s, pos, look) => glide(MUSTARD, 1, 7, u, pos, look),
+      pose: (u, _s, pos, look) => acrossFields(FIELDS, 2.6, u, pos, look),
     },
     {
       caption: 'গ্রামের ঘাট',
       seconds: 12,
       world: { day: 28, hour: 9.4, weather: 'clear', wind: 0.35 },
-      // along the water past the village's ghat, its boats tied up below the houses
+      // low on the khal gliding past a homestead's ghat, its steps down to the water
       pose: (u, _s, pos, look) => {
-        const g = VILLAGE_GHAT;
-        const z = g.z + lerp(28, -12, u);
-        across(z, g.side * (edgeHalfWidth(z, g.side) - 24), onWater(2.3), pos);
-        across(g.z, g.side * (edgeHalfWidth(g.z, g.side) + 8), onWater(3), look);
+        onKhal(ghat.s + lerp(-30, -8, u), -ghat.side * 2.5, 1.9, pos);
+        onKhal(ghat.s, ghat.side * (khalHalfWidth(ghat.s) + 6), 1.8, look);
       },
     },
     {
       caption: 'বসন্তের রং',
       seconds: 11,
       world: { day: 75, hour: 16.3, weather: 'clear', wind: 0.5 },
-      // down the bank under its trees in flower, from the water
+      // up the khal under its bank's trees in flower
       pose: (u, _s, pos, look) => {
-        const z = lerp(BLOSSOM_Z + 20, BLOSSOM_Z - 25, u);
-        across(z, edgeHalfWidth(z, 1) - 20, onWater(2.2), pos);
-        across(z - 50, edgeHalfWidth(z - 50, 1) + 18, onWater(6), look);
-      },
-    },
-    {
-      caption: 'আদিনাথের সিঁড়ি',
-      seconds: 13,
-      // Falgun, the month of the temple's Shivaratri fair
-      world: { day: 62, hour: 7.6, weather: 'clear', wind: 0.3 },
-      // from beside the long stair on the hill's lower flank (the stair climbs across the slope), rising with it
-      // toward the temple at its top
-      pose: (u, _s, pos, look) => {
-        const { from, to } = GORAKGHATA.stair;
-        const dx = to.x - from.x;
-        const dz = to.z - from.z;
-        const run = Math.hypot(dx, dz);
-        const t = lerp(0.2, 0.45, u);
-        const x = from.x + dx * t - (dz / run) * 28;
-        const z = from.z + dz * t + (dx / run) * 28;
-        pos.set(x, terrainHeight(x, z) + lerp(5, 9, u), z);
-        // between the stair's upper flight and the temple's spire over it
-        const sx = from.x + dx * 0.75;
-        const sz = from.z + dz * 0.75;
-        look.set(sx, stairAt(sx, sz) ?? terrainHeight(sx, sz), sz);
-        look.lerp(tmpB.set(TEMPLE.x, terrainHeight(TEMPLE.x, TEMPLE.z) + 10, TEMPLE.z), 0.4);
-      },
-    },
-    {
-      caption: 'সরু জলপথ',
-      seconds: 12,
-      world: { day: 110, hour: 10.5, weather: 'clear', wind: 0.6 },
-      // high over the khal by Bara Moheshkhali winding through the fields, drifting along it toward the old bridge
-      pose: (u, _s, pos, look) => {
-        onKhal(lerp(-150, -90, u), lerp(34, 24, u), 22, pos);
-        onKhal(lerp(-60, 0, u), 0, 0, look);
-      },
-    },
-    {
-      caption: 'ভেসাল জাল',
-      seconds: 15,
-      // a first-quarter moon brings high water to this hour (env/tide.ts), so the bank net soaks deep
-      world: { day: 134, hour: 16.4, moon: 7, weather: 'clear', wind: 0.5 },
-      begin: (s) => {
-        s.haul('bank', 0);
-        const n = s.net('bank', 0);
-        a.copy(n.centre);
-        b.copy(n.man);
-        c.copy(n.out);
-      },
-      // from the water off the bank: the net coming up out of the river, the fisherman hauling on his machan
-      pose: (u, _s, pos, look) => {
-        const sideways = tmpA.crossVectors(UP, c).normalize();
-        pos.copy(a).addScaledVector(c, lerp(9, 6, u)).addScaledVector(sideways, lerp(12, 8, u)).setY(onWater(2.4));
-        look.lerpVectors(a, b, 0.62).setY(onWater(2.6));
-      },
-    },
-    {
-      caption: 'জেলে নৌকা',
-      seconds: 13,
-      world: { day: 140, hour: 17.0, weather: 'clear', wind: 0.4 },
-      begin: (s) => {
-        s.haul('boat', 0);
-        const n = s.net('boat', 0);
-        a.copy(n.centre);
-        b.copy(n.man);
-        c.copy(n.out);
-      },
-      // low on the water beside the fishing boat as she lifts her net from the river
-      pose: (u, _s, pos, look) => {
-        const sideways = tmpA.crossVectors(UP, c).normalize();
-        const mid = tmpB.lerpVectors(a, b, 0.5);
-        pos.copy(mid).addScaledVector(sideways, 15).addScaledVector(c, lerp(-4, 3, u)).setY(onWater(1.6));
-        look.copy(mid).setY(onWater(1.4));
-      },
-    },
-    {
-      caption: 'খাল',
-      seconds: 13,
-      world: { day: 150, hour: 17.5, weather: 'clear', wind: 0.3 },
-      // gliding up the khal between its banks, the old bridge ahead
-      pose: (u, _s, pos, look) => {
-        onKhal(lerp(110, 70, u), 1.7, 0, pos);
-        onKhal(lerp(40, 0, u), 1.3, 0, look);
+        const s = lerp(BLOSSOM.s - 30, BLOSSOM.s - 5, u);
+        onKhal(s, -BLOSSOM.side * 2, 2.2, pos);
+        onKhal(s + 45, BLOSSOM.side * (khalHalfWidth(s + 45) + 10), 6, look);
       },
     },
     {
       caption: 'কালবৈশাখী',
       seconds: 12,
       world: { day: 128, hour: 16.0, weather: 'storm', wind: 2.6 },
-      // the squall over a village: trees thrashing, rain driving, the river white-capped
+      // the squall over the village: trees thrashing, rain driving across the khal
       pose: (u, _s, pos, look) => {
-        const v = STORM_VILLAGE;
-        const z = lerp(v.z + 40, v.z + 10, u);
-        across(z, v.side * (edgeHalfWidth(z, v.side) - 34), onWater(2.4), pos);
-        across(v.z - 20, v.side * (edgeHalfWidth(v.z, v.side) + 22), onWater(6), look);
+        onKhal(stormGhat.s + lerp(-34, -18, u), -stormGhat.side * 2, 2.4, pos);
+        onKhal(stormGhat.s + 10, stormGhat.side * (khalHalfWidth(stormGhat.s) + 20), 6, look);
       },
     },
     {
-      caption: 'বর্ষার নদী',
+      caption: 'বর্ষার খাল',
       seconds: 13,
       world: { day: 195, hour: 11.0, weather: 'rain', wind: null },
-      journey: 0.47,
-      // round the boat in the rain as she rides the swell
+      journey: journeyAt(JOURNEY.bridge + 220),
+      // ahead of the boat in the rain, low over the khal, as she comes on
       pose: (u, s, pos, look) => {
-        rel(s, lerp(-9, -2, u), lerp(-8.5, -9.5, u), 1.5, pos);
-        rel(s, 1, 0, 1.1, look);
+        rel(s, lerp(12, 6, u), lerp(-2.5, -1.5, u), 1.4, pos);
+        rel(s, -1, 0, 1.2, look);
       },
     },
     {
       caption: 'ডুবো মাঠে আমন',
       seconds: 11,
       world: { day: 205, hour: 12.5, weather: 'drizzle', wind: 0.5 },
-      pose: (u, _s, pos, look) => glide(FLOODED, -1, 4, u, pos, look),
+      pose: (u, _s, pos, look) => acrossFields(FIELDS, 3.4, u, pos, look),
     },
     {
       caption: 'সেতুর নিচে',
       seconds: 16,
       world: { day: 268, hour: { at: 'sunset', offset: -0.7 }, weather: 'clear', wind: 0.55 },
-      // low on the khal, gliding up to the old bridge and under it, the girl with her umbrella above, the
-      // evening sun over the camera's shoulder
-      pose: (u, _s, pos, look) => {
-        onKhal(lerp(-26, -4, u), lerp(2.2, 1.5, u), lerp(1.6, 0.6, u), pos);
-        onKhal(lerp(4, 20, u), lerp(3.6, 2.4, u), 0, look);
+      journey: journeyAt(JOURNEY.bridge - 20),
+      // low behind the boat as she goes under the old bridge, the girl with her umbrella above
+      pose: (u, s, pos, look) => {
+        const at = alongOf(s.boatPos);
+        onKhal(at - lerp(12, 9, u), 0, lerp(1.9, 1.5, u), pos);
+        onKhal(at + 10, 0, 2.2, look).lerp(rel(s, 0, 0, 1.3, a), 0.4);
       },
     },
     {
       caption: 'শাপলা বিল',
       seconds: 14,
       world: { day: 235, hour: 9.2, weather: 'clear', wind: 0.25 },
-      // low over the lily rafts, drifting across the bil in its valley among the hills
+      // low over the lily rafts, drifting across the bil below the hills
       pose: (u, _s, pos, look) => {
-        const z = BIL.z + lerp(-BIL.halfLen * 0.7, -BIL.halfLen * 0.4, u);
-        pos.set(riverX(z) + BIL.u - BIL.halfWid * 0.3, BIL.level + lerp(5, 3.2, u), z);
-        look.set(riverX(BIL.z) + BIL.u, BIL.level + 0.2, BIL.z);
+        const p = bilPoint(lerp(-BIL.halfLen * 0.7, -BIL.halfLen * 0.4, u), -BIL.halfWid * 0.3);
+        pos.set(p.x, BIL.level + lerp(5, 3.2, u), p.z);
+        look.set(BIL.x, BIL.level + 0.2, BIL.z);
       },
     },
     {
-      caption: 'জলাভূমি',
+      caption: 'পুকুরপাড়',
       seconds: 12,
       world: { day: 250, hour: 8.3, weather: 'clear', wind: 0.6 },
       // round a village pond's rim in the morning, over its lilies
@@ -391,161 +240,64 @@ export function tourScenes(): Scene[] {
       },
     },
     {
-      caption: 'চরের কাশবন',
+      caption: 'কাশবন',
       seconds: 12,
       world: { day: 262, hour: 16.4, weather: 'clear', wind: 0.9 },
-      journey: journeyAt(KASH.z + 150),
-      // among the kash on the bank's top, its plumes tossing, the boat coming down the channel
+      // among the kash where it stands thickest on the bank, its plumes tossing, the boat coming up the khal
+      begin: (s) => {
+        const k = kashStand() ?? khalAt(JOURNEY.bridge + 100);
+        a.set(k.x, terrainHeight(k.x, k.z) + 1.5, k.z);
+        s.placeBoat(journeyAt(Math.max(0, (khalFrame(k.x, k.z)?.s ?? JOURNEY.bridge + 100) - 40)));
+      },
       pose: (u, s, pos, look) => {
-        const along = lerp(0, -6, u);
-        pos.set(KASH.x - KASH.uz * along, KASH.y + 1.7, KASH.z + KASH.ux * along);
-        look.lerpVectors(across(KASH.z + 90, 0, onWater(1.4), a), rel(s, 0, 0, 1.2, b), 0.85);
+        pos.copy(a);
+        pos.y += lerp(0, 0.3, u);
+        rel(s, 0, 0, 1.0, look);
       },
     },
     {
       caption: 'হেমন্তের ধান',
       seconds: 12,
       world: { day: 318, hour: 15.4, weather: 'clear', wind: 0.5 },
-      pose: (u, _s, pos, look) => glide(HARVEST, -1, 6, u, pos, look, true),
-    },
-    {
-      caption: 'আদিনাথ পাহাড়',
-      seconds: 15,
-      world: { day: 300, hour: { at: 'sunrise', offset: 0.7 }, weather: 'clear', wind: 0.3 },
-      // early on the channel, the morning sun behind the camera: Gorakghata's jetty and town on the shore, the
-      // forested hills behind, and on the top of its hill the white spire of Adinath temple; drifting slowly in
-      pose: (u, _s, pos, look) => {
-        const z = lerp(GORAKGHATA.jetty.z + 70, GORAKGHATA.jetty.z + 30, u);
-        across(z, edgeHalfWidth(z, 1) - lerp(150, 120, u), onWater(2.4), pos);
-        across(ADINATH.z, ADINATH.u - 12, lerp(44, 48, u), look);
-      },
-    },
-    {
-      caption: 'গোরকঘাটা জেটি',
-      seconds: 13,
-      // a last-quarter moon brings the afternoon's high water (env/tide.ts), so the jetty stands in the channel
-      world: { day: 305, hour: 16.9, moon: 22, weather: 'clear', wind: 0.4 },
-      // low over the water beside the long jetty, gliding in along it from beyond its head toward the town, into
-      // the low sun
-      pose: (u, _s, pos, look) => {
-        const t = lerp(1.1, 0.75, u);
-        pos.set(JETTY.land.x + JETTY.ax * t + JETTY.nx * 22, onWater(4.5), JETTY.land.z + JETTY.az * t + JETTY.nz * 22);
-        look.set(JETTY.land.x + JETTY.ax * 0.35, onWater(2.5), JETTY.land.z + JETTY.az * 0.35);
-      },
-    },
-    {
-      caption: 'লবণ মাঠ',
-      seconds: 14,
-      world: { day: 25, hour: 12.5, weather: 'clear', wind: 0.5 },
-      // a crane down over the salt pans: brine, black sheets, white crust, the heaps along the bunds
-      pose: (u, _s, pos, look) => {
-        pos.lerpVectors(SALT.from, SALT.to, u * 0.5);
-        pos.y = Math.max(terrainHeight(pos.x, pos.z), waterLevelAt(pos.x, pos.z)) + lerp(18, 9, u);
-        const dir = tmpA.subVectors(SALT.to, SALT.from).normalize();
-        look.copy(pos).addScaledVector(dir, 70);
-        look.y = terrainHeight(look.x, look.z);
-      },
-    },
-    {
-      caption: 'সোনাদিয়া',
-      seconds: 13,
-      world: { day: 20, hour: { at: 'sunset', offset: -0.9 }, weather: 'clear', wind: 0.6 },
-      // a long glide in from the Bay (south-west of it) onto Sonadia's beach: its dunes and casuarinas, the
-      // mangroves on its inner shore beyond
-      pose: (u, _s, pos, look) => {
-        const d = lerp(260, 140, u);
-        pos.set(SONADIA_BEACH.x + d * 0.7, onWater(lerp(32, 20, u)), SONADIA_BEACH.z - d * 0.7);
-        look.set(SONADIA.x, onWater(2), SONADIA.z);
-      },
-    },
-    {
-      caption: 'লাল কাঁকড়া',
-      seconds: 12,
-      // a first-quarter moon brings low water to the morning (env/tide.ts): the beach's sand lies bare and dry
-      world: { day: 20, hour: 10, moon: 7, weather: 'clear', wind: 0.4 },
-      begin: (s) => s.crabs(a.set(CRAB_BEACH.x, CRAB_BEACH.y, CRAB_BEACH.z)),
-      // a hand's breadth over the sand among the burrows, the red crabs out and dashing toward the water
-      pose: (u, _s, pos, look) => {
-        const x = CRAB_BEACH.x - 2.5 + 1.2 * u;
-        const z = CRAB_BEACH.z + lerp(0.8, -0.6, u);
-        pos.set(x, terrainHeight(x, z) + 0.28, z);
-        look.set(x + 3.2, terrainHeight(x + 3.2, z) + 0.03, z - 0.4);
-      },
-    },
-    {
-      caption: 'মাতারবাড়ী বন্দর',
-      seconds: 14,
-      world: { day: 22, hour: 14.8, weather: 'clear', wind: 0.4 },
-      begin: (s) => s.ship('berthing', 0.25),
-      // from the basin's water off the container quay: the ship eased in alongside by her tugs, under the cranes
-      pose: (u, s, pos, look) => {
-        const at = berthPoint('container', lerp(0.35, 0.55, u), -170);
-        pos.set(at.x, onWater(16), at.z);
-        const f = s.shipFocus;
-        look.set(f.x, onWater(12), f.z);
-      },
-    },
-    {
-      caption: 'মোহনা',
-      seconds: 12,
-      world: { day: 25, hour: { at: 'sunset', offset: -0.45 }, weather: 'clear', wind: 0.6 },
-      journey: 0.93,
-      // the river opening into the estuary, the boat small on it, the salt flats low on the banks
-      pose: (u, s, pos, look) => {
-        rel(s, lerp(-34, -14, u), 30, 3, pos);
-        rel(s, 25, -10, 1.5, look);
-      },
+      pose: (u, _s, pos, look) => acrossFields(FIELDS, 4.2, u, pos, look),
     },
     {
       caption: 'সূর্যাস্ত',
       seconds: 14,
       world: { day: 290, hour: { at: 'sunset', offset: -0.04 }, weather: 'clear', wind: 0.15 },
-      journey: journeyAt(60),
+      // behind the boat paddling up the khal toward the low sun, off to one side of her
       begin: (s) => {
-        // look toward the sun with it off to one side of the frame, the boat on its path of light
-        bearing = besideBearing(s.sunDir, s.boatCourse);
+        s.placeBoat(journeyAt(facing(s.sunDir, 0.3)));
         s.birds(s.boatPos, s.boatCourse);
       },
       pose: (u, s, pos, look) => {
-        const a = bearing + lerp(0.1, -0.1, u);
-        pos.copy(s.boatPos).addScaledVector(tmpA.set(Math.sin(a), 0, Math.cos(a)), -lerp(19, 14, u)).setY(onWater(1.0));
-        look.copy(s.boatPos).setY(onWater(1.2));
-      },
-    },
-    {
-      caption: 'মাতারবাড়ী বিদ্যুৎকেন্দ্র',
-      seconds: 13,
-      world: { day: 290, hour: { at: 'sunset', offset: 0.35 }, weather: 'clear', wind: 0.4 },
-      // the plant from out on the port's water at dusk: the tall chimney, its plume drifting, the lights coming on
-      pose: (u, _s, pos, look) => {
-        const a = lerp(1.0, 1.3, u);
-        pos.set(PLANT.stack.x + Math.sin(a) * 900, onWater(28), PLANT.stack.z + Math.cos(a) * 900);
-        look.set(PLANT.stack.x, 105, PLANT.stack.z);
+        onKhal(alongOf(s.boatPos) - lerp(19, 14, u), 0, 1.0, pos);
+        rel(s, 0, 0, 1.2, look);
       },
     },
     {
       caption: 'চাঁদ ওঠা',
       seconds: 14,
-      world: { day: 290, moon: 14.8, hour: { at: 'moonrise', offset: 0.2 }, weather: 'clear', wind: 0.15 },
-      // low behind the boat, the full moon rising over the river off to one side of her lantern
-      begin: (s) => {
-        bearing = besideBearing(s.moonDir, s.boatCourse);
-      },
+      world: { day: 290, moon: 14.8, hour: { at: 'moonrise', offset: 0.35 }, weather: 'clear', wind: 0.15 },
+      // out in the bil, where nothing stands between the boat and the rising moon: low behind her, the full moon
+      // off to one side of her lantern
+      journey: journeyAt(JOURNEY.head + 120),
       pose: (u, s, pos, look) => {
         const m = s.moonDir;
-        const flat = tmpA.set(Math.sin(bearing), 0, Math.cos(bearing));
-        const sideways = tmpB.crossVectors(UP, flat).normalize();
-        pos.copy(s.boatPos).addScaledVector(flat, -lerp(18, 13, u)).addScaledVector(sideways, lerp(4, 1.5, u)).setY(onWater(1.3));
-        look.copy(s.boatPos).addScaledVector(flat, 40).setY(onWater(1.3 + 40 * Math.tan(Math.asin(Math.max(m.y, 0))) * 0.8));
+        const away = tmpA.set(m.x, 0, m.z).normalize();
+        const aside = tmpB.set(away.z, 0, -away.x);
+        pos.copy(s.boatPos).addScaledVector(away, -lerp(17, 12, u)).addScaledVector(aside, lerp(3, 1.5, u)).setY(KHAL_LEVEL + 1.3);
+        const toBoat = a.subVectors(rel(s, 0, 0, 1.2, look), pos).normalize();
+        look.copy(pos).addScaledVector(toBoat.lerp(m, 0.55).normalize(), 30);
       },
     },
     {
-      caption: 'রাতের নদী',
+      caption: 'রাতের বিল',
       seconds: 15,
       world: { day: 290, moon: 14.8, hour: { at: 'moonrise', offset: 0.4 }, weather: 'clear', wind: 0.15 },
-      // up and away from the lantern over the river in the last of the light, the moon on the water
+      // up and away from the lantern over the bil, the moon on the water
       pose: (u, s, pos, look) => {
-        rel(s, lerp(-12, -60, u), lerp(4, 22, u), lerp(3, 28, u), pos);
+        rel(s, lerp(-12, -50, u), lerp(0, 16, u * u), lerp(2.5, 30, u), pos);
         rel(s, lerp(3, 50, u), 0, 1, look);
       },
     },

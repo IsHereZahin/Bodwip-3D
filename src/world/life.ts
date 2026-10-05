@@ -17,7 +17,7 @@ import { G, LAYER_NO_REFLECT } from '../core/globals';
 import { Rng } from '../core/rng';
 import { GLSL_COMMON } from '../render/glsl';
 import { patchMaterial } from '../render/patch';
-import { edgeHalfWidth, riverX, terrainHeight, waterLevelAt } from './geography';
+import { JOURNEY, khalAt, khalFrame, khalHalfWidth, terrainHeight, waterLevelAt } from './geography';
 
 // ---------- birds ----------
 
@@ -138,6 +138,9 @@ export class Life {
   private readonly ffInland: Float32Array;
   private readonly ffHeight: Float32Array;
   private readonly ffZ: Float32Array;
+  /** Where along the khal each firefly was last laid, and where the boat was. */
+  private readonly ffAt: Float32Array;
+  private lastAlong = 0;
   private readonly ffGeometry: BufferGeometry;
   private readonly pr = { value: 1 };
 
@@ -186,6 +189,7 @@ export class Life {
     this.ffInland = new Float32Array(F);
     this.ffHeight = new Float32Array(F);
     this.ffZ = new Float32Array(F).fill(Number.NaN);
+    this.ffAt = new Float32Array(F).fill(Number.NaN);
     const fs = new Float32Array(F);
     for (let i = 0; i < F; i++) {
       this.ffSide[i] = this.rng.sign();
@@ -279,15 +283,22 @@ export class Life {
       f.mesh.instanceMatrix.needsUpdate = true;
     }
 
-    // fireflies wrap through a window running from behind the boat to well ahead of it
-    const top = hero.z + 60;
+    // fireflies over the khal's banks wrap through a window along it from behind the boat to well ahead of
+    // her (`ffZ` is how far along the khal each is)
+    const at = khalFrame(hero.x, hero.z)?.s ?? this.lastAlong;
+    this.lastAlong = at;
+    const top = at + 60;
     let moved = false;
     for (let i = 0; i < this.ffZ.length; i++) {
-      const z = top - ((((top - this.ffZ[i]) % FIREFLY_WINDOW) + FIREFLY_WINDOW) % FIREFLY_WINDOW);
+      const s = Math.min(JOURNEY.length, Math.max(0, top - ((((top - this.ffZ[i]) % FIREFLY_WINDOW) + FIREFLY_WINDOW) % FIREFLY_WINDOW)));
       const k = i * 3;
-      if (this.ffBase[k + 2] === z && !Number.isNaN(this.ffBase[k])) continue;
+      if (this.ffAt[i] === s && !Number.isNaN(this.ffBase[k])) continue;
+      this.ffAt[i] = s;
       const side = this.ffSide[i];
-      const x = riverX(z) + side * (edgeHalfWidth(z, side) + 3 + this.ffInland[i]);
+      const p = khalAt(s);
+      const out = khalHalfWidth(s) + 3 + this.ffInland[i];
+      const x = p.x + Math.cos(p.heading) * out * side;
+      const z = p.z - Math.sin(p.heading) * out * side;
       this.ffBase[k] = x;
       this.ffBase[k + 1] = Math.max(terrainHeight(x, z), waterLevelAt(x, z)) + this.ffHeight[i];
       this.ffBase[k + 2] = z;

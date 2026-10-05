@@ -9,7 +9,7 @@ import { ATTRIBUTION } from '../geo/data';
 import { EVENT_NAME, MOON_PHASES, bn, clockLabel, nearestPhase, tithiLabel } from './bangla';
 import './controls.css';
 
-export type CameraChoice = 'follow' | 'free' | 'walk' | 'film';
+export type CameraChoice = 'follow' | 'free' | 'film';
 
 /** The weather menu: by the season, or held clear, breezy, windy, raining or stormy. */
 export const WEATHER_PICKS = [
@@ -39,8 +39,6 @@ export interface ControlHandlers {
   season(choice: number | 'today'): void;
   weather(choice: WeatherPick): void;
   sound(): void;
-  /** Opens or closes the map. */
-  map(): void;
   /** Any use of the controls; it counts as activity, like touching the scene. */
   touched(): void;
 }
@@ -175,7 +173,6 @@ export class Controls {
     });
     $<HTMLElement>('#hide-ui').addEventListener('click', use(() => this.toggleUi()));
     $<HTMLElement>('#ui-restore').addEventListener('click', use(() => this.toggleUi()));
-    $<HTMLElement>('#map-btn').addEventListener('click', use(() => h.map()));
     $<HTMLElement>('#help-btn').addEventListener('click', use(() => this.toggleHelp()));
     // the data the map is made from, credited as each source asks (OpenStreetMap's with its copyright page)
     const sources = $<HTMLUListElement>('#sources');
@@ -234,8 +231,8 @@ export class Controls {
     request.catch((err: unknown) => console.warn('fullscreen:', err));
   }
 
-  /** Mirrors the scene's state; touches the page only where something changed. `tide`: the tide in words. */
-  update(clock: Clock, camera: CameraChoice, sound: boolean, tide: string): void {
+  /** Mirrors the scene's state; touches the page only where something changed. */
+  update(clock: Clock, camera: CameraChoice, sound: boolean): void {
     const l = this.last;
     const minute = Math.floor(clock.hour * 60);
     if (minute !== l.minute) {
@@ -275,7 +272,7 @@ export class Controls {
     const day = clock.dayOfYear;
     const s = seasonIndex(day);
     const d = banglaDate(day);
-    const date = `${bn(d.date)} ${d.month} · ${SEASON_NAMES[s]} · ${tide}`;
+    const date = `${bn(d.date)} ${d.month} · ${SEASON_NAMES[s]}`;
     if (date !== l.date) {
       l.date = date;
       this.bdate.textContent = date;

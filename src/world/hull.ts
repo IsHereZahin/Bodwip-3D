@@ -94,13 +94,3 @@ export function buildHull(b: MeshBuilder, shape: HullShape, colors: { tar: RGB; 
   }
 }
 
-/** Points along the gunwale on one side, for rails and rubbing strakes. */
-export function sheerLine(shape: HullShape, side: 1 | -1, steps = 24): Vector3[] {
-  const out: Vector3[] = [];
-  for (let i = 0; i <= steps; i++) {
-    const s = 0.02 + (i / steps) * 0.96;
-    const { sheer, hb } = hullStation(shape, s);
-    out.push(new Vector3(side * hb, sheer, (s - 0.5) * shape.len));
-  }
-  return out;
-}

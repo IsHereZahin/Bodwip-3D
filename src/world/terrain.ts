@@ -1,13 +1,11 @@
 import { BufferAttribute, BufferGeometry, Group, Mesh, MeshStandardMaterial, type Vector3 } from 'three';
 import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
-import { COVER, GRID_H, GRID_W, LAYERS, TIDE_BAKE, fcol, frow } from '../geo/data';
+import { COVER, GRID_H, GRID_W, LAYERS, fcol, frow } from '../geo/data';
 import { mixRgb, rgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import type { GroundSet } from '../render/surfaces';
-import { WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, bilMarsh, bridgePath, riverX, seaWaterAt, terrainHeight, villageDistance, waterLevelAt } from './geography';
-import { plantCover } from './plantSite';
-import { portCover } from './portSite';
+import { WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, bilMarsh, bridgePath, khalBank, shoreLevel, terrainHeight } from './geography';
 import { roadCover } from './roads';
 
 // The ground: the baked map's heights (geography.ts terrainHeight) and covers (geo/data.ts), drawn as a
@@ -34,10 +32,6 @@ const COLORS = {
   /** The salt pans' grey, salty clay. */
   saltClay: rgb('#8a8170'),
   coastGrass: rgb('#6d7442'),
-  /** The power plant's platform: pale dredged sand, levelled and rolled; its embankment faced with stone. */
-  fill: rgb('#b8a78b'),
-  revetment: rgb('#837d72'),
-  paving: rgb('#a19f98'),
 };
 
 /**
@@ -120,19 +114,15 @@ function blendedLook(x: number, z: number): ClassLook {
 
 function cover(x: number, z: number, h: number): Cover {
   const look = blendedLook(x, z);
-  // under water (the sea's below its low water, whatever the tide; a pond's below its level): the bed, darker
-  // with depth (the flats between the tides keep their mud and sand)
-  const water = seaWaterAt(x, z) ? TIDE_BAKE.lowWater : waterLevelAt(x, z);
-  // (dry ground has none: far below, so the wet band and wet sand below stay off)
+  // under water (below the khal's, the bil's or a pond's level): the bed, darker with depth; on a bank, the
+  // level of its water (away from water none: far below, so the wet band and wet sand below stay off)
+  const water = shoreLevel(x, z);
   const level = Number.isFinite(water) ? water : -1e4;
   if (h < level - 0.15) {
     const color = mixRgb(COLORS.bedDeep, COLORS.wetMud, smoothstep(-4, -0.15, h - level));
     return { color, zone: 0, grass: 0, dirt: 0, sand: look.sand, pebbles: 0 };
   }
   let ground = look.color;
-  const site = plantCover(x, z);
-  const paved = portCover(x, z);
-  const plant = Math.min(1, site.top + site.bank + paved);
   // some variety: greener and drier patches, and on the hills red earth showing through the forest
   ground = mixRgb(ground, COLORS.grassB, (fbm(x * 0.012, z * 0.012, 2, 21) - 0.5) * 0.6 * look.grass);
   const dry = smoothstep(0.6, 0.8, fbm(x * 0.004, z * 0.004, 2, 33));
@@ -140,39 +130,30 @@ function cover(x: number, z: number, h: number): Cover {
   if (h > 10) {
     const canopy = mixRgb(COLORS.forest, COLORS.forestLight, fbm(x * 0.02, z * 0.02, 2, 121));
     const bare = smoothstep(0.72, 0.85, fbm(x * 0.03 + 9, z * 0.03, 2, 123));
-    ground = mixRgb(ground, mixRgb(canopy, COLORS.laterite, bare * 0.8), smoothstep(10, 18, h) * (1 - look.sand) * (1 - plant));
+    ground = mixRgb(ground, mixRgb(canopy, COLORS.laterite, bare * 0.8), smoothstep(10, 18, h) * (1 - look.sand));
   }
-  // the power plant's platform, kept bare, and the stone down its sides
-  if (plant > 0) {
-    ground = mixRgb(ground, mixRgb(COLORS.fill, COLORS.dust, (fbm(x * 0.05, z * 0.05, 2, 41) - 0.5) * 0.8), site.top);
-    ground = mixRgb(ground, COLORS.revetment, site.bank);
-    // the port's yard and quays: concrete paving, a little stained
-    ground = mixRgb(ground, mixRgb(COLORS.paving, COLORS.revetment, (fbm(x * 0.08, z * 0.08, 2, 43) - 0.5) * 0.5), paved);
-  }
-  // round the houses the ground is trodden bare; the footpath over the old bridge is worn to earth
-  const yard = smoothstep(1.0, 0.35, villageDistance(x, z));
+  // the footpath over the old bridge is worn to earth (round the houses the map's built-up cover is trodden bare)
   const path = bridgePath(x, z);
-  ground = mixRgb(ground, COLORS.dust, Math.max(yard * 0.6, path * 0.85));
+  ground = mixRgb(ground, COLORS.dust, path * 0.85);
   // the bil's low rim is wet meadow, grassy almost to the water
-  const marsh = bilMarsh(z, x - riverX(z));
-  // the strip the water wets: mud, darker toward the water's edge (beaches keep their sand)
-  const wetBand = smoothstep(level + 0.9, level + 0.05, h) * (1 - marsh) * (1 - look.sand);
-  ground = mixRgb(ground, mixRgb(COLORS.wetMud, COLORS.dryMud, smoothstep(level, level + 0.9, h)), wetBand);
+  const marsh = bilMarsh(x, z);
+  // the strip the water wets: mud up the khal's bank and a pond's edge, darker toward the water (grass on the levee above)
+  const wetBand = smoothstep(level + 0.6, level + 0.05, h) * (1 - marsh) * (1 - look.sand);
+  ground = mixRgb(ground, mixRgb(COLORS.wetMud, COLORS.dryMud, smoothstep(level, level + 0.6, h)), wetBand);
   if (look.sand > 0) ground = mixRgb(ground, mixRgb(COLORS.sandWet, COLORS.sand, smoothstep(level + 0.1, level + 1.2, h)), look.sand);
   // the roads' shoulders: trodden earth down the embankment (the surface itself is world/roads.ts's)
   const road = roadCover(x, z);
   ground = mixRgb(ground, COLORS.dust, road * 0.4);
-  const dirt = Math.min(1, look.dirt + yard * 0.9 + path + dry * 0.35 * look.grass + road);
+  const dirt = Math.min(1, look.dirt + path + dry * 0.35 * look.grass + road);
   const top = 1 - wetBand;
-  const wild = 1 - plant;
   return {
     color: ground,
-    // paddy plots and salt pans only on their own ground above the water, and off the roads and the plant
-    zone: look.zone * top * (1 - road) * wild,
-    grass: Math.max(0, look.grass * top * (1 - dirt) * (1 - road) + marsh * 0.8) * wild,
-    dirt: dirt * top * (1 - look.sand) * wild + site.top * 0.55 + site.bank * 0.7 + paved * 0.9,
-    sand: look.sand * wild + site.top * 0.45 + paved * 0.1,
-    pebbles: site.bank,
+    // paddy plots only on their own ground above the water, off the roads and off the khal's bank and levee
+    zone: look.zone * top * (1 - road) * (1 - khalBank(x, z)),
+    grass: Math.max(0, look.grass * top * (1 - dirt) * (1 - road) + marsh * 0.8),
+    dirt: dirt * top * (1 - look.sand),
+    sand: look.sand,
+    pebbles: 0,
   };
 }
 

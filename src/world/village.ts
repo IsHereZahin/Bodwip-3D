@@ -17,17 +17,7 @@ import { Rng } from '../core/rng';
 import { MeshBuilder, rgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { strawTexture, tinTexture } from '../render/textures';
-import {
-  VILLAGES,
-  VILLAGE_CENTERS,
-  bankInfo,
-  downstream,
-  edgeHalfWidth,
-  landLevel,
-  nearBackwater,
-  riverX,
-  terrainHeight,
-} from './geography';
+import { BRIDGE, JOURNEY, KHAL_LEVEL, bilReach, khalAt, khalFrame, khalHalfWidth, nearBackwater, onRoad, terrainHeight } from './geography';
 import { BUILDING } from '../geo/data';
 import type { BuildingPlan } from './buildings';
 import { buildHull, type HullShape } from './hull';
@@ -45,28 +35,57 @@ export interface HutPlan {
   wall: RGB;
 }
 
-/** Each village's brick ghat: where its steps run down the bank (kept clear of grass). */
-export const GHATS: readonly { z: number; side: 1 | -1 }[] = VILLAGES.map((v) => ({ z: v.z + v.radius * 0.3, side: v.side }));
+/** Where a homestead comes down to the khal: its brick ghat, how far along the khal and on which side (kept clear of grass). */
+export interface Ghat {
+  x: number;
+  z: number;
+  s: number;
+  side: 1 | -1;
+}
 
 const WALLS: RGB[] = [rgb('#a88458'), rgb('#b8946a'), rgb('#9a7a4a'), rgb('#c4b69a')];
+/** Houses this near the khal's middle are built as huts in detail (seen close from the boat), m. */
+const HUT_REACH = 60;
+/** A ghat for a homestead this near the khal, and no nearer another ghat than this (m). */
+const GHAT_REACH = 38;
+const GHAT_SPACING = 110;
 
 /**
- * The map's houses by the villages along the channel, to be built here as huts in detail (seen close from the
- * boat); the rest of the buildings are world/buildings.ts's. Deterministic.
+ * The map's houses near the khal, to be built here as huts in detail; the rest of the buildings are
+ * world/buildings.ts's. Deterministic.
  */
 export function planHuts(buildings: readonly BuildingPlan[]): { huts: HutPlan[]; rest: BuildingPlan[] } {
   const rng = new Rng(21);
   const huts: HutPlan[] = [];
   const rest: BuildingPlan[] = [];
   for (const b of buildings) {
-    const byVillage = b.kind === BUILDING.house && VILLAGE_CENTERS.some((c, i) => Math.hypot(b.x - c.x, b.z - c.z) < VILLAGES[i].radius * 1.4);
-    if (!byVillage) {
+    const f = khalFrame(b.x, b.z);
+    if (b.kind !== BUILDING.house || !f || f.d > HUT_REACH) {
       rest.push(b);
       continue;
     }
     huts.push({ x: b.x, y: b.base + 0.2, z: b.z, ry: b.ry, l: b.l, w: b.w, roof: rng.next() < 0.55 ? 'thatch' : 'tin', wall: rng.pick(WALLS) });
   }
   return { huts, rest };
+}
+
+/** The ghats: one below a homestead by the khal, spaced along it, none at the bridge or where the khal opens into the bil. */
+export function planGhats(huts: readonly HutPlan[]): Ghat[] {
+  const out: Ghat[] = [];
+  const near: { s: number; side: 1 | -1 }[] = [];
+  for (const h of huts) {
+    const f = khalFrame(h.x, h.z);
+    if (f && f.d < GHAT_REACH) near.push({ s: f.s, side: f.side });
+  }
+  near.sort((a, b) => a.s - b.s);
+  for (const { s, side } of near) {
+    if (Math.abs(s - JOURNEY.bridge) < 45 || s > JOURNEY.head - 40) continue;
+    if (out.some((g) => Math.abs(g.s - s) < GHAT_SPACING)) continue;
+    const p = khalAt(s);
+    const half = khalHalfWidth(s);
+    out.push({ x: p.x + Math.cos(p.heading) * half * side, z: p.z - Math.sin(p.heading) * half * side, s, side });
+  }
+  return out;
 }
 
 // ---------- parts ----------
@@ -191,20 +210,21 @@ function haystack(b: MeshBuilder, x: number, z: number, rng: Rng, poles: MeshBui
   poles.add(new CylinderGeometry(0.05, 0.06, 1.4, 5), new Matrix4().makeTranslation(x, y + hgt + 0.4, z), rgb('#6a5a3e'));
 }
 
-/** Brick steps down to the water. */
-function ghat(b: MeshBuilder, z: number, side: 1 | -1): void {
-  const we = edgeHalfWidth(z, side);
-  const [dx, dz] = downstream(z);
-  const along = Math.atan2(-dz, dx);
-  const top = landLevel(riverX(z) + side * (we + 22), z);
-  const steps = 9;
+/** Brick steps from the top of the bank down into the khal's water. */
+function ghat(b: MeshBuilder, g: Ghat): void {
+  const p = khalAt(g.s);
+  const half = khalHalfWidth(g.s);
+  // outward from the khal's middle toward this bank
+  const nx = Math.cos(p.heading) * g.side;
+  const nz = -Math.sin(p.heading) * g.side;
+  const top = terrainHeight(p.x + nx * (half + 9), p.z + nz * (half + 9));
+  const steps = 7;
   for (let i = 0; i < steps; i++) {
     const t = i / (steps - 1);
-    const u = we + 18 - t * 17;
-    const y = top - t * (top + 0.7);
-    const x = riverX(z) + side * u;
-    const m = new Matrix4().compose(new Vector3(x, y - 0.6, z), new Quaternion().setFromEuler(new Euler(0, along, 0)), new Vector3(1, 1, 1));
-    b.add(new BoxGeometry(4.2, 1.2, 2.4), m, i % 2 ? rgb('#8a4a32') : rgb('#7c4230'));
+    const d = half + 8 - t * 9;
+    const y = top - t * (top - KHAL_LEVEL + 0.45);
+    const m = new Matrix4().compose(new Vector3(p.x + nx * d, y - 0.6, p.z + nz * d), new Quaternion().setFromEuler(new Euler(0, p.heading, 0)), new Vector3(1, 1, 1));
+    b.add(new BoxGeometry(2.6, 1.2, 1.7), m, i % 2 ? rgb('#8a4a32') : rgb('#7c4230'));
   }
 }
 
@@ -225,15 +245,18 @@ function moor(b: MeshBuilder, moorings: Mooring[], hull: MeshBuilder, m: Matrix4
   moorings.push({ from, to: b.vertexCount, x: m.elements[12], z: m.elements[14] });
 }
 
-function mooredBoat(b: MeshBuilder, moorings: Mooring[], z: number, side: 1 | -1, rng: Rng): void {
+/** A small boat tied up beside a ghat, along the bank, close in (the khal's middle stays open). */
+function mooredBoat(b: MeshBuilder, moorings: Mooring[], g: Ghat, rng: Rng): void {
   const hull = new MeshBuilder();
   buildHull(hull, SMALL_BOAT, { tar: rgb('#2a2018'), top: rgb('#5a4a38') });
-  const [dx, dz] = downstream(z);
-  const along = Math.atan2(dx, dz);
-  const x = riverX(z) + side * (edgeHalfWidth(z, side) + rng.range(-1, 1.5));
+  const s = g.s + rng.sign() * rng.range(4.5, 6);
+  const p = khalAt(s);
+  const d = khalHalfWidth(s) - 1.3;
+  const x = p.x + Math.cos(p.heading) * d * g.side;
+  const z = p.z - Math.sin(p.heading) * d * g.side;
   const m = new Matrix4().compose(
     new Vector3(x, 0.05, z),
-    new Quaternion().setFromEuler(new Euler(rng.range(-0.04, 0.04), along + rng.range(-0.4, 0.4), side * rng.range(0.03, 0.09))),
+    new Quaternion().setFromEuler(new Euler(rng.range(-0.04, 0.04), p.heading + rng.range(-0.15, 0.15), g.side * rng.range(0.02, 0.06))),
     new Vector3(1, 1, 1),
   );
   moor(b, moorings, hull, m);
@@ -241,30 +264,36 @@ function mooredBoat(b: MeshBuilder, moorings: Mooring[], z: number, side: 1 | -1
 
 // ---------- assembly ----------
 
-export function buildVillages(huts: readonly HutPlan[]): Group {
+export function buildVillages(huts: readonly HutPlan[], ghats: readonly Ghat[]): Group {
   const rng = new Rng(33);
   const walls = new MeshBuilder();
   const thatchRoofs = new MeshBuilder();
   const tinRoofs = new MeshBuilder();
   const wood = new MeshBuilder();
-  /** Boats tied up at the banks and in the khals: they ride the season's water and its waves. */
+  /** Boats tied up at the ghats: they ride the khal's water and its ripples. */
   const afloat = new MeshBuilder();
   const moorings: Mooring[] = [];
   const hay = new MeshBuilder();
 
   for (const h of huts) addHut(walls, h.roof === 'thatch' ? thatchRoofs : tinRoofs, h, rng);
 
-  VILLAGES.forEach((v, i) => {
-    const c = VILLAGE_CENTERS[i];
-    for (let k = 0; k < 3; k++) {
+  // a haystack in some of the homesteads' yards, clear of the houses, the roads and the water
+  huts.forEach((h, i) => {
+    if (i % 4 !== 1) return;
+    for (let k = 0; k < 6; k++) {
       const a = rng.range(0, Math.PI * 2);
-      const x = c.x + Math.cos(a) * v.radius * 0.55;
-      const z = c.z + Math.sin(a) * v.radius * 0.55;
-      if (bankInfo(x, z).inland > 10 && !nearBackwater(x, z, 6) && !huts.some((h) => Math.hypot(h.x - x, h.z - z) < 7)) haystack(hay, x, z, rng, wood);
+      const x = h.x + Math.cos(a) * rng.range(7, 12);
+      const z = h.z + Math.sin(a) * rng.range(7, 12);
+      if (nearBackwater(x, z, 8) || onRoad(x, z, 2) || huts.some((o) => Math.hypot(o.x - x, o.z - z) < 7) || bilReach(x, z) < 1.4) continue;
+      if (Math.hypot(x - BRIDGE.x, z - BRIDGE.z) < BRIDGE.half + 8) continue;
+      haystack(hay, x, z, rng, wood);
+      break;
     }
-    ghat(walls, GHATS[i].z, v.side);
-    mooredBoat(afloat, moorings, v.z + v.radius * 0.3 + 6, v.side, rng);
-    if (i % 2 === 0) mooredBoat(afloat, moorings, v.z - v.radius * 0.4, v.side, rng);
+  });
+  // the ghats, a boat tied up at every other one
+  ghats.forEach((g, i) => {
+    ghat(walls, g);
+    if (i % 2 === 0) mooredBoat(afloat, moorings, g, rng);
   });
 
 
@@ -292,27 +321,21 @@ export function buildVillages(huts: readonly HutPlan[]): Group {
   add(thatchRoofs, thatchMat);
   add(tinRoofs, tinMat);
   add(wood, woodMat);
-  // moored boats rise and fall with the tide and ride its waves, each rocking as one piece on
-  // the (sheltered) waves under its middle; when it leaves them they settle on the mud by the bank
+  // moored boats float on the khal's water, each rocking as one piece on the (sheltered) ripples under its middle
   const boats = afloat.build();
-  // each boat's middle, and the height she rests at on the mud when the tide leaves her (her keel on the bed)
-  const middles = new Float32Array(boats.getAttribute('position').count * 3);
-  for (const m of moorings) {
-    const rest = terrainHeight(m.x, m.z) + 0.15;
-    for (let i = m.from; i < m.to; i++) middles.set([m.x, m.z, rest], i * 3);
-  }
-  boats.setAttribute('aMoor', new BufferAttribute(middles, 3));
+  const middles = new Float32Array(boats.getAttribute('position').count * 2);
+  for (const m of moorings) for (let k = m.from; k < m.to; k++) middles.set([m.x, m.z], k * 2);
+  boats.setAttribute('aMoor', new BufferAttribute(middles, 2));
   const moored = new Mesh(
     boats,
     patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), {
       grime: 0.35,
       vertex: {
         key: 'moored',
-        pars: `attribute vec3 aMoor;\n${waveHeightGlsl()}\n${waveSlopeGlsl()}\n`,
+        pars: `attribute vec2 aMoor;\n${waveHeightGlsl()}\n${waveSlopeGlsl()}\n`,
         code: `{
-  float afloatK = step(aMoor.z, uWaterLevel);
-  vec2 tilt = waveSlope(aMoor.xy) * ${SHELTERED.toFixed(2)};
-  transformed.y += max(uWaterLevel, aMoor.z) + afloatK * (waveHeight(aMoor.xy) * ${SHELTERED.toFixed(2)} + dot(tilt, transformed.xz - aMoor.xy));
+  vec2 tilt = waveSlope(aMoor) * ${SHELTERED.toFixed(2)};
+  transformed.y += ${KHAL_LEVEL.toFixed(2)} + waveHeight(aMoor) * ${SHELTERED.toFixed(2)} + dot(tilt, transformed.xz - aMoor);
 }`,
       },
     }),

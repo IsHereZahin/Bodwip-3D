@@ -147,6 +147,14 @@ float atmWet = 0.0;
 float atmBrine = 0.0;
 #ifdef ATM_SEASONAL
 {
+  #if ATM_SEASONAL == 3
+  // kash plumes only from late in the rains through autumn; out of season the white heads are not there.
+  // The plume is the only bright part of the kash's texture (its stem is a dark olive), told by the texel's
+  // brightness before the dry months' tint below (a warm white is too saturated to tell it by its colour)
+  float lum = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
+  float plume = smoothstep(0.32, 0.5, lum);
+  diffuseColor.a *= 1.0 - plume * (1.0 - uSeasonA.w);
+  #endif
   // the season in the leaves: lush in the rains, dusty and paler in the dry months
   diffuseColor.rgb *= mix(vec3(1.0), vec3(1.2, 1.06, 0.7), uSeasonA.y * 0.6) * (0.86 + 0.16 * uSeasonA.x);
   #if ATM_SEASONAL == 2
@@ -158,13 +166,6 @@ float atmBrine = 0.0;
     float crown = smoothstep(1.2, 3.0, vAtmWorld.y - vAtmRoot.y);
     diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.62, 0.06, 0.02) * (0.7 + 0.5 * spot), smoothstep(0.35, 0.6, spot) * crown * bloom);
   }
-  #endif
-  #if ATM_SEASONAL == 3
-  // kash plumes only from late in the rains through autumn; out of season the white heads are not there
-  float lum = dot(diffuseColor.rgb, vec3(0.3, 0.59, 0.11));
-  float sat = max(diffuseColor.r, max(diffuseColor.g, diffuseColor.b)) - min(diffuseColor.r, min(diffuseColor.g, diffuseColor.b));
-  float plume = smoothstep(0.35, 0.6, lum) * (1.0 - smoothstep(0.08, 0.2, sat));
-  diffuseColor.a *= 1.0 - plume * (1.0 - uSeasonA.w);
   #endif
 }
 #endif

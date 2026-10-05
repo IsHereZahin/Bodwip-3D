@@ -6,8 +6,8 @@
   left: 50%;
   bottom: max(14px, env(safe-area-inset-bottom));
   transform: translate(-50%, 10px);
-  /* wide enough for the tools in one row on a laptop screen (season, weather, walking and the map made it longer) */
-  width: min(1180px, calc(100vw - 32px));
+  /* wide enough for the tools in one row on a laptop screen */
+  width: min(1100px, calc(100vw - 32px));
   box-sizing: border-box;
   padding: 8px 14px 10px;
   border-radius: 16px;
