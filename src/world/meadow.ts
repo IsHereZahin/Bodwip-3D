@@ -16,7 +16,7 @@ import { fbm } from '../core/noise';
 import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
-import { KHAL_LEVEL, bridgePath, onBridge, onLandmark, onRoad } from './geography';
+import { WATER_LEVEL, onBridge, onLandmark, onRoad } from './geography';
 import { groundLattice } from './terrain';
 import type { Ghat, HutPlan } from './village';
 
@@ -312,12 +312,12 @@ export class Meadow {
         const z = z0 + (j + rng.next()) * step;
         const g = lattice(x, z);
         // none in the khal's or the bil's water, nor on the mud just above it
-        if (g.h < KHAL_LEVEL + 0.25) continue;
+        if (g.h < WATER_LEVEL + 0.25) continue;
         if (huts.some((h) => Math.hypot(h.x - x, h.z - z) < Math.max(h.l, h.w) * 0.6 + 0.4)) continue;
         if (onBridge(x, z) || onLandmark(x, z)) continue;
         // nothing grows on a road, a footpath or the bridge's worn way: they stay trodden and clear (the
         // lattice is too coarse to see a footpath's metre, so each is asked here)
-        if (onRoad(x, z, 0.25) || bridgePath(x, z) > 0.3) continue;
+        if (onRoad(x, z, 0.25)) continue;
         // the ghats' steps and the trodden way down to them
         if (ghats.some((gh) => Math.hypot(gh.x - x, gh.z - z) < 9)) continue;
         // grass where the ground is grassy, in drifts, thinning on trodden earth and in the paddy
@@ -331,7 +331,7 @@ export class Meadow {
         push(lod, x, g.h - 0.02, z, rng.range(0.75, 1.25), rng.range(0.8, 1.15) * (0.75 + lush * 0.9), tint);
         // wild flowers: kolmi near the water, ghashphul and yellow weeds elsewhere
         if (lod === 0 && rng.next() < 0.07 * drift) {
-          const wet = g.h < KHAL_LEVEL + 0.9;
+          const wet = g.h < WATER_LEVEL + 0.9;
           const kind = wet && rng.next() < 0.6 ? 4 : rng.next() < 0.65 ? 2 : 3;
           push(kind, x + rng.range(-0.15, 0.15), g.h - 0.02, z + rng.range(-0.15, 0.15), rng.range(0.8, 1.2), 1, [1, 1, 1], 0.2);
         }

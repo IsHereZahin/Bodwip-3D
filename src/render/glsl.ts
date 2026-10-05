@@ -93,13 +93,23 @@ float windGust(vec2 p) {
   return max(0.0, 1.0 + uWind.w * g);
 }
 
-// The paddy plots: rectangles PLOT_SIZE metres in a frame turned in bands 240 m long down the river (the
-// terrain paints them, render/patch.ts; the crops stand in them, world/crops.ts, whose CPU twin of this
-// layout must stay in step)
-const vec2 PLOT_SIZE = vec2(36.0, 22.0);
+// The paddy plots: rectangles PLOT_SIZE metres, the grid laid along the river's general line and bent by long,
+// gentle waves, so the bunds curve over the land as real ones do and no seam crosses the fields (the terrain
+// paints them, render/patch.ts; the crops stand in them, world/crops.ts, whose CPU twin of this layout must
+// stay in step)
+const vec2 PLOT_SIZE = vec2(32.0, 20.0);
+const float PLOT_ANGLE = 0.12;
+vec2 plotWarp(vec2 p) {
+  return vec2(14.0 * sin(p.y * 0.0131 + 1.3) + 9.0 * sin(p.x * 0.0087 + 0.4), 11.0 * sin(p.x * 0.0117 + 2.1) + 7.0 * sin((p.x + p.y) * 0.0071 + 4.0));
+}
 vec2 plotFrame(vec2 wp) {
-  float ang = 0.3 + 0.35 * sin(floor(wp.y / 240.0) * 1.7);
-  return mat2(cos(ang), -sin(ang), sin(ang), cos(ang)) * wp;
+  return mat2(cos(PLOT_ANGLE), -sin(PLOT_ANGLE), sin(PLOT_ANGLE), cos(PLOT_ANGLE)) * (wp + plotWarp(wp));
+}
+// A plot's place in the order the season plants and reaps them (0..1): a field's worth of neighbouring plots
+// is worked together, so the stages lie over the land in broad patches, each plot a little ahead or behind
+float plotRank(vec2 cell) {
+  float field = smoothstep(0.2, 0.8, vnoise((cell + 0.5) * PLOT_SIZE * 0.0065 + vec2(3.1, 7.7)));
+  return clamp(0.92 * field + 0.08 * hash12(cell), 0.0, 1.0);
 }
 
 // What grows in a plot whose place in the season's order is r (each plot turns from one crop to the next

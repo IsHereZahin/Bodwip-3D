@@ -2,14 +2,13 @@ import { Vector3 } from 'three';
 import { G } from '../core/globals';
 import { angleDelta, smoothstep } from '../core/mathx';
 import { windAt } from '../env/wind';
-import { KHAL_LEVEL, khalAt, khalFrame, khalHalfWidth, waterLevelAt } from './geography';
-import { KHAL_CURRENT } from './khal';
+import { WATER_LEVEL, waterLevelAt, waterwayAt } from './geography';
 import { HERO_HULL, heroBeamAtWater } from './hull';
 import { CRUISE, PADDLE_MOMENT, STROKE_SECONDS, paddleForce, strokePhase, type PaddleForce } from './paddle';
 import { SHELTERED, hullWaves, type HullWaves } from './waves';
 
 // The hero boat as a floating body. In the plane: mass and added mass, drag through the water (light
-// fore and aft, heavy sideways, like a keel), the khal's slow current, the paddle's pulses of drive from one
+// fore and aft, heavy sideways, like a keel), the river's and the khal's slow current, the paddle's pulses of drive from one
 // side, and the boatman's steering. Out of it: heave, pitch and roll, each a damped spring toward the wave
 // surface as the hull averages it (short chop cancels along a 9 m hull; long swell lifts it), plus the
 // boatman's weight as he leans into each stroke. Angles are the group's Euler x (bow down +) and z
@@ -17,27 +16,27 @@ import { SHELTERED, hullWaves, type HullWaves } from './waves';
 // holds the paddle up at the end of its recovery, ready for the next catch; tied up, a line holds her.
 
 /**
- * Surface current (m/s): the khal drifting slowly down its length, fastest in its middle and slack at its
+ * Surface current (m/s): the river and the khal drifting slowly down their lengths, fastest in their middles and slack at their
  * banks, as in the water shader's flow field; the bil lies still.
  */
 export function currentAt(x: number, z: number, out: { x: number; z: number }): { x: number; z: number } {
   out.x = 0;
   out.z = 0;
-  const f = khalFrame(x, z);
-  if (!f) return out;
-  const t = f.d / khalHalfWidth(f.s);
+  const w = waterwayAt(x, z);
+  if (!w || w.d >= w.half) return out;
+  const t = w.d / w.half;
   // faster in the rains (the season's runoff, as the water shows it)
-  const speed = KHAL_CURRENT * G.uFlowScale.value * Math.max(0, 1 - t * t);
-  const p = khalAt(f.s);
-  out.x = -Math.sin(p.heading) * speed;
-  out.z = -Math.cos(p.heading) * speed;
+  const speed = w.way.current * G.uFlowScale.value * Math.max(0, 1 - t * t);
+  const p = w.way.at(w.s);
+  out.x = Math.sin(p.heading) * speed;
+  out.z = Math.cos(p.heading) * speed;
   return out;
 }
 
-/** The surface of the water she floats on at (x, z): the khal's (or a pond's, should she be put on one). */
+/** The surface of the water she floats on at (x, z): the river's and the khal's (or a pond's, should she be put on one). */
 function waterUnder(x: number, z: number): number {
   const level = waterLevelAt(x, z);
-  return Number.isFinite(level) ? level : KHAL_LEVEL;
+  return Number.isFinite(level) ? level : WATER_LEVEL;
 }
 
 const MASS = 380; // the boat ≈ 240 kg, the boatman 65, cargo 75

@@ -1,17 +1,16 @@
 import { BufferAttribute, BufferGeometry, Group, Mesh, MeshStandardMaterial, type Vector3 } from 'three';
 import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
-import { COVER, GRID_H, GRID_W, LAYERS, fcol, frow } from '../geo/data';
 import { mixRgb, rgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import type { GroundSet } from '../render/surfaces';
-import { WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, bilMarsh, bridgePath, khalBank, shoreLevel, terrainHeight } from './geography';
+import { WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, bankStrip, bilMarsh, landUse, shoreLevel, terrainHeight } from './geography';
 import { roadCover } from './roads';
 
-// The ground: the baked map's heights (geography.ts terrainHeight) and covers (geo/data.ts), drawn as a
-// quadtree of square patches round the camera, fine near it (≈2 m between vertices) and coarse far off. Each
-// patch is a 64 × 64 grid with a skirt hanging from its edges, so where patches of different sizes meet no
-// crack shows. Patches are built when first needed, a few milliseconds' worth a frame, and kept.
+// The ground: the village's heights (geography.ts terrainHeight) and what covers it (geography.ts landUse),
+// drawn as a quadtree of square patches round the camera, fine near it (≈2 m between vertices) and coarse far
+// off. Each patch is a 64 × 64 grid with a skirt hanging from its edges, so where patches of different sizes
+// meet no crack shows. Patches are built when first needed, a few milliseconds' worth a frame, and kept.
 
 const COLORS = {
   bedDeep: rgb('#2a241a'),
@@ -23,22 +22,18 @@ const COLORS = {
   grassB: rgb('#647b33'),
   grassDry: rgb('#857e48'),
   dust: rgb('#7d6849'),
-  /** The hills under their forest: dark canopy greens, and the red earth where it shows through. */
-  forest: rgb('#1f3317'),
-  forestLight: rgb('#33502a'),
-  laterite: rgb('#7a4a30'),
-  /** Tidal mud where the mangroves stand. */
-  tidalMud: rgb('#4a4236'),
-  /** The salt pans' grey, salty clay. */
-  saltClay: rgb('#8a8170'),
-  coastGrass: rgb('#6d7442'),
+  /** A homestead's yard: clay swept and plastered smooth with mud and cow dung, pale where the sun bakes it. */
+  yard: rgb('#9a8262'),
+  /** Under the homestead's trees: shaded grass and leaf litter. */
+  grove: rgb('#3e5226'),
+  /** The bil's wet meadow. */
+  marsh: rgb('#5a6c38'),
 };
 
 /**
- * What covers the ground at a point: the painted colour, the field zone (paddy plots as 0..1, salt pans as
- * 0..−1), and the weights of the photo layers (grass, dirt, sand, and whether pebbles may gather here; mud
- * takes whatever is left). The terrain mesh and the near-field grass both read it, so grass grows where the
- * ground is grassy.
+ * What covers the ground at a point: the painted colour, the field zone (paddy plots as 0..1), and the
+ * weights of the photo layers (grass, dirt, sand, and whether pebbles may gather here; mud takes whatever is
+ * left). The terrain mesh and the near-field grass both read it, so grass grows where the ground is grassy.
  */
 export interface Cover {
   color: RGB;
@@ -49,7 +44,7 @@ export interface Cover {
   pebbles: number;
 }
 
-/** Each cover class's own colour, zone and layer weights before the local touches. */
+/** Each kind of ground's own colour, zone and layer weights before the local touches. */
 interface ClassLook {
   color: RGB;
   zone: number;
@@ -58,57 +53,50 @@ interface ClassLook {
   sand: number;
 }
 
-const LOOK: Record<number, ClassLook> = {
-  [COVER.none]: { color: COLORS.grassA, zone: 0, grass: 0.8, dirt: 0.1, sand: 0 },
-  [COVER.tree]: { color: COLORS.forestLight, zone: 0, grass: 0.45, dirt: 0.3, sand: 0 },
-  [COVER.shrub]: { color: mixRgb(COLORS.grassB, COLORS.forestLight, 0.5), zone: 0, grass: 0.6, dirt: 0.25, sand: 0 },
-  [COVER.grass]: { color: COLORS.grassB, zone: 0, grass: 0.9, dirt: 0.05, sand: 0 },
-  [COVER.crop]: { color: COLORS.grassA, zone: 1, grass: 0.75, dirt: 0.15, sand: 0 },
-  [COVER.built]: { color: COLORS.dust, zone: 0, grass: 0.15, dirt: 0.85, sand: 0 },
-  [COVER.bare]: { color: COLORS.dryMud, zone: 0, grass: 0.05, dirt: 0.9, sand: 0.05 },
-  [COVER.sand]: { color: COLORS.sand, zone: 0, grass: 0, dirt: 0, sand: 1 },
-  [COVER.mud]: { color: COLORS.tidalMud, zone: 0, grass: 0, dirt: 0.1, sand: 0 },
-  [COVER.marsh]: { color: mixRgb(COLORS.grassA, COLORS.coastGrass, 0.5), zone: 0, grass: 0.85, dirt: 0, sand: 0 },
-  [COVER.mangrove]: { color: COLORS.tidalMud, zone: 0, grass: 0, dirt: 0.05, sand: 0 },
-  [COVER.saltpan]: { color: COLORS.saltClay, zone: -1, grass: 0, dirt: 0.6, sand: 0 },
-  [COVER.pond]: { color: COLORS.wetMud, zone: 0, grass: 0, dirt: 0, sand: 0 },
-  [COVER.water]: { color: COLORS.wetMud, zone: 0, grass: 0, dirt: 0, sand: 0 },
+const LOOK: Record<'field' | 'yard' | 'mound' | 'verge' | 'sand' | 'marsh', ClassLook> = {
+  field: { color: COLORS.grassA, zone: 1, grass: 0.75, dirt: 0.15, sand: 0 },
+  // the yard is smooth clay: little of the grass or the gravelly dirt layers, the smooth mud for the rest
+  yard: { color: COLORS.yard, zone: 0, grass: 0.04, dirt: 0.22, sand: 0.12 },
+  mound: { color: COLORS.grove, zone: 0, grass: 0.55, dirt: 0.3, sand: 0 },
+  verge: { color: COLORS.grassB, zone: 0, grass: 0.9, dirt: 0.05, sand: 0 },
+  sand: { color: COLORS.sand, zone: 0, grass: 0, dirt: 0, sand: 1 },
+  marsh: { color: COLORS.marsh, zone: 0, grass: 0.85, dirt: 0, sand: 0 },
 };
 
 const blend: ClassLook = { color: [0, 0, 0], zone: 0, grass: 0, dirt: 0, sand: 0 };
 
-/** The four cells round a point, their looks blended bilinearly, so class edges are soft rather than 10 m steps. */
+/** The kinds of ground at a point (geography.ts landUse), their looks blended by their shares. */
 function blendedLook(x: number, z: number): ClassLook {
-  const fc = Math.min(GRID_W - 1.0001, Math.max(0, fcol(x)));
-  const fr = Math.min(GRID_H - 1.0001, Math.max(0, frow(z)));
-  const c = Math.floor(fc);
-  const r = Math.floor(fr);
-  const tx = fc - c;
-  const ty = fr - r;
-  const cells = LAYERS.cover;
-  const i = r * GRID_W + c;
-  const w = [(1 - tx) * (1 - ty), tx * (1 - ty), (1 - tx) * ty, tx * ty];
-  const ids = [i, i + 1, i + GRID_W, i + GRID_W + 1];
-  let r0 = 0;
-  let g0 = 0;
-  let b0 = 0;
+  const u = landUse(x, z);
+  const parts: [ClassLook, number][] = [
+    [LOOK.field, u.field],
+    [LOOK.yard, u.yard],
+    [LOOK.mound, u.mound],
+    [LOOK.verge, u.verge],
+    [LOOK.sand, u.sand],
+    [LOOK.marsh, u.marsh],
+  ];
+  let total = 0;
+  for (const [, w] of parts) total += w;
+  const k = 1 / Math.max(1e-4, total);
+  let r = 0;
+  let g = 0;
+  let b = 0;
   blend.zone = 0;
   blend.grass = 0;
   blend.dirt = 0;
   blend.sand = 0;
-  for (let k = 0; k < 4; k++) {
-    const look = LOOK[cells[ids[k]]] ?? LOOK[COVER.none];
-    const wk = w[k];
-    r0 += look.color[0] * wk;
-    g0 += look.color[1] * wk;
-    b0 += look.color[2] * wk;
-    // a field or a pan is one or the other: the zone takes the cells' own sign
-    blend.zone += look.zone * wk;
-    blend.grass += look.grass * wk;
-    blend.dirt += look.dirt * wk;
-    blend.sand += look.sand * wk;
+  for (const [look, w0] of parts) {
+    const w = w0 * k;
+    r += look.color[0] * w;
+    g += look.color[1] * w;
+    b += look.color[2] * w;
+    blend.zone += look.zone * w;
+    blend.grass += look.grass * w;
+    blend.dirt += look.dirt * w;
+    blend.sand += look.sand * w;
   }
-  blend.color = [r0, g0, b0];
+  blend.color = [r, g, b];
   return blend;
 }
 
@@ -127,29 +115,21 @@ function cover(x: number, z: number, h: number): Cover {
   ground = mixRgb(ground, COLORS.grassB, (fbm(x * 0.012, z * 0.012, 2, 21) - 0.5) * 0.6 * look.grass);
   const dry = smoothstep(0.6, 0.8, fbm(x * 0.004, z * 0.004, 2, 33));
   ground = mixRgb(ground, COLORS.grassDry, dry * look.grass * 0.7);
-  if (h > 10) {
-    const canopy = mixRgb(COLORS.forest, COLORS.forestLight, fbm(x * 0.02, z * 0.02, 2, 121));
-    const bare = smoothstep(0.72, 0.85, fbm(x * 0.03 + 9, z * 0.03, 2, 123));
-    ground = mixRgb(ground, mixRgb(canopy, COLORS.laterite, bare * 0.8), smoothstep(10, 18, h) * (1 - look.sand));
-  }
-  // the footpath over the old bridge is worn to earth (round the houses the map's built-up cover is trodden bare)
-  const path = bridgePath(x, z);
-  ground = mixRgb(ground, COLORS.dust, path * 0.85);
   // the bil's low rim is wet meadow, grassy almost to the water
   const marsh = bilMarsh(x, z);
   // the strip the water wets: mud up the khal's bank and a pond's edge, darker toward the water (grass on the levee above)
   const wetBand = smoothstep(level + 0.6, level + 0.05, h) * (1 - marsh) * (1 - look.sand);
   ground = mixRgb(ground, mixRgb(COLORS.wetMud, COLORS.dryMud, smoothstep(level, level + 0.6, h)), wetBand);
   if (look.sand > 0) ground = mixRgb(ground, mixRgb(COLORS.sandWet, COLORS.sand, smoothstep(level + 0.1, level + 1.2, h)), look.sand);
-  // the roads' shoulders: trodden earth down the embankment (the surface itself is world/roads.ts's)
+  // the ways: trodden earth under the paths and down the road's embankment (the surfaces are world/roads.ts's)
   const road = roadCover(x, z);
-  ground = mixRgb(ground, COLORS.dust, road * 0.4);
-  const dirt = Math.min(1, look.dirt + path + dry * 0.35 * look.grass + road);
+  ground = mixRgb(ground, COLORS.dust, road * 0.55);
+  const dirt = Math.min(1, look.dirt + dry * 0.35 * look.grass + road);
   const top = 1 - wetBand;
   return {
     color: ground,
-    // paddy plots only on their own ground above the water, off the roads and off the khal's bank and levee
-    zone: look.zone * top * (1 - road) * (1 - khalBank(x, z)),
+    // paddy plots only on their own ground above the water, off the ways and off the waters' banks
+    zone: look.zone * top * (1 - road) * (1 - bankStrip(x, z)),
     grass: Math.max(0, look.grass * top * (1 - dirt) * (1 - road) + marsh * 0.8),
     dirt: dirt * top * (1 - look.sand),
     sand: look.sand,

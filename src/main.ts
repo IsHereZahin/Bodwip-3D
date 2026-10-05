@@ -23,7 +23,7 @@ import { WEATHER_PICKS } from './ui/controls';
 import type { CameraChoice, WeatherPick } from './ui/controls';
 import { Hud } from './ui/hud';
 import { Bil } from './world/bil';
-import { KHAL_LEVEL, terrainHeight } from './world/geography';
+import { WATER_LEVEL, terrainHeight } from './world/geography';
 import { Drift } from './world/drift';
 import { sea, updateSea } from './world/waves';
 import { HeroBoat } from './world/hero';
@@ -39,8 +39,8 @@ import { cullBeyond, setCullReach, updateCulling } from './render/cull';
 import { buildSky } from './world/sky';
 import { Terrain } from './world/terrain';
 import { buildVegetation } from './world/vegetation';
-import { buildVillages, planGhats, planHuts, type HutPlan } from './world/village';
-import { buildBuildings, planBuildings } from './world/buildings';
+import { buildVillages, planGhats, planHuts } from './world/village';
+import { buildSanko } from './world/sanko';
 import { buildWater } from './world/water';
 
 const BLACK = new Color(0, 0, 0);
@@ -114,26 +114,25 @@ async function main(hud: Hud): Promise<void> {
   scene.add(water.mesh, water.inland);
   hud.progress(0.42);
   await nextTask();
-  // the map's buildings: the houses by the khal as detailed huts with their ghats, the rest in cells
-  const { huts, rest } = planHuts(planBuildings());
-  const ghats = planGhats(huts);
-  scene.add(buildVillages(huts, ghats));
-  const buildings = buildBuildings(rest);
-  scene.add(buildings);
-  cullBeyond(buildings, 1800);
+  // the homesteads: their houses round their yards, their haystacks, their ghats and boats
+  const huts = planHuts();
+  const ghats = planGhats();
+  const villages = buildVillages(huts, ghats);
+  scene.add(villages);
   // everything standing, for the trees and the grass to keep clear of
-  const standing: HutPlan[] = [...huts, ...rest.map((b) => ({ x: b.x, y: b.y, z: b.z, ry: b.ry, l: b.l, w: b.w, roof: 'tin' as const, wall: [1, 1, 1] as [number, number, number] }))];
+  const standing = huts;
   hud.progress(0.52);
   await nextTask();
   // the trees (left undrawn beyond the haze: render/cull.ts)
   const vegetation = buildVegetation(standing, surfaces.bark, [BRIDGE_CLEARING], bridgeTrees());
   scene.add(vegetation);
   cullBeyond(vegetation, 1900);
-  // the roads, in 1 km cells: the far ones are left undrawn
-  const roads = buildRoads();
+  // the ways, in 1.3 km cells: the far ones are left undrawn
+  const roads = buildRoads(terrainHeight);
   scene.add(roads);
   cullBeyond(roads, 2600);
   scene.add(buildBridge());
+  scene.add(buildSanko());
   const girl = new Girl();
   scene.add(girl.group);
   scene.add(buildPondLife());
@@ -625,9 +624,9 @@ async function main(hud: Hud): Promise<void> {
     if (weather.struck) sound.thunder();
     sound.update(dt, env.night, G.uWind.value.z, weather.rain);
   };
-  // the khal and the bil stand at one level, held by the khal's sluice: what reads the sea's level reads it
-  G.uWaterLevel.value = KHAL_LEVEL;
-  G.uTideHigh.value = KHAL_LEVEL;
+  // the river, the khals and the bil stand at one level: what reads the sea's level reads it
+  G.uWaterLevel.value = WATER_LEVEL;
+  G.uTideHigh.value = WATER_LEVEL;
   updateSky(0, true);
   step(0);
   terrain.update(camera.position, true);
@@ -776,7 +775,7 @@ async function main(hud: Hud): Promise<void> {
         /** The boat's motion now, for checking the physics. */
         boatState() {
           const r = (v: number, k = 1000) => Math.round(v * k) / k;
-          return { x: r(b0().pos.x, 100), z: r(b0().pos.z, 100), heave: r(b0().pos.y), pitch: r(b0().rotX), roll: r(b0().rotZ), heading: r(b0().heading), course: r(b0().course), speed: r(b0().speed), power: r(b0().power, 100), crew: { x: r(hero.crew.x), z: r(hero.crew.z) }, reach: r(hero.reach), depth: r(KHAL_LEVEL - terrainHeight(b0().pos.x, b0().pos.z), 100) };
+          return { x: r(b0().pos.x, 100), z: r(b0().pos.z, 100), heave: r(b0().pos.y), pitch: r(b0().rotX), roll: r(b0().rotZ), heading: r(b0().heading), course: r(b0().course), speed: r(b0().speed), power: r(b0().power, 100), crew: { x: r(hero.crew.x), z: r(hero.crew.z) }, reach: r(hero.reach), depth: r(WATER_LEVEL - terrainHeight(b0().pos.x, b0().pos.z), 100) };
         },
         /**
          * Runs the world forward `seconds` (in 1/30 s steps, without drawing) and samples the boat every
@@ -793,7 +792,7 @@ async function main(hud: Hud): Promise<void> {
             worst = Math.max(worst, hero.reach);
             if (i % Math.max(1, Math.round(every * 30)) === 0) {
               const b = b0();
-              out.push({ z: r(b.pos.z, 10), x: r(b.pos.x, 10), along: r(rig.progress, 1000), depth: r(KHAL_LEVEL - terrainHeight(b.pos.x, b.pos.z)), reach: r(worst), speed: r(b.speed) });
+              out.push({ z: r(b.pos.z, 10), x: r(b.pos.x, 10), along: r(rig.progress, 1000), depth: r(WATER_LEVEL - terrainHeight(b.pos.x, b.pos.z)), reach: r(worst), speed: r(b.speed) });
               worst = 0;
             }
           }

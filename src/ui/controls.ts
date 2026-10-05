@@ -5,7 +5,6 @@ import type { Clock, SkyEvent, SkyEventKind } from '../env/clock';
 import { skyColorAt } from '../env/environment';
 import { SEASON_NAMES, banglaDate, seasonIndex } from '../env/season';
 import type { ViewName } from '../rig/rig';
-import { ATTRIBUTION } from '../geo/data';
 import { EVENT_NAME, MOON_PHASES, bn, clockLabel, nearestPhase, tithiLabel } from './bangla';
 import './controls.css';
 
@@ -174,21 +173,6 @@ export class Controls {
     $<HTMLElement>('#hide-ui').addEventListener('click', use(() => this.toggleUi()));
     $<HTMLElement>('#ui-restore').addEventListener('click', use(() => this.toggleUi()));
     $<HTMLElement>('#help-btn').addEventListener('click', use(() => this.toggleHelp()));
-    // the data the map is made from, credited as each source asks (OpenStreetMap's with its copyright page)
-    const sources = $<HTMLUListElement>('#sources');
-    for (const text of ATTRIBUTION) {
-      const item = document.createElement('li');
-      item.textContent = text;
-      if (text.includes('OpenStreetMap')) {
-        const link = document.createElement('a');
-        link.href = 'https://www.openstreetmap.org/copyright';
-        link.target = '_blank';
-        link.rel = 'noopener';
-        link.textContent = 'openstreetmap.org/copyright';
-        item.append(' (', link, ')');
-      }
-      sources.appendChild(item);
-    }
     // a click on the dimmed backdrop closes the sheet
     this.help.addEventListener('click', (e) => {
       if (e.target === this.help) this.help.close();

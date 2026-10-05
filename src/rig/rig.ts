@@ -1,13 +1,11 @@
 import { PerspectiveCamera, Quaternion, Vector3 } from 'three';
 import { angleDelta, clamp, damp, lerp, smoothstep } from '../core/mathx';
 import { BoatBody, type Crew } from '../world/boatPhysics';
-import { BRIDGE, JOURNEY, bridgeDeck, bridgeFrame, bridgeSoffit, inlandWaterAt, khalAt, khalFrame, khalHalfWidth, terrainHeight, waterLevelAt } from '../world/geography';
+import { BRIDGE, JOURNEY, bridgeDeck, bridgeFrame, bridgeSoffit, inlandWaterAt, journeyAt, journeyFrame, terrainHeight, waterLevelAt, waterwayAt } from '../world/geography';
 import { FlyCam } from './flycam';
 
-/** How far along the khal the boatman steers for, m. */
+/** How far along her way the boatman steers for, m. */
 const LOOK_AHEAD = 16;
-/** Where she is as the scene opens: this far below the old bridge, its arch ahead of her in the evening light (m). */
-const OPENING_BELOW_BRIDGE = 60;
 /** How near the journey's end she is when the mist comes down and she is taken back to its start (m). */
 const END_REACH = 25;
 const LOOP_FADE = 3;
@@ -38,8 +36,8 @@ export const VIEWS = {
 export type ViewName = keyof typeof VIEWS;
 
 /**
- * Where the camera rests until the viewer picks a view: low over the water off the boat's quarter, looking up
- * the khal past her into the evening light, the banks close either side.
+ * Where the camera rests until the viewer picks a view: low over the water off the boat's quarter, looking down
+ * the river past her into the evening light, the banks close either side.
  */
 const OPENING_VIEW: View = { yaw: 0.4, pitch: 0.08, dist: 13 };
 
@@ -58,11 +56,11 @@ function keepClearOfBridge(cam: Vector3): void {
   else cam.y = lerp(cam.y, Math.max(cam.y, BRIDGE.water + bridgeDeck(f.x) + BRIDGE.parapetHeight + 1.2), s);
 }
 
-/** Whether a camera at (x, z) is over the water or close over the khal's banks (not in among the banks' trees). */
+/** Whether a camera at (x, z) is over the water or close over a bank (not in among the banks' trees). */
 function overWater(x: number, z: number): boolean {
   if (inlandWaterAt(x, z)) return true;
-  const f = khalFrame(x, z);
-  return f !== null && f.d < khalHalfWidth(f.s) + 3;
+  const w = waterwayAt(x, z);
+  return w !== null && w.d < w.half + 3;
 }
 
 /**
@@ -83,9 +81,9 @@ const ORBIT_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', '
 const FLY_KEYS = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyQ', 'KeyE', 'PageUp', 'PageDown']);
 const MODIFIERS = new Set(['ShiftLeft', 'ShiftRight']);
 
-/** The boat's journey up the khal into the bil, and the camera: an orbit that follows the boat, or a free flyer. */
+/** The boat's journey down the river, up the khal and into the bil, and the camera: an orbit that follows the boat, or a free flyer. */
 export class Rig {
-  /** The boat as a floating body, paddled up the khal. */
+  /** The boat as a floating body, paddled along her way. */
   readonly boat = new BoatBody();
   /** 0..1 mist fade while the journey loops back to its start. */
   fade = 0;
@@ -95,7 +93,7 @@ export class Rig {
   watch: Vector3 | null = null;
 
   private loopT = -1;
-  /** How far along the khal she is (m), kept while she is too far off it to say. */
+  /** How far along her way she is (m), kept while she is too far off it to say. */
   private along = 0;
   private readonly steerTo = { x: 0, z: 0 };
   private rest: View = OPENING_VIEW;
@@ -121,7 +119,7 @@ export class Rig {
 
   constructor(camera: PerspectiveCamera, element: HTMLElement) {
     this.camera = camera;
-    this.place((JOURNEY.bridge - OPENING_BELOW_BRIDGE) / JOURNEY.length);
+    this.place(JOURNEY.opening / JOURNEY.length);
     element.addEventListener('pointerdown', (e) => {
       element.setPointerCapture(e.pointerId);
       this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -216,10 +214,10 @@ export class Rig {
     this.turnRate = TURN_ASKED;
   }
 
-  /** Puts the boat at a point of the journey (0 = its start below the bridge, 1 = its end out in the bil). */
+  /** Puts the boat at a point of the journey (0 = where she sets out on the river, 1 = its end out in the bil). */
   place(t: number): void {
     this.along = clamp(t, 0, 1) * JOURNEY.length;
-    const p = khalAt(this.along);
+    const p = journeyAt(this.along);
     this.boat.place(p.x, p.z, p.heading);
     this.loopT = -1;
     this.fade = 0;
@@ -284,12 +282,12 @@ export class Rig {
       if (k.has('Minus') || k.has('NumpadSubtract')) this.zoom(Math.exp(dt));
     }
 
-    // the boat: up the khal, steering for a point a little ahead along it; near the end the mist comes down
+    // the boat: along her way, steering for a point a little ahead on it; near the end the mist comes down
     // and she is taken back to the start
     const b = this.boat;
-    const f = khalFrame(b.pos.x, b.pos.z);
+    const f = journeyFrame(b.pos.x, b.pos.z);
     if (f) this.along = f.s;
-    const ahead = khalAt(Math.min(JOURNEY.length, this.along + LOOK_AHEAD));
+    const ahead = journeyAt(Math.min(JOURNEY.length, this.along + LOOK_AHEAD));
     this.steerTo.x = ahead.x;
     this.steerTo.z = ahead.z;
     b.step(dt, t, this.steerTo, crew);
@@ -298,7 +296,7 @@ export class Rig {
     } else {
       this.loopT += dt;
       if (this.loopT > LOOP_FADE && this.loopT - dt <= LOOP_FADE) {
-        const start = khalAt(0);
+        const start = journeyAt(0);
         b.place(start.x, start.z, start.heading);
         this.along = 0;
       }
@@ -347,7 +345,7 @@ export class Rig {
   }
 
   /**
-   * Places the follow camera on its orbit round a point just ahead of the boat. The khal is narrow and its
+   * Places the follow camera on its orbit round a point just ahead of the boat. The waters are narrow and their
    * banks are wooded: low down, the camera keeps over the water (drawing in toward her where the orbit would
    * take it in among the banks' trees); higher up it may look down over them.
    */
@@ -380,7 +378,7 @@ export class Rig {
     this.camera.updateMatrixWorld();
   }
 
-  /** Field of view that keeps the khal in frame on tall phone screens. */
+  /** Field of view that keeps the water in frame on tall phone screens. */
   static fovFor(aspect: number): number {
     return aspect < 1 ? 62 + (1 - aspect) * 18 : 50;
   }

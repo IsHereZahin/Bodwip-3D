@@ -21,9 +21,32 @@ import { groundLattice } from './terrain';
 // camera each is real plants, farther off rows of painted cards under a painted canopy, and farthest the
 // canopy alone (seen that low and that far, the rows below it no longer show, and they cost the most).
 
-/** The plots' layout, as glsl.ts (plotFrame, PLOT_SIZE) has it: keep the two in step. */
-const PLOT = { w: 36, h: 22, band: 240 };
-const plotAngle = (z: number) => 0.3 + 0.35 * Math.sin(Math.floor(z / PLOT.band) * 1.7);
+/** The plots' layout, as glsl.ts (plotFrame, plotWarp, PLOT_SIZE, PLOT_ANGLE) has it: keep the two in step. */
+const PLOT = { w: 32, h: 20, angle: 0.12 };
+const plotWarp = (x: number, z: number): [number, number] => [
+  14 * Math.sin(z * 0.0131 + 1.3) + 9 * Math.sin(x * 0.0087 + 0.4),
+  11 * Math.sin(x * 0.0117 + 2.1) + 7 * Math.sin((x + z) * 0.0071 + 4.0),
+];
+const COS = Math.cos(PLOT.angle);
+const SIN = Math.sin(PLOT.angle);
+/** A world point in the plots' frame (plotFrame in glsl.ts). */
+function toPlots(x: number, z: number): [number, number] {
+  const [wx, wz] = plotWarp(x, z);
+  return [COS * (x + wx) + SIN * (z + wz), -SIN * (x + wx) + COS * (z + wz)];
+}
+/** The world point at a point of the plots' frame: the warp undone by a few fixed-point steps (it bends gently, so they converge fast). */
+function fromPlots(qx: number, qy: number): [number, number] {
+  const bx = COS * qx - SIN * qy;
+  const bz = SIN * qx + COS * qy;
+  let x = bx;
+  let z = bz;
+  for (let k = 0; k < 4; k++) {
+    const [wx, wz] = plotWarp(x, z);
+    x = bx - wx;
+    z = bz - wz;
+  }
+  return [x, z];
+}
 /** Bare ground left inside each plot's bunds (m). */
 const MARGIN = 0.6;
 
@@ -229,7 +252,7 @@ function mustardCards(seed: number): BufferGeometry {
 const STAGE = /* glsl */ `
 vec3 cropRoot = instanceMatrix[3].xyz;
 vec2 cropCell = floor(plotFrame(cropRoot.xz) / PLOT_SIZE);
-vec4 cropSh = cropShares(hash12(cropCell));
+vec4 cropSh = cropShares(plotRank(cropCell));
 float cropStubble = max(0.0, 1.0 - cropSh.x - cropSh.y - cropSh.z - cropSh.w);
 float cropGrown = hash12(cropCell + 3.7);
 // out at the edge of the crops' reach they sink away (the terrain paints the plot's crop beyond)
@@ -479,22 +502,22 @@ export class Crops {
     const q = new Quaternion();
     const pos = new Vector3();
     const scl = new Vector3();
-    for (let band = Math.floor(z0 / PLOT.band); band <= Math.floor((z0 + CHUNK) / PLOT.band); band++) {
-      const a = plotAngle(band * PLOT.band);
-      const c = Math.cos(a);
-      const s = Math.sin(a);
-      q.setFromAxisAngle(UP, -a);
+    {
+      // rows along the plots' length, turned as the grid is where the chunk lies (the warp bends it by a few degrees at most)
+      const [ax, az] = toPlots(x0 + CHUNK / 2, z0 + CHUNK / 2);
+      const [bx, bz] = toPlots(x0 + CHUNK / 2 + 1, z0 + CHUNK / 2);
+      q.setFromAxisAngle(UP, Math.atan2(bz - az, bx - ax));
       // the chunk's corners in the plots' frame, and the plots they touch
       const corners = [
         [x0, z0],
         [x0 + CHUNK, z0],
         [x0, z0 + CHUNK],
         [x0 + CHUNK, z0 + CHUNK],
-      ].map(([x, z]) => [c * x + s * z, -s * x + c * z]);
-      const i0 = Math.floor(Math.min(...corners.map((p) => p[0])) / PLOT.w);
-      const i1 = Math.floor(Math.max(...corners.map((p) => p[0])) / PLOT.w);
-      const j0 = Math.floor(Math.min(...corners.map((p) => p[1])) / PLOT.h);
-      const j1 = Math.floor(Math.max(...corners.map((p) => p[1])) / PLOT.h);
+      ].map(([x, z]) => toPlots(x, z));
+      const i0 = Math.floor(Math.min(...corners.map((p) => p[0])) / PLOT.w) - 1;
+      const i1 = Math.floor(Math.max(...corners.map((p) => p[0])) / PLOT.w) + 1;
+      const j0 = Math.floor(Math.min(...corners.map((p) => p[1])) / PLOT.h) - 1;
+      const j1 = Math.floor(Math.max(...corners.map((p) => p[1])) / PLOT.h) + 1;
       const nx = Math.max(1, Math.round((PLOT.w - 2 * MARGIN) / size));
       const ny = Math.max(1, Math.round((PLOT.h - 2 * MARGIN) / size));
       const px = (PLOT.w - 2 * MARGIN) / nx;
@@ -505,9 +528,8 @@ export class Crops {
             for (let v = 0; v < ny; v++) {
               const qx = i * PLOT.w + MARGIN + (u + 0.5) * px;
               const qy = j * PLOT.h + MARGIN + (v + 0.5) * py;
-              const x = c * qx - s * qy;
-              const z = s * qx + c * qy;
-              if (x < x0 || x >= x0 + CHUNK || z < z0 || z >= z0 + CHUNK || Math.floor(z / PLOT.band) !== band) continue;
+              const [x, z] = fromPlots(qx, qy);
+              if (x < x0 || x >= x0 + CHUNK || z < z0 || z >= z0 + CHUNK) continue;
               const g = lattice(x, z);
               if (g.zone < ZONE_MIN) continue;
               // no patch reaches over a road or a footpath through the fields (the lattice misses a narrow one)

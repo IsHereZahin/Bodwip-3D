@@ -25,10 +25,8 @@ import { GLSL_COMMON } from '../render/glsl';
 import { HERO_HULL, HERO_SINK, hullWaterlineGlsl } from './hull';
 import { shipWakeGlsl, wakeGlsl } from './wake';
 import { OPEN_SEA, SHELTERED, swellGlsl, waveHeightLodGlsl, waveSlopeLodGlsl } from './waves';
-import { EXPOSURE } from './exposure';
-import { GRID_H, GRID_W, LAYERS, WORLD, cellCentre } from '../geo/data';
-import { BIL, KHAL_LEVEL, WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, eachWaterwayPoint, inlandWaterAt, khalAt, khalFrame, khalHalfWidth, terrainHeight, waterLevelAt } from './geography';
-import { KHAL_CURRENT } from './khal';
+import { WATER_LEVEL, WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, eachWaterwayPoint, inlandWaterAt, terrainHeight, waterLevelAt, waterwayAt } from './geography';
+import { WORLD } from './plan';
 
 /** A field's rectangle in the world (x0, z0 its corner with the least x and z; sx, sz its extent) and its texels. */
 interface FieldRect {
@@ -40,8 +38,8 @@ interface FieldRect {
   h: number;
 }
 
-/** The wide field over the whole map and a margin of sea round it, ≈27 m a texel. */
-const FIELD_WIDE: FieldRect = { x0: WORLD_X0 - 2000, z0: WORLD_Z1 - 2000, sx: WORLD_X1 - WORLD_X0 + 4000, sz: WORLD_Z0 - WORLD_Z1 + 4000, w: 512, h: 768 };
+/** The wide field over the whole world and a margin round it, ≈8 m a texel. */
+const FIELD_WIDE: FieldRect = { x0: WORLD_X0 - 400, z0: WORLD_Z1 - 400, sx: WORLD_X1 - WORLD_X0 + 800, sz: WORLD_Z0 - WORLD_Z1 + 800, w: 480, h: 400 };
 /**
  * The fine field round the camera: 1 km square at 4 m a texel, so the creeks and the khal have their own
  * depth. Rebuilt round the camera once it strays `drift` m from the middle, `rows` rows a frame.
@@ -101,16 +99,16 @@ function fillField(o: FieldRect, data: Uint16Array, from: number, to: number): v
     for (let i = 0; i < o.w; i++) {
       const x = o.x0 + ((i + 0.5) / o.w) * o.sx;
       const h = terrainHeight(x, z);
-      // the khal drifts down its length, fastest in its middle
+      // the river and the khal drift down their lengths, fastest in their middles
       let fx = 0;
       let fz = 0;
-      const f = khalFrame(x, z);
-      if (f) {
-        const t = f.d / khalHalfWidth(f.s);
-        const speed = KHAL_CURRENT * Math.max(0, 1 - t * t);
-        const p = khalAt(f.s);
-        fx = -Math.sin(p.heading) * speed;
-        fz = -Math.cos(p.heading) * speed;
+      const w = waterwayAt(x, z);
+      if (w && w.d < w.half) {
+        const t = w.d / w.half;
+        const speed = w.way.current * Math.max(0, 1 - t * t);
+        const p = w.way.at(w.s);
+        fx = Math.sin(p.heading) * speed;
+        fz = Math.cos(p.heading) * speed;
       }
       const k = (j * o.w + i) * 4;
       data[k] = DataUtils.toHalfFloat(Math.max(-40, Math.min(40, h)));
@@ -173,49 +171,45 @@ class FineField {
   }
 }
 
-/** How many cells (10 m each) round inland water carry its level on (see levelTexture), over ground no lower than this under it (m): the bil's marshy rim. */
-const LEVEL_SPREAD = 6;
+/** The level map's cells (m), and how many of them round water carry its level on (see levelTexture), over ground no lower than this under it (m): the bil's marshy rim. */
+const LEVEL_CELL = 6;
+const LEVEL_SPREAD = 8;
 const SPREAD_BELOW = 0.15;
+const LEVEL_W = Math.ceil((WORLD.x1 - WORLD.x0) / LEVEL_CELL);
+const LEVEL_H = Math.ceil((WORLD.z1 - WORLD.z0) / LEVEL_CELL);
 
 /**
- * Inland water's level and where each water lies, over the map at its own 10 m cells: r the surface of a pond,
- * a pan, the bil or the khal; g 1 where the water is the sea's (the channel, the creeks, the flats and
- * mangroves it floods); b 1 where it is inland water; a how open the sea's water is to the Bay's swell (exposure.ts). Round inland water r carries the nearest water's level
- * on for LEVEL_SPREAD cells, so the water grid's vertices beside a pond stand at its level and the pond's
- * edge is cut by the ground, not by the grid; farther off r lies well under the ground.
+ * Which water stands where, over the world in LEVEL_CELL cells: r the surface of the water there (the river's,
+ * a khal's, the bil's or a pond's); g 1 where the water is the sea's (none here); b 1 where it is water; a how
+ * open it is to a sea's swell (none here). Round the water r carries the nearest water's level on for
+ * LEVEL_SPREAD cells, so the water grid's vertices beside a pond stand at its level and the pond's edge is cut
+ * by the ground, not by the grid; farther off r lies well under the ground.
  */
 function levelTexture(): { texture: DataTexture; map: Vector4 } {
-  const n = GRID_W * GRID_H;
-  const surface = new Float32Array(n);
-  const sea = new Uint8Array(n);
+  const n = LEVEL_W * LEVEL_H;
+  const surface = new Float32Array(n).fill(-20);
   const inland = new Uint8Array(n);
-  const { terrain } = LAYERS;
+  const centre = (i: number) => ({ x: WORLD.x1 - ((i % LEVEL_W) + 0.5) * LEVEL_CELL, z: WORLD.z1 - (Math.floor(i / LEVEL_W) + 0.5) * LEVEL_CELL });
   for (let i = 0; i < n; i++) {
-    // no sea here; a pond's level brought down with the ground round it (geography.ts)
-    const c = cellCentre(i % GRID_W, Math.floor(i / GRID_W));
-    inland[i] = inlandWaterAt(c.x, c.z) ? 1 : 0;
-    surface[i] = inland[i] ? waterLevelAt(c.x, c.z) : terrain[i] / 10 - 20;
+    const c = centre(i);
+    if (!inlandWaterAt(c.x, c.z)) continue;
+    inland[i] = 1;
+    surface[i] = waterLevelAt(c.x, c.z);
   }
-  // the inland waters the scene adds: the bil, and the khals cut into the ground (geography.ts)
-  const cell = (WORLD.x1 - WORLD.x0) / GRID_W;
+  // the waterways' own points, so the narrow side khal has its cells wherever it runs (geography.ts)
   const mark = (x: number, z: number, level: number) => {
-    const c = Math.floor((WORLD.x1 - x) / cell);
-    const r = Math.floor((WORLD.z1 - z) / cell);
-    if (c < 0 || r < 0 || c >= GRID_W || r >= GRID_H) return;
-    const i = r * GRID_W + c;
+    const c = Math.floor((WORLD.x1 - x) / LEVEL_CELL);
+    const r = Math.floor((WORLD.z1 - z) / LEVEL_CELL);
+    if (c < 0 || r < 0 || c >= LEVEL_W || r >= LEVEL_H) return;
+    const i = r * LEVEL_W + c;
     surface[i] = level;
     inland[i] = 1;
-    sea[i] = 0;
   };
-  const paint = (x0: number, x1: number, z0: number, z1: number) => {
-    for (let z = z0; z <= z1; z += cell / 2) for (let x = x0; x <= x1; x += cell / 2) if (inlandWaterAt(x, z)) mark(x, z, waterLevelAt(x, z));
-  };
-  paint(BIL.x - BIL.halfLen * 1.7, BIL.x + BIL.halfLen * 1.7, BIL.z - BIL.halfLen * 1.7, BIL.z + BIL.halfLen * 1.7);
   eachWaterwayPoint(mark);
-  // carry each inland water's level outward, ring by ring (the nearest water's, as a breadth-first search), over
+  // carry each water's level outward, ring by ring (the nearest water's, as a breadth-first search), over
   // ground that stands above it only: on lower ground beyond a pond's bank its water would stand in the air
   const above = (j: number, level: number) => {
-    const c = cellCentre(j % GRID_W, Math.floor(j / GRID_W));
+    const c = centre(j);
     return terrainHeight(c.x, c.z) > level - SPREAD_BELOW;
   };
   const reached = new Uint8Array(n);
@@ -224,8 +218,8 @@ function levelTexture(): { texture: DataTexture; map: Vector4 } {
   for (let step = 0; step < LEVEL_SPREAD && ring.length; step++) {
     const next: number[] = [];
     for (const i of ring) {
-      const c = i % GRID_W;
-      for (const j of [c > 0 ? i - 1 : -1, c < GRID_W - 1 ? i + 1 : -1, i - GRID_W, i + GRID_W]) {
+      const c = i % LEVEL_W;
+      for (const j of [c > 0 ? i - 1 : -1, c < LEVEL_W - 1 ? i + 1 : -1, i - LEVEL_W, i + LEVEL_W]) {
         if (j < 0 || j >= n || reached[j] || !above(j, surface[i])) continue;
         reached[j] = 1;
         surface[j] = surface[i];
@@ -235,13 +229,14 @@ function levelTexture(): { texture: DataTexture; map: Vector4 } {
     ring = next;
   }
   const data = new Uint16Array(n * 4);
+  const zero = DataUtils.toHalfFloat(0);
   for (let i = 0; i < n; i++) {
     data[i * 4] = DataUtils.toHalfFloat(surface[i]);
-    data[i * 4 + 1] = DataUtils.toHalfFloat(sea[i]);
+    data[i * 4 + 1] = zero;
     data[i * 4 + 2] = DataUtils.toHalfFloat(inland[i]);
-    data[i * 4 + 3] = DataUtils.toHalfFloat(sea[i] ? EXPOSURE[i] : 0);
+    data[i * 4 + 3] = zero;
   }
-  const texture = new DataTexture(data, GRID_W, GRID_H, RGBAFormat, HalfFloatType);
+  const texture = new DataTexture(data, LEVEL_W, LEVEL_H, RGBAFormat, HalfFloatType);
   texture.minFilter = texture.magFilter = LinearFilter;
   texture.needsUpdate = true;
   // u runs west to east (x falling), v north to south (z falling)
@@ -262,7 +257,7 @@ function mirrorLevelAt(x: number, z: number): number {
       if (inlandWaterAt(px, pz)) return waterLevelAt(px, pz);
     }
   }
-  return KHAL_LEVEL;
+  return WATER_LEVEL;
 }
 
 /** GLSL: the water field at p, from the fine one round the camera or the wide one beyond it (the levels are GLSL_COMMON's waterLevels). */

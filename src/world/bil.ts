@@ -29,7 +29,7 @@ import { patchMaterial, type PatchOptions } from '../render/patch';
 import { lilyCarpetTexture } from '../render/textures';
 import type { BoatBody } from './boatPhysics';
 import { BIL, bilDepth, bilReach, routeGap } from './geography';
-import { bilLocal, bilPoint } from './khal';
+import { bilLocal, bilPoint } from './waterways';
 import { HERO_HULL, heroBeamAtWater } from './hull';
 import { SHELTERED, waveHeightGlsl, waveSlopeGlsl } from './waves';
 

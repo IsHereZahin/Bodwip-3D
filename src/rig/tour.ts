@@ -1,33 +1,32 @@
 import { Vector3 } from 'three';
 import { angleDelta, lerp } from '../core/mathx';
-import { BUILDINGS, canopyAt } from '../geo/data';
-import { BIL, JOURNEY, KHAL_LEVEL, khalAt, khalFrame, khalHalfWidth, terrainHeight } from '../world/geography';
-import { bilPoint } from '../world/khal';
+import { BIL, HOMESTEAD_MOUNDS, JOURNEY, WATER_LEVEL, journeyAt, journeyFrame, journeyHalfWidth, terrainHeight } from '../world/geography';
+import { bilPoint } from '../world/waterways';
 import { LILY_PONDS } from '../world/ponds';
 import { groundAt } from '../world/terrain';
 import { kashStand } from '../world/vegetation';
 import type { Ghat } from '../world/village';
 import type { Scene, Stage } from './director';
 
-// The film tour: a year and a day on the khal, as a short documentary would show it. A winter dawn in mist and
-// the boatman at sunrise, mustard in the fields and a village ghat; spring's blossom and a nor'wester; the
+// The film tour: a year and a day in the village, as a short documentary would show it. A winter dawn in mist
+// and the boatman at sunrise, mustard in the fields and a village ghat; spring's blossom and a nor'wester; the
 // monsoon's rain and its flooded fields; under the old bridge and out into the shapla bil, a village pond and
-// the kash of autumn; the golden harvest; and the evening on the khal: sunset, moonrise and night.
-// Each scene sets its own season, hour and weather (director.ts). The khal is narrow and its banks are
-// wooded, so the low shots look along it, from its water; the sun and the moon are framed by placing the
-// boat where the khal runs toward them.
+// the kash of autumn; the golden harvest; and the evening on the water: sunset, moonrise and night.
+// Each scene sets its own season, hour and weather (director.ts). The waters are narrow and their banks are
+// wooded, so the low shots look along them, from the water; the sun and the moon are framed by placing the
+// boat where her way runs toward them.
 
-/** The journey's fraction at `s` m along the khal (for placing the boat). */
-const journeyAt = (s: number) => s / JOURNEY.length;
+/** The journey's fraction at `s` m along the boat's way (for placing the boat). */
+const fractionAt = (s: number) => s / JOURNEY.length;
 
-/** A point `side` m to the left of the khal's middle (going up it), `s` m along it, `up` m above its water. */
-function onKhal(s: number, side: number, up: number, out: Vector3): Vector3 {
-  const p = khalAt(s);
-  return out.set(p.x + Math.cos(p.heading) * side, KHAL_LEVEL + up, p.z - Math.sin(p.heading) * side);
+/** A point `side` m to the left of the boat's way, `s` m along it, `up` m above the water. */
+function onWay(s: number, side: number, up: number, out: Vector3): Vector3 {
+  const p = journeyAt(s);
+  return out.set(p.x + Math.cos(p.heading) * side, WATER_LEVEL + up, p.z - Math.sin(p.heading) * side);
 }
 
-/** How far along the khal a point is (m). */
-const alongOf = (p: Vector3) => khalFrame(p.x, p.z)?.s ?? 0;
+/** How far along the boat's way a point is (m). */
+const alongOf = (p: Vector3) => journeyFrame(p.x, p.z)?.s ?? 0;
 
 const tmpA = new Vector3();
 const tmpB = new Vector3();
@@ -39,12 +38,12 @@ function rel(stage: Stage, a: number, s: number, h: number, out: Vector3): Vecto
     .copy(stage.boatPos)
     .addScaledVector(tmpA.set(Math.sin(c), 0, Math.cos(c)), a)
     .addScaledVector(tmpB.set(Math.cos(c), 0, -Math.sin(c)), s)
-    .setY(KHAL_LEVEL + h);
+    .setY(WATER_LEVEL + h);
 }
 
 /**
- * Where on the khal (m along it, from its start to its head) it runs most nearly toward `dir` turned `aside`
- * rad off it, so a camera behind a boat there, looking up the khal, has the sun or the moon in the frame off to
+ * Where on the boat's way (m along it, short of the bil) it runs most nearly toward `dir` turned `aside` rad
+ * off it, so a camera behind a boat there, looking along her way, has the sun or the moon in the frame off to
  * one side of her.
  */
 function facing(dir: Vector3, aside: number): number {
@@ -52,30 +51,30 @@ function facing(dir: Vector3, aside: number): number {
   let best = 40;
   let err = Infinity;
   for (let s = 40; s < JOURNEY.head - 60; s += 4) {
-    const h = khalAt(s).heading;
+    const h = journeyAt(s).heading;
     const e = Math.min(Math.abs(angleDelta(h, bearing - aside)), Math.abs(angleDelta(h, bearing + aside)));
-    // and the khal keeps on that way for a while, so the boat stays in the shot
-    const on = Math.abs(angleDelta(h, khalAt(s + 30).heading));
+    // and her way keeps on that way for a while, so the boat stays in the shot
+    const on = Math.abs(angleDelta(h, journeyAt(s + 30).heading));
     if (e + on < err) (err = e + on), (best = s);
   }
   return best;
 }
 
-/** How many buildings stand within `r` m of (x, z) (their footprints reaching in). */
-function buildingsNear(x: number, z: number, r: number): number {
+/** How many homesteads stand within `r` m of (x, z). */
+function homesNear(x: number, z: number, r: number): number {
   let n = 0;
-  for (let i = 0; i < BUILDINGS.count; i++) if (Math.hypot(BUILDINGS.x[i] - x, BUILDINGS.z[i] - z) < r + BUILDINGS.l[i] / 2) n++;
+  for (const m of HOMESTEAD_MOUNDS) if (Math.hypot(m.x - x, m.z - z) < r + m.hu) n++;
   return n;
 }
 
 /**
- * Where the paddy fields come down to the khal: within 400 m along it of `s0`, the bank (`s`, `side`) with the
- * most open plots (no trees over them) just beyond its levee, 12–70 m out, over 60 m of it, and the fewest
- * buildings round them (the film looks across them from the khal's water, the village's houses beyond).
+ * Where the paddy fields come down to the water: within 400 m along the boat's way of `s0`, the bank (`s`,
+ * `side`) with the most open field just beyond it, 12–70 m out, over 60 m of it, and the fewest homesteads
+ * round them (the film looks across them from the water, the village's groves beyond).
  */
 function fieldBank(s0: number): { s: number; side: 1 | -1 } {
   const at = (s: number, side: number, out: number) => {
-    const p = khalAt(s);
+    const p = journeyAt(s);
     return { x: p.x + Math.cos(p.heading) * side * out, z: p.z - Math.sin(p.heading) * side * out };
   };
   let best = { score: -Infinity, s: s0, side: 1 as 1 | -1 };
@@ -83,59 +82,64 @@ function fieldBank(s0: number): { s: number; side: 1 | -1 } {
     for (const side of [1, -1] as const) {
       let score = 0;
       for (const d of [0, 15, 30, 45, 60]) {
-        for (let out = khalHalfWidth(s + d) + 12; out <= 70; out += 8) {
+        for (let out = journeyHalfWidth(s + d) + 12; out <= 70; out += 8) {
           const p = at(s + d, side, out);
-          if (groundAt(p.x, p.z).zone > 0.85 && canopyAt(p.x, p.z).cover < 0.15) score++;
+          if (groundAt(p.x, p.z).zone > 0.85) score++;
         }
       }
       const view = at(s + 40, side, 70);
-      score -= 4 * buildingsNear(view.x, view.z, 90);
+      score -= 4 * homesNear(view.x, view.z, 60);
       if (score > best.score) best = { score, s, side };
     }
   }
   return best;
 }
 
-/** Low over the khal by the fields' bank, drifting up it and looking across the plots beyond the levee. */
+/** Low over the water by the fields' bank, drifting along it and looking across the plots beyond the bank. */
 function acrossFields(bank: { s: number; side: 1 | -1 }, height: number, u: number, pos: Vector3, look: Vector3): void {
-  onKhal(bank.s + lerp(0, 18, u), -bank.side * 2, height, pos);
-  onKhal(bank.s + 40, bank.side * (khalHalfWidth(bank.s + 40) + 35), 0.6, look);
+  onWay(bank.s + lerp(0, 18, u), -bank.side * 2, height, pos);
+  onWay(bank.s + 40, bank.side * (journeyHalfWidth(bank.s + 40) + 35), 0.6, look);
 }
 
 // places found once, at load (deterministic)
 /** The fields the film comes back to through the year: mustard in winter, the aman planted in the rains' water, ripe in Hemanta. */
 const FIELDS = fieldBank(JOURNEY.bridge + 160);
-/** A stretch of the khal's bank under trees (the satellites' canopy) for spring's blossom. */
+/** A stretch of bank by a homestead's grove for spring's blossom. */
 const BLOSSOM = (() => {
-  for (let s = JOURNEY.bridge + 60; s < JOURNEY.head - 60; s += 6) {
+  for (let s = JOURNEY.opening + 200; s < JOURNEY.head - 60; s += 6) {
     for (const side of [1, -1] as const) {
-      const p = khalAt(s);
-      const out = khalHalfWidth(s) + 14;
-      if (canopyAt(p.x + Math.cos(p.heading) * side * out, p.z - Math.sin(p.heading) * side * out).cover > 0.5) return { s, side };
+      const p = journeyAt(s);
+      const out = journeyHalfWidth(s) + 18;
+      if (homesNear(p.x + Math.cos(p.heading) * side * out, p.z - Math.sin(p.heading) * side * out, 10) > 0) return { s, side };
     }
   }
   return { s: JOURNEY.bridge + 120, side: 1 as const };
 })();
-/** A village pond for a morning: the widest with lilies within 200 m of the khal; the bil if there is none. */
-const POND = LILY_PONDS.filter((p) => (khalFrame(p.x, p.z)?.d ?? Infinity) < 200).sort((a, b) => b.r - a.r)[0] ?? { x: BIL.x, z: BIL.z, r: BIL.halfWid, level: BIL.level };
+/** A village pond for a morning: the widest with lilies within 200 m of the boat's way; the bil if there is none. */
+const POND = LILY_PONDS.filter((p) => (journeyFrame(p.x, p.z)?.d ?? Infinity) < 200).sort((a, b) => b.r - a.r)[0] ?? { x: BIL.x, z: BIL.z, r: BIL.halfWid, level: BIL.level };
 
 /** The film's scenes; `ghats` are the village's (world/village.ts planGhats). */
 export function tourScenes(ghats: readonly Ghat[]): Scene[] {
   // per-scene choices made as each scene opens
   const a = new Vector3();
-  const ghat = ghats[Math.min(1, ghats.length - 1)] ?? { s: JOURNEY.bridge + 90, side: 1 as const };
-  const stormGhat = ghats[Math.min(2, ghats.length - 1)] ?? ghat;
+  // the ghats along the boat's way, as places on it
+  const onTheWay = ghats.flatMap((g) => {
+    const f = journeyFrame(g.x, g.z);
+    return f && f.d < 40 ? [{ s: f.s, side: f.side }] : [];
+  });
+  const ghat = onTheWay[Math.min(1, onTheWay.length - 1)] ?? { s: JOURNEY.opening + 120, side: 1 as const };
+  const stormGhat = onTheWay[Math.min(3, onTheWay.length - 1)] ?? ghat;
 
   return [
     {
       caption: 'শীতের ভোর',
       seconds: 15,
       world: { day: 14, hour: { at: 'sunrise', offset: 0 }, weather: 'clear', wind: 0.2 },
-      journey: journeyAt(40),
+      journey: fractionAt(40),
       begin: (s) => s.birds(s.boatPos, s.boatCourse + Math.PI),
       // down out of the sky over the misty khal onto the boat coming up it
       pose: (u, s, pos, look) => {
-        onKhal(alongOf(s.boatPos) + lerp(70, 22, u), 0, lerp(30, 3.2, u), pos);
+        onWay(alongOf(s.boatPos) + lerp(70, 22, u), 0, lerp(30, 3.2, u), pos);
         rel(s, 0, 0, lerp(0.4, 1.4, u), look);
       },
     },
@@ -161,8 +165,8 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       world: { day: 28, hour: 9.4, weather: 'clear', wind: 0.35 },
       // low on the khal gliding past a homestead's ghat, its steps down to the water
       pose: (u, _s, pos, look) => {
-        onKhal(ghat.s + lerp(-30, -8, u), -ghat.side * 2.5, 1.9, pos);
-        onKhal(ghat.s, ghat.side * (khalHalfWidth(ghat.s) + 6), 1.8, look);
+        onWay(ghat.s + lerp(-30, -8, u), -ghat.side * 2.5, 1.9, pos);
+        onWay(ghat.s, ghat.side * (journeyHalfWidth(ghat.s) + 6), 1.8, look);
       },
     },
     {
@@ -172,8 +176,8 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       // up the khal under its bank's trees in flower
       pose: (u, _s, pos, look) => {
         const s = lerp(BLOSSOM.s - 30, BLOSSOM.s - 5, u);
-        onKhal(s, -BLOSSOM.side * 2, 2.2, pos);
-        onKhal(s + 45, BLOSSOM.side * (khalHalfWidth(s + 45) + 10), 6, look);
+        onWay(s, -BLOSSOM.side * 2, 2.2, pos);
+        onWay(s + 45, BLOSSOM.side * (journeyHalfWidth(s + 45) + 10), 6, look);
       },
     },
     {
@@ -182,15 +186,15 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       world: { day: 128, hour: 16.0, weather: 'storm', wind: 2.6 },
       // the squall over the village: trees thrashing, rain driving across the khal
       pose: (u, _s, pos, look) => {
-        onKhal(stormGhat.s + lerp(-34, -18, u), -stormGhat.side * 2, 2.4, pos);
-        onKhal(stormGhat.s + 10, stormGhat.side * (khalHalfWidth(stormGhat.s) + 20), 6, look);
+        onWay(stormGhat.s + lerp(-34, -18, u), -stormGhat.side * 2, 2.4, pos);
+        onWay(stormGhat.s + 10, stormGhat.side * (journeyHalfWidth(stormGhat.s) + 20), 6, look);
       },
     },
     {
       caption: 'বর্ষার খাল',
       seconds: 13,
       world: { day: 195, hour: 11.0, weather: 'rain', wind: null },
-      journey: journeyAt(JOURNEY.bridge + 220),
+      journey: fractionAt(JOURNEY.bridge + 220),
       // ahead of the boat in the rain, low over the khal, as she comes on
       pose: (u, s, pos, look) => {
         rel(s, lerp(12, 6, u), lerp(-2.5, -1.5, u), 1.4, pos);
@@ -207,12 +211,12 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       caption: 'সেতুর নিচে',
       seconds: 16,
       world: { day: 268, hour: { at: 'sunset', offset: -0.7 }, weather: 'clear', wind: 0.55 },
-      journey: journeyAt(JOURNEY.bridge - 20),
+      journey: fractionAt(JOURNEY.bridge - 20),
       // low behind the boat as she goes under the old bridge, the girl with her umbrella above
       pose: (u, s, pos, look) => {
         const at = alongOf(s.boatPos);
-        onKhal(at - lerp(12, 9, u), 0, lerp(1.9, 1.5, u), pos);
-        onKhal(at + 10, 0, 2.2, look).lerp(rel(s, 0, 0, 1.3, a), 0.4);
+        onWay(at - lerp(12, 9, u), 0, lerp(1.9, 1.5, u), pos);
+        onWay(at + 10, 0, 2.2, look).lerp(rel(s, 0, 0, 1.3, a), 0.4);
       },
     },
     {
@@ -245,9 +249,9 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       world: { day: 262, hour: 16.4, weather: 'clear', wind: 0.9 },
       // among the kash where it stands thickest on the bank, its plumes tossing, the boat coming up the khal
       begin: (s) => {
-        const k = kashStand() ?? khalAt(JOURNEY.bridge + 100);
+        const k = kashStand() ?? journeyAt(JOURNEY.opening + 100);
         a.set(k.x, terrainHeight(k.x, k.z) + 1.5, k.z);
-        s.placeBoat(journeyAt(Math.max(0, (khalFrame(k.x, k.z)?.s ?? JOURNEY.bridge + 100) - 40)));
+        s.placeBoat(fractionAt(Math.max(0, (journeyFrame(k.x, k.z)?.s ?? JOURNEY.opening + 100) - 40)));
       },
       pose: (u, s, pos, look) => {
         pos.copy(a);
@@ -267,11 +271,11 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       world: { day: 290, hour: { at: 'sunset', offset: -0.04 }, weather: 'clear', wind: 0.15 },
       // behind the boat paddling up the khal toward the low sun, off to one side of her
       begin: (s) => {
-        s.placeBoat(journeyAt(facing(s.sunDir, 0.3)));
+        s.placeBoat(fractionAt(facing(s.sunDir, 0.3)));
         s.birds(s.boatPos, s.boatCourse);
       },
       pose: (u, s, pos, look) => {
-        onKhal(alongOf(s.boatPos) - lerp(19, 14, u), 0, 1.0, pos);
+        onWay(alongOf(s.boatPos) - lerp(19, 14, u), 0, 1.0, pos);
         rel(s, 0, 0, 1.2, look);
       },
     },
@@ -281,12 +285,12 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       world: { day: 290, moon: 14.8, hour: { at: 'moonrise', offset: 0.35 }, weather: 'clear', wind: 0.15 },
       // out in the bil, where nothing stands between the boat and the rising moon: low behind her, the full moon
       // off to one side of her lantern
-      journey: journeyAt(JOURNEY.head + 120),
+      journey: fractionAt(JOURNEY.head + 120),
       pose: (u, s, pos, look) => {
         const m = s.moonDir;
         const away = tmpA.set(m.x, 0, m.z).normalize();
         const aside = tmpB.set(away.z, 0, -away.x);
-        pos.copy(s.boatPos).addScaledVector(away, -lerp(17, 12, u)).addScaledVector(aside, lerp(3, 1.5, u)).setY(KHAL_LEVEL + 1.3);
+        pos.copy(s.boatPos).addScaledVector(away, -lerp(17, 12, u)).addScaledVector(aside, lerp(3, 1.5, u)).setY(WATER_LEVEL + 1.3);
         const toBoat = a.subVectors(rel(s, 0, 0, 1.2, look), pos).normalize();
         look.copy(pos).addScaledVector(toBoat.lerp(m, 0.55).normalize(), 30);
       },

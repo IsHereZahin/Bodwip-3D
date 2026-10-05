@@ -17,7 +17,7 @@ import { G, LAYER_NO_REFLECT } from '../core/globals';
 import { Rng } from '../core/rng';
 import { GLSL_COMMON } from '../render/glsl';
 import { patchMaterial } from '../render/patch';
-import { JOURNEY, khalAt, khalFrame, khalHalfWidth, terrainHeight, waterLevelAt } from './geography';
+import { JOURNEY, journeyAt, journeyFrame, journeyHalfWidth, terrainHeight, waterLevelAt } from './geography';
 
 // ---------- birds ----------
 
@@ -285,7 +285,7 @@ export class Life {
 
     // fireflies over the khal's banks wrap through a window along it from behind the boat to well ahead of
     // her (`ffZ` is how far along the khal each is)
-    const at = khalFrame(hero.x, hero.z)?.s ?? this.lastAlong;
+    const at = journeyFrame(hero.x, hero.z)?.s ?? this.lastAlong;
     this.lastAlong = at;
     const top = at + 60;
     let moved = false;
@@ -295,8 +295,8 @@ export class Life {
       if (this.ffAt[i] === s && !Number.isNaN(this.ffBase[k])) continue;
       this.ffAt[i] = s;
       const side = this.ffSide[i];
-      const p = khalAt(s);
-      const out = khalHalfWidth(s) + 3 + this.ffInland[i];
+      const p = journeyAt(s);
+      const out = journeyHalfWidth(s) + 3 + this.ffInland[i];
       const x = p.x + Math.cos(p.heading) * out * side;
       const z = p.z - Math.sin(p.heading) * out * side;
       this.ffBase[k] = x;

@@ -3,51 +3,33 @@ import { LAYER_NO_REFLECT } from '../core/globals';
 import { smoothstep } from '../core/mathx';
 import { Rng } from '../core/rng';
 import { SegmentIndex } from '../core/segmentIndex';
-import { KIND, LINES, kindAt } from '../geo/data';
 import { MeshBuilder, rgb, scaleRgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { ROAD_SURFACES, roadAtlas } from '../render/textures';
-import { JOURNEY, baseGround, bilReach, khalAt, khalFrame, khalHalfWidth } from './khal';
+import { PLAIN, ROAD_RAISE, ROADS, type Pt, type RoadPoint, type RoadSpec } from './plan';
+import { bridgeEnds, sankoEnds, type Point2 } from './sites';
+import { KHAL, RIVER, riverLevee } from './waterways';
 
-// The roads OpenStreetMap draws (geo/vectors.bin): on the 1:3 map at their real width (GEOGRAPHY_PLAN.md
-// §5.1), each with a crest a little above the land (the coast's roads run on low embankments, the highways
-// on high ones: [মডেল], OSM has no heights) that the ground is levelled to (geography.ts terrainHeight), and a
-// surface by its kind: the highways and the main roads in bitumen, the village roads in herringbone brick
-// (HBB), the tracks and paths bare earth [মডেল: OSM's surface tags are not baked]. Where OSM marks a bridge
-// the ground is left as it is and a deck crosses it. Where a road crosses the khal it does so on a deck too
-// (OSM does not always mark it); a road running beside the khal is moved out onto its levee; at the old bridge
-// the arch carries the path (world/bridge.ts), and the bil's ground (world/khal.ts) has no roads.
+// The village's ways (world/plan.ts ROADS): the brick road (herringbone brick, HBB, as Bengal's village roads
+// are laid) on its embankment a little above the fields, and the earth paths between the homesteads, the
+// ghats and the fields, worn into the ground. Each runs as a smooth curve through its designed points. Where
+// the road meets the khal the old bridge carries it (world/bridge.ts), and where the field path meets the side
+// khal the bamboo sanko does: the way ends at each landing and goes on from the other, coming straight onto
+// the crossing along its line.
 
-type Surface = 'asphalt' | 'brick' | 'earth';
+type Surface = 'brick' | 'earth';
 
-/** By OSM's highway tag: width (m, real), how high the crest stands over the land (m), and the surface. */
-const ROAD_KINDS: Readonly<Record<string, { width: number; raise: number; surface: Surface }>> = {
-  trunk: { width: 7.3, raise: 1, surface: 'asphalt' },
-  trunk_link: { width: 5.5, raise: 0.8, surface: 'asphalt' },
-  primary: { width: 7, raise: 1, surface: 'asphalt' },
-  secondary: { width: 5.5, raise: 0.8, surface: 'asphalt' },
-  secondary_link: { width: 5, raise: 0.8, surface: 'asphalt' },
-  tertiary: { width: 4.5, raise: 0.6, surface: 'asphalt' },
-  unclassified: { width: 3.7, raise: 0.5, surface: 'brick' },
-  road: { width: 3.5, raise: 0.4, surface: 'brick' },
-  residential: { width: 3, raise: 0.3, surface: 'brick' },
-  living_street: { width: 3, raise: 0.2, surface: 'brick' },
-  service: { width: 3, raise: 0.2, surface: 'brick' },
-  pedestrian: { width: 3, raise: 0.1, surface: 'brick' },
-  steps: { width: 1.5, raise: 0, surface: 'brick' },
-  track: { width: 2.5, raise: 0.2, surface: 'earth' },
-  footway: { width: 1.5, raise: 0, surface: 'earth' },
-  path: { width: 1.2, raise: 0, surface: 'earth' },
-};
-/** How far the embankment's sides reach out from the carriageway's edge (m). */
+/** How far the brick road's embankment sides reach out from its edge (m). */
 const SHOULDER = 2.5;
-/** How far beyond its shoulders a road is still found (m): a building's corner may reach that far. */
-const NEAR = 6;
-/** The surface drawn this far above the levelled ground (m), against z-fighting. */
+/** The surfaces are drawn this far above the ground they lie on (m), against z-fighting. */
 const LIFT = 0.05;
+/** Spacing of a way's points along it (m). */
+const STEP = 2.5;
+/** A way comes onto a crossing straight for this far (m). */
+const APPROACH = 7;
 
-/** One straight piece of a road: its ends, half-width, crest at each end, surface, and whether it is a bridge. */
-interface RoadReach {
+/** One straight piece of a way: its ends, half-width, the brick road's crest at each end, surface, and distance along it at each end. */
+interface Reach {
   ax: number;
   az: number;
   bx: number;
@@ -56,278 +38,282 @@ interface RoadReach {
   ca: number;
   cb: number;
   surface: Surface;
-  bridge: boolean;
-  /** Distance along its road at each end (m), for the surface's texture. */
   va: number;
   vb: number;
 }
 
-/**
- * The crests along a road's points: the land under each, smoothed over its neighbours (the DEM's 30 m cells
- * are noisy), raised; where a point stands in water (a creek the road crosses unmarked), the land either side.
- */
-function crests(p: Float32Array, raise: number): Float32Array {
-  const n = p.length / 2;
-  const land = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
-    const x = p[i * 2];
-    const z = p[i * 2 + 1];
-    land[i] = kindAt(x, z) !== KIND.inland ? baseGround(x, z) : Number.NaN;
+/** Where a crossing's anchor is, and the point a way comes onto it from (out along the crossing's line). */
+function anchor(a: Exclude<RoadPoint, Pt>): { at: Point2; out: Point2 } {
+  const bridge = bridgeEnds();
+  const sanko = sankoEnds();
+  // each landing, and the crossing's other one
+  const ends: Record<Exclude<RoadPoint, Pt>, [Point2, Point2]> = {
+    'bridge-e': [bridge.e, bridge.w],
+    'bridge-w': [bridge.w, bridge.e],
+    'sanko-s': [sanko.s, sanko.n],
+    'sanko-n': [sanko.n, sanko.s],
+  };
+  const [at, other] = ends[a];
+  const len = Math.hypot(at.x - other.x, at.z - other.z);
+  return { at, out: { x: at.x + ((at.x - other.x) / len) * APPROACH, z: at.z + ((at.z - other.z) / len) * APPROACH } };
+}
+
+/** A way's designed points split into the pieces either side of its crossings, each as plain points, coming straight onto them. */
+function pieces(points: readonly RoadPoint[]): Pt[][] {
+  const out: Pt[][] = [];
+  let cur: Pt[] = [];
+  for (let i = 0; i < points.length; i++) {
+    const p = points[i];
+    if (typeof p !== 'string') {
+      cur.push(p);
+      continue;
+    }
+    const a = anchor(p);
+    const next = points[i + 1];
+    if (typeof next === 'string' && next.split('-')[0] === p.split('-')[0]) {
+      // arriving at a crossing: come straight onto it, end here, and go on from its far landing
+      cur.push([a.out.x, a.out.z], [a.at.x, a.at.z]);
+      out.push(cur);
+      const b = anchor(next);
+      cur = [
+        [b.at.x, b.at.z],
+        [b.out.x, b.out.z],
+      ];
+      i++;
+    } else cur.push([a.at.x, a.at.z]);
   }
-  // fill the points in water from the nearest land along the road (or a little above the high tides if none)
-  for (let i = 0; i < n; i++) {
-    if (!Number.isNaN(land[i])) continue;
-    let a = i - 1;
-    let b = i + 1;
-    while (a >= 0 && Number.isNaN(land[a])) a--;
-    while (b < n && Number.isNaN(land[b])) b++;
-    const ha = a >= 0 ? land[a] : Number.NaN;
-    const hb = b < n ? land[b] : Number.NaN;
-    land[i] = Number.isNaN(ha) ? (Number.isNaN(hb) ? 3 : hb) : Number.isNaN(hb) ? ha : Math.max(ha, hb);
+  if (cur.length > 1) out.push(cur);
+  return out;
+}
+
+/** A smooth curve through `pts` (Catmull–Rom), as points every STEP m. */
+function curve(pts: readonly Pt[]): Pt[] {
+  const dense: Pt[] = [];
+  const p = (i: number) => pts[Math.max(0, Math.min(pts.length - 1, i))];
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [x0, z0] = p(i - 1);
+    const [x1, z1] = p(i);
+    const [x2, z2] = p(i + 1);
+    const [x3, z3] = p(i + 2);
+    const n = Math.max(2, Math.ceil(Math.hypot(x2 - x1, z2 - z1) / 0.8));
+    for (let k = 0; k < n; k++) {
+      const t = k / n;
+      const f = (a: number, b: number, c: number, d: number) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t * t + (-a + 3 * b - 3 * c + d) * t * t * t);
+      dense.push([f(x0, x1, x2, x3), f(z0, z1, z2, z3)]);
+    }
   }
-  const out = new Float32Array(n);
-  for (let i = 0; i < n; i++) {
+  dense.push(pts[pts.length - 1]);
+  // resampled every STEP m along it, keeping both ends exactly
+  const out: Pt[] = [dense[0]];
+  let carry = 0;
+  for (let k = 0; k + 1 < dense.length; k++) {
+    const [ax, az] = dense[k];
+    const [bx, bz] = dense[k + 1];
+    const len = Math.hypot(bx - ax, bz - az);
+    let at = STEP - carry;
+    while (at <= len) {
+      out.push([ax + ((bx - ax) * at) / len, az + ((bz - az) * at) / len]);
+      at += STEP;
+    }
+    carry = len - (at - STEP);
+  }
+  const last = pts[pts.length - 1];
+  if (Math.hypot(out[out.length - 1][0] - last[0], out[out.length - 1][1] - last[1]) > 0.3) out.push(last);
+  else out[out.length - 1] = last;
+  return out;
+}
+
+/** The brick road's crest along its points: the land under it (the fields and the river's levee) raised, smoothed along it. */
+function crests(pts: readonly Pt[]): Float32Array {
+  const land = pts.map(([x, z]) => PLAIN + riverLevee(x, z) + ROAD_RAISE);
+  const out = new Float32Array(pts.length);
+  for (let i = 0; i < pts.length; i++) {
     let s = 0;
     let k = 0;
-    for (let j = Math.max(0, i - 2); j <= Math.min(n - 1, i + 2); j++) (s += land[j]), k++;
-    out[i] = s / k + raise;
+    for (let j = Math.max(0, i - 6); j <= Math.min(pts.length - 1, i + 6); j++) (s += land[j]), k++;
+    out[i] = s / k;
   }
   return out;
 }
 
-/** A road beside the khal keeps its edge this far out from the khal's water (m): over the mud bank, on the levee's top (geography.ts BANK). */
-const BANK_TOP = 6.5;
-
-/**
- * A road's points with the stretches that run along the khal moved out onto its levee: the khal is drawn at its
- * real width, wider than the 1:3 map would draw it, and OSM's roads beside it would stand in its water. Where a
- * road crosses the khal (its points go from one side to the other) the crossing is left where it is, for a
- * deck. Near the khal the points are first set every 4 m, so a pushed road follows the bank's bends.
- */
-function besideTheKhal(p: Float32Array, half: number): Float32Array {
-  const pts: number[] = [];
-  for (let k = 0; k + 1 < p.length; k += 2) {
-    pts.push(p[k], p[k + 1]);
-    if (k + 3 >= p.length) break;
-    const near = khalFrame(p[k], p[k + 1]) !== null || khalFrame(p[k + 2], p[k + 3]) !== null;
-    const len = Math.hypot(p[k + 2] - p[k], p[k + 3] - p[k + 1]);
-    const n = near ? Math.floor(len / 4) : 0;
-    for (let i = 1; i <= n; i++) pts.push(p[k] + ((p[k + 2] - p[k]) * i) / (n + 1), p[k + 1] + ((p[k + 3] - p[k + 1]) * i) / (n + 1));
+/** A path along a waterway's bank: its points between the two it is laid from, `offset` m back from the water's edge, on their side. */
+function alongBank(a: NonNullable<RoadSpec['along']>): Pt[] {
+  const way = a.way === 'river' ? RIVER : KHAL;
+  const s0 = way.line.nearestS(a.from[0], a.from[1]);
+  const s1 = way.line.nearestS(a.to[0], a.to[1]);
+  const p = way.at(s0);
+  const side = Math.cos(p.heading) * (a.from[0] - p.x) - Math.sin(p.heading) * (a.from[1] - p.z) >= 0 ? 1 : -1;
+  const out: Pt[] = [];
+  const step = s1 > s0 ? 6 : -6;
+  for (let s = s0; step > 0 ? s <= s1 : s >= s1; s += step) {
+    const e = way.beside(s, side, way.half(s) + a.offset);
+    out.push([e.x, e.z]);
   }
-  const count = pts.length / 2;
-  const frames = Array.from({ length: count }, (_, i) => {
-    const f = khalFrame(pts[i * 2], pts[i * 2 + 1]);
-    return f ? { s: f.s, d: f.d, side: f.side, need: khalHalfWidth(f.s) + BANK_TOP + half } : null;
-  });
-  const wet = (i: number) => frames[i] !== null && frames[i]!.d < frames[i]!.need;
-  // each run of points too near the khal: a short one from one bank to the other is a crossing, left for a
-  // deck; anything else (a road along the khal, OSM's line wandering from one side of the khal's to the
-  // other) goes onto the bank it came in on
-  for (let a = 0; a < count; a++) {
-    if (!wet(a)) continue;
-    let b = a;
-    let run = 0;
-    while (b + 1 < count && wet(b + 1)) {
-      run += Math.hypot(pts[b * 2 + 2] - pts[b * 2], pts[b * 2 + 3] - pts[b * 2 + 1]);
-      b++;
-    }
-    const enter = frames[a]!;
-    const leave = frames[b]!;
-    const crosses = enter.side !== leave.side && run < 2.5 * Math.max(enter.need, leave.need);
-    if (!crosses) {
-      for (let i = a; i <= b; i++) {
-        const c = khalAt(frames[i]!.s);
-        const need = frames[i]!.need;
-        pts[i * 2] = c.x + Math.cos(c.heading) * enter.side * need;
-        pts[i * 2 + 1] = c.z - Math.sin(c.heading) * enter.side * need;
-      }
-    }
-    a = b;
-  }
-  return Float32Array.from(pts);
+  return out;
 }
 
-const REACHES: RoadReach[] = [];
-/** Where each road's points start in REACHES, and how many, for the joints between its pieces. */
-const ROADS: { first: number; count: number }[] = [];
-for (const l of LINES) {
-  const kind = l.k === 'road' && l.t !== undefined ? ROAD_KINDS[l.t] : undefined;
-  if (!kind || l.points.length < 4) continue;
-  const p = besideTheKhal(l.points, kind.width / 2);
-  const c = crests(p, kind.raise);
-  let first = REACHES.length;
-  let v = 0;
-  for (let k = 0; k + 3 < p.length; k += 2) {
-    const len = Math.hypot(p[k + 2] - p[k], p[k + 3] - p[k + 1]);
-    const cross = crossing(p[k], p[k + 1], p[k + 2], p[k + 3]);
-    if (cross === 'gone') {
-      // the road breaks here: its pieces either side are roads of their own
-      if (REACHES.length > first) ROADS.push({ first, count: REACHES.length - first });
-      first = REACHES.length;
+const REACHES: Reach[] = [];
+/** Each piece's run of REACHES, for the joints between them. */
+const PIECES: { first: number; count: number }[] = [];
+for (const road of ROADS) {
+  const half = road.width / 2;
+  for (const piece of road.along ? [alongBank(road.along)] : pieces(road.points ?? [])) {
+    const pts = curve(piece);
+    const c = road.kind === 'brick' ? crests(pts) : null;
+    const first = REACHES.length;
+    let v = 0;
+    for (let k = 0; k + 1 < pts.length; k++) {
+      const [ax, az] = pts[k];
+      const [bx, bz] = pts[k + 1];
+      const len = Math.hypot(bx - ax, bz - az);
+      REACHES.push({ ax, az, bx, bz, half, ca: c ? c[k] : Number.NaN, cb: c ? c[k + 1] : Number.NaN, surface: road.kind, va: v, vb: v + len });
       v += len;
-      continue;
     }
-    REACHES.push({ ax: p[k], az: p[k + 1], bx: p[k + 2], bz: p[k + 3], half: kind.width / 2, ca: c[k / 2], cb: c[k / 2 + 1], surface: kind.surface, bridge: l.bridge === 1 || cross === 'deck', va: v, vb: v + len });
-    v += len;
+    PIECES.push({ first, count: REACHES.length - first });
   }
-  if (REACHES.length > first) ROADS.push({ first, count: REACHES.length - first });
 }
 
-/**
- * What a piece of road from a to b meets: the bil's ground or the old bridge's crossing ('gone': left out, the
- * arch carries the path), the khal elsewhere ('deck': it crosses on a deck), or nothing.
- */
-function crossing(ax: number, az: number, bx: number, bz: number): 'gone' | 'deck' | null {
-  const arch = khalAt(JOURNEY.bridge);
-  const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 2));
-  let deck = false;
-  for (let i = 0; i <= n; i++) {
-    const x = ax + ((bx - ax) * i) / n;
-    const z = az + ((bz - az) * i) / n;
-    if (bilReach(x, z) < 1.2) return 'gone';
-    const f = khalFrame(x, z);
-    if (f && f.d < khalHalfWidth(f.s) + 3) {
-      if (Math.hypot(x - arch.x, z - arch.z) < 30) return 'gone';
-      deck = true;
-    }
+/** Every way's pieces, and the brick road's alone (its embankment and its verges). */
+const ALL = new SegmentIndex(32);
+const BRICK = new SegmentIndex(32);
+const BRICK_OF: number[] = [];
+REACHES.forEach((r, i) => {
+  ALL.add(r.ax, r.az, r.bx, r.bz, r.half, 8);
+  if (r.surface === 'brick') {
+    BRICK.add(r.ax, r.az, r.bx, r.bz, r.half, SHOULDER + 8);
+    BRICK_OF.push(i);
   }
-  return deck ? 'deck' : null;
-}
-
-const INDEX = new SegmentIndex(32);
-for (const r of REACHES) INDEX.add(r.ax, r.az, r.bx, r.bz, r.half, 0.3 + SHOULDER + NEAR);
+});
 
 /**
- * The ground the roads leave at (x, z): a road's crest across its carriageway, its embankment's sides (or a
- * cutting's) easing down (or up) to the land beside it; the land itself away from them and under bridges.
+ * The ground the brick road leaves at (x, z): its crest across its carriageway, its embankment's sides easing
+ * down (or a cutting's up) to the land beside it. The earth paths lie on the ground as it is.
  */
 export function roadGround(x: number, z: number, ground: number): number {
-  const hit = INDEX.nearest(x, z);
+  const hit = BRICK.nearest(x, z);
   if (!hit) return ground;
-  const r = REACHES[hit.index];
-  if (r.bridge) return ground;
+  const r = REACHES[BRICK_OF[hit.index]];
   const crest = r.ca + (r.cb - r.ca) * hit.t;
   if (hit.d <= r.half + 0.3) return crest;
   return crest + (ground - crest) * smoothstep(r.half + 0.3, r.half + 0.3 + SHOULDER, hit.d);
 }
 
-/** How much of (x, z) is road (1 on the carriageway, easing to 0 across its shoulders); 0 under bridges. */
+/** How much of (x, z) is a way's trodden ground (1 on it, easing to 0 across the brick road's shoulders or a path's worn edge). */
 export function roadCover(x: number, z: number): number {
-  const hit = INDEX.nearest(x, z);
-  if (!hit || REACHES[hit.index].bridge) return 0;
+  const hit = ALL.nearest(x, z);
+  if (!hit) return 0;
   const r = REACHES[hit.index];
-  return 1 - smoothstep(r.half, r.half + SHOULDER, hit.d);
+  return 1 - smoothstep(r.half, r.half + (r.surface === 'brick' ? SHOULDER : 0.7), hit.d);
 }
 
-/** True within `margin` m of a road's carriageway or a bridge (margin up to its shoulders' reach). */
+/** How far (x, z) is from the brick road's edge (m; ∞ away from it): its verges are grass, not field. */
+export function roadEdge(x: number, z: number): number {
+  const hit = BRICK.nearest(x, z);
+  return hit ? hit.d - REACHES[BRICK_OF[hit.index]].half : Infinity;
+}
+
+/** True within `margin` m of a way (its carriageway or its path). */
 export function onRoad(x: number, z: number, margin = 0): boolean {
-  const hit = INDEX.nearest(x, z);
+  const hit = ALL.nearest(x, z);
   return hit !== null && hit.d < REACHES[hit.index].half + margin;
 }
 
-/**
- * (x, z) moved clear of the roads by `r` (a building's reach from its middle) and a little more: pushed straight
- * out from the nearest road's middle line, a few times over where roads meet. On the 1:3 map the houses that
- * line a road stand a third as far from it as they do, so most of them need it.
- */
-export function clearOfRoads(x: number, z: number, r: number): { x: number; z: number } {
-  for (let k = 0; k < 4; k++) {
-    const hit = INDEX.nearest(x, z);
-    if (!hit) break;
-    const road = REACHES[hit.index];
-    const need = road.half + r + 0.6;
-    if (hit.d >= need) break;
-    const px = road.ax + (road.bx - road.ax) * hit.t;
-    const pz = road.az + (road.bz - road.az) * hit.t;
-    // off the line to its side (or, if right on it, to its right)
-    let dx = x - px;
-    let dz = z - pz;
-    if (Math.hypot(dx, dz) < 1e-3) (dx = road.bz - road.az), (dz = -(road.bx - road.ax));
-    const len = Math.hypot(dx, dz) || 1;
-    x = px + (dx / len) * need;
-    z = pz + (dz / len) * need;
-  }
-  return { x, z };
+/** The ways' points, for laying things along them (trees along the road): each piece's points every STEP m, with its surface. */
+export function roadLines(): { surface: Surface; half: number; points: Pt[] }[] {
+  return PIECES.map((p) => {
+    const pts: Pt[] = [];
+    for (let k = p.first; k < p.first + p.count; k++) pts.push([REACHES[k].ax, REACHES[k].az]);
+    const last = REACHES[p.first + p.count - 1];
+    pts.push([last.bx, last.bz]);
+    return { surface: REACHES[p.first].surface, half: REACHES[p.first].half, points: pts };
+  });
 }
 
 // ---------- the meshes ----------
 
-/** Roads are drawn in cells of this size (m), so those out of view, or far off, are left undrawn. */
+/** Ways are drawn in cells of this size (m), so those out of view, or far off, are left undrawn. */
 const CELL = 1300;
 /** Each surface's third of the atlas, inset a little so its neighbour does not bleed in. */
 const atlasU = (surface: Surface, u: number) => (ROAD_SURFACES.indexOf(surface) + 0.04 + 0.92 * u) / ROAD_SURFACES.length;
 
 /** Each surface's tint over its texture: the brick dulled by the dust that lies on it. */
 const SURFACE_TINT: Record<Surface, RGB> = {
-  asphalt: rgb('#d6d4d0'),
   brick: rgb('#c9bcae'),
   earth: rgb('#e6ddd2'),
 };
-const CONCRETE: RGB = rgb('#a9a69e');
 
-/** The roads' surfaces and their bridges' decks and parapets, in cells; pass the group to cullBeyond. */
-export function buildRoads(): Group {
+/**
+ * The ways' surfaces, in cells; pass the group to cullBeyond. The brick road lies on its crest; the earth
+ * paths are laid over `ground` (the terrain's height), a little above it.
+ */
+export function buildRoads(ground: (x: number, z: number) => number): Group {
   const group = new Group();
   group.name = 'roads';
   const rng = new Rng(61);
   const cells = new Map<string, MeshBuilder>();
-  const builderFor = (kind: 'road' | 'concrete', x: number, z: number) => {
-    const key = `${kind}:${Math.floor(x / CELL)}:${Math.floor(z / CELL)}`;
+  const builderFor = (x: number, z: number) => {
+    const key = `${Math.floor(x / CELL)}:${Math.floor(z / CELL)}`;
     let b = cells.get(key);
     if (!b) cells.set(key, (b = new MeshBuilder()));
     return b;
   };
   const up = new Vector3(0, 1, 0);
-  const at = (x: number, y: number, z: number) => new Vector3(x, y, z);
+  const at = new Vector3();
 
-  for (const road of ROADS) {
-    for (let k = road.first; k < road.first + road.count; k++) {
+  for (const piece of PIECES) {
+    for (let k = piece.first; k < piece.first + piece.count; k++) {
       const r = REACHES[k];
       const len = Math.hypot(r.bx - r.ax, r.bz - r.az);
       if (len < 0.05) continue;
-      // across the road, to its right
+      // across the way, to its right
       const nx = (r.bz - r.az) / len;
       const nz = -(r.bx - r.ax) / len;
-      const mx = (r.ax + r.bx) / 2;
-      const mz = (r.az + r.bz) / 2;
-      const b = builderFor('road', mx, mz);
-      const ya = r.ca + LIFT;
-      const yb = r.cb + LIFT;
-      // a little variety piece by piece: newer and older stretches
-      const c = scaleRgb(SURFACE_TINT[r.surface], rng.range(0.88, 1.06));
+      const b = builderFor((r.ax + r.bx) / 2, (r.az + r.bz) / 2);
+      // a little variety piece by piece: newer and older stretches, fresher and more trodden earth
+      const c = scaleRgb(SURFACE_TINT[r.surface], rng.range(0.9, 1.05));
+      const height = (t: number, across: number) => {
+        const x = r.ax + (r.bx - r.ax) * t + nx * across;
+        const z = r.az + (r.bz - r.az) * t + nz * across;
+        return r.surface === 'brick' ? r.ca + (r.cb - r.ca) * t + LIFT : ground(x, z) + LIFT * 0.7;
+      };
+      // brick lies flat on its crest; a path is laid over the ground in short steps, three points across
+      const along = r.surface === 'brick' ? 1 : Math.max(1, Math.round(len / 1.25));
+      const across = r.surface === 'brick' ? [-1, 1] : [-1, 0, 1];
       const s = b.vertexCount;
-      b.vertex(at(r.ax - nx * r.half, ya, r.az - nz * r.half), up, atlasU(r.surface, 0), r.va / 3, c);
-      b.vertex(at(r.ax + nx * r.half, ya, r.az + nz * r.half), up, atlasU(r.surface, 1), r.va / 3, c);
-      b.vertex(at(r.bx + nx * r.half, yb, r.bz + nz * r.half), up, atlasU(r.surface, 1), r.vb / 3, c);
-      b.vertex(at(r.bx - nx * r.half, yb, r.bz - nz * r.half), up, atlasU(r.surface, 0), r.vb / 3, c);
-      b.quad(s, s + 3, s + 2, s + 1);
+      for (let i = 0; i <= along; i++) {
+        const t = i / along;
+        for (const a of across) {
+          const x = r.ax + (r.bx - r.ax) * t + nx * r.half * a;
+          const z = r.az + (r.bz - r.az) * t + nz * r.half * a;
+          b.vertex(at.set(x, height(t, r.half * a), z), up, atlasU(r.surface, (a + 1) / 2), (r.va + (r.vb - r.va) * t) / 3, c);
+        }
+      }
+      const w = across.length;
+      for (let i = 0; i < along; i++) for (let j = 0; j + 1 < w; j++) b.quad(s + i * w + j, s + (i + 1) * w + j, s + (i + 1) * w + j + 1, s + i * w + j + 1);
       // the joint with the next piece: a disc at the bend, so its outside is not left open
-      if (k + 1 < road.first + road.count) {
-        const j = b.vertexCount;
-        b.vertex(at(r.bx, yb - 0.002, r.bz), up, atlasU(r.surface, 0.5), r.vb / 3, c);
+      if (k + 1 < piece.first + piece.count) {
+        const y = height(1, 0) - 0.002;
+        const j0 = b.vertexCount;
+        b.vertex(at.set(r.bx, y, r.bz), up, atlasU(r.surface, 0.5), r.vb / 3, c);
         const N = 8;
         for (let i = 0; i <= N; i++) {
           const a = (i / N) * Math.PI * 2;
-          b.vertex(at(r.bx + Math.cos(a) * r.half, yb - 0.002, r.bz + Math.sin(a) * r.half), up, atlasU(r.surface, 0.5 + 0.5 * Math.cos(a)), r.vb / 3 + 0.3 * Math.sin(a), c);
+          const x = r.bx + Math.cos(a) * r.half;
+          const z = r.bz + Math.sin(a) * r.half;
+          b.vertex(at.set(x, r.surface === 'brick' ? y : ground(x, z) + LIFT * 0.7 - 0.002, z), up, atlasU(r.surface, 0.5 + 0.5 * Math.cos(a)), r.vb / 3 + 0.3 * Math.sin(a), c);
         }
-        for (let i = 0; i < N; i++) b.tri(j, j + i + 2, j + i + 1);
+        for (let i = 0; i < N; i++) b.tri(j0, j0 + i + 2, j0 + i + 1);
       }
-      if (r.bridge) bridgeDeck(builderFor('concrete', mx, mz), r, nx, nz);
     }
   }
 
-  const materials: Record<'road' | 'concrete', MeshStandardMaterial> = {
-    road: roadMaterial(),
-    concrete: patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.9 }), { grime: 0.5 }),
-  };
-  for (const [key, b] of cells) {
+  const material = roadMaterial();
+  for (const b of cells.values()) {
     if (!b.vertexCount) continue;
-    const kind = key.split(':')[0] as 'road' | 'concrete';
-    const mesh = new Mesh(b.build(), materials[kind]);
+    const mesh = new Mesh(b.build(), material);
     mesh.receiveShadow = true;
-    mesh.castShadow = kind === 'concrete';
     // flat on the ground: not worth drawing again in the water's mirror
-    if (kind !== 'concrete') mesh.layers.set(LAYER_NO_REFLECT);
+    mesh.layers.set(LAYER_NO_REFLECT);
     mesh.name = 'road';
     group.add(mesh);
   }
@@ -345,54 +331,4 @@ function roadMaterial(): MeshStandardMaterial {
     polygonOffsetUnits: -2,
   });
   return patchMaterial(m, { grime: 0.3 });
-}
-
-/** A bridge's deck under the road surface, its edges, and a low parapet either side, along one piece of road. */
-function bridgeDeck(b: MeshBuilder, r: RoadReach, nx: number, nz: number): void {
-  const DECK = 0.55;
-  const RAIL = 0.75;
-  const RAIL_W = 0.18;
-  const ya = r.ca + LIFT - 0.01;
-  const yb = r.cb + LIFT - 0.01;
-  for (const side of [-1, 1]) {
-    // the deck's edge, facing out
-    const ox = nx * side;
-    const oz = nz * side;
-    const n = new Vector3(ox, 0, oz);
-    const e = r.half + RAIL_W;
-    const s = b.vertexCount;
-    b.vertex(new Vector3(r.ax + ox * e, ya - DECK, r.az + oz * e), n, 0, 0, CONCRETE);
-    b.vertex(new Vector3(r.bx + ox * e, yb - DECK, r.bz + oz * e), n, 1, 0, CONCRETE);
-    b.vertex(new Vector3(r.bx + ox * e, yb + RAIL, r.bz + oz * e), n, 1, 1, scaleRgb(CONCRETE, 1.05));
-    b.vertex(new Vector3(r.ax + ox * e, ya + RAIL, r.az + oz * e), n, 0, 1, scaleRgb(CONCRETE, 1.05));
-    if (side > 0) b.quad(s, s + 3, s + 2, s + 1);
-    else b.quad(s, s + 1, s + 2, s + 3);
-    // the parapet's inner face and its top
-    const i = r.half;
-    const t = b.vertexCount;
-    const nIn = new Vector3(-ox, 0, -oz);
-    b.vertex(new Vector3(r.ax + ox * i, ya, r.az + oz * i), nIn, 0, 0, CONCRETE);
-    b.vertex(new Vector3(r.bx + ox * i, yb, r.bz + oz * i), nIn, 1, 0, CONCRETE);
-    b.vertex(new Vector3(r.bx + ox * i, yb + RAIL, r.bz + oz * i), nIn, 1, 1, CONCRETE);
-    b.vertex(new Vector3(r.ax + ox * i, ya + RAIL, r.az + oz * i), nIn, 0, 1, CONCRETE);
-    if (side > 0) b.quad(t, t + 1, t + 2, t + 3);
-    else b.quad(t, t + 3, t + 2, t + 1);
-    const u = b.vertexCount;
-    const top = new Vector3(0, 1, 0);
-    b.vertex(new Vector3(r.ax + ox * i, ya + RAIL, r.az + oz * i), top, 0, 0, scaleRgb(CONCRETE, 1.1));
-    b.vertex(new Vector3(r.bx + ox * i, yb + RAIL, r.bz + oz * i), top, 1, 0, scaleRgb(CONCRETE, 1.1));
-    b.vertex(new Vector3(r.bx + ox * e, yb + RAIL, r.bz + oz * e), top, 1, 1, scaleRgb(CONCRETE, 1.1));
-    b.vertex(new Vector3(r.ax + ox * e, ya + RAIL, r.az + oz * e), top, 0, 1, scaleRgb(CONCRETE, 1.1));
-    if (side > 0) b.quad(u, u + 1, u + 2, u + 3);
-    else b.quad(u, u + 3, u + 2, u + 1);
-  }
-  // the deck's underside
-  const s = b.vertexCount;
-  const down = new Vector3(0, -1, 0);
-  const e = r.half + RAIL_W;
-  b.vertex(new Vector3(r.ax - nx * e, ya - DECK, r.az - nz * e), down, 0, 0, scaleRgb(CONCRETE, 0.7));
-  b.vertex(new Vector3(r.ax + nx * e, ya - DECK, r.az + nz * e), down, 1, 0, scaleRgb(CONCRETE, 0.7));
-  b.vertex(new Vector3(r.bx + nx * e, yb - DECK, r.bz + nz * e), down, 1, 1, scaleRgb(CONCRETE, 0.7));
-  b.vertex(new Vector3(r.bx - nx * e, yb - DECK, r.bz - nz * e), down, 0, 1, scaleRgb(CONCRETE, 0.7));
-  b.quad(s, s + 1, s + 2, s + 3);
 }

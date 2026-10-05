@@ -200,7 +200,8 @@ ${SPLAT_COLOR}
     vec2 q = plotFrame(wp);
     vec2 cell = floor(q / PLOT_SIZE);
     vec2 f = fract(q / PLOT_SIZE);
-    vec4 sh = cropShares(hash12(cell));
+    float rank = plotRank(cell);
+    vec4 sh = cropShares(rank);
     float stubble = max(0.0, 1.0 - sh.x - sh.y - sh.z - sh.w);
     float grown = hash12(cell + 3.7);
     // from afar, the crop's own colour: seedlings bright over their water, rice deeper green as it grows,
@@ -220,7 +221,7 @@ ${SPLAT_COLOR}
     float bund = 1.0 - smoothstep(0.25, 0.8, min(e.x, e.y));
     // water standing in the plots: under the seedlings always, among the growing rice, and in the fallow
     // plots as the season has it
-    float flooded = smoothstep(-0.035, 0.035, uSeasonB.y - hash12(cell + 7.1)) * (sh.w + stubble);
+    float flooded = smoothstep(-0.035, 0.035, uSeasonB.y - fract(rank * 3.7 + 0.21)) * (sh.w + stubble);
     plotWater = (1.0 - bund) * vZone * max(max(sh.x, sh.y * under * 0.9), flooded);
     fc = mix(fc, fc * 0.45, plotWater * 0.6);
     fc = mix(fc, vec3(0.13, 0.11, 0.065), bund);

@@ -6,7 +6,7 @@ import { patchMaterial } from '../render/patch';
 import { hyacinthLeafTexture } from '../render/textures';
 import { windAt } from '../env/wind';
 import type { BoatBody } from './boatPhysics';
-import { inlandWaterAt, khalFrame, khalHalfWidth, terrainHeight, waterLevelAt } from './geography';
+import { inlandWaterAt, terrainHeight, waterLevelAt, waterwayAt } from './geography';
 import { HERO_HULL, heroBeamAtWater, hullHalfWidthAt, type HullShape } from './hull';
 import { wakeHeight } from './wake';
 import { SHELTERED, waveHeight, waveSlope } from './waves';
@@ -454,8 +454,8 @@ export class Drift {
       const z = vz + Math.sin(a) * r;
       if (!inlandWaterAt(x, z) || waterLevelAt(x, z) - terrainHeight(x, z) < FLOATS) continue;
       // in the khal (and on its way across the bil) they gather in the slack water along the banks, out of the boats' way
-      const f = khalFrame(x, z);
-      if (f && f.d < khalHalfWidth(f.s) - EDGE) continue;
+      const w = waterwayAt(x, z);
+      if (w && w.d < w.half - EDGE) continue;
       return [x, z];
     }
     return null;

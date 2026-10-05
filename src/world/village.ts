@@ -17,73 +17,81 @@ import { Rng } from '../core/rng';
 import { MeshBuilder, rgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { strawTexture, tinTexture } from '../render/textures';
-import { BRIDGE, JOURNEY, KHAL_LEVEL, bilReach, khalAt, khalFrame, khalHalfWidth, nearBackwater, onRoad, terrainHeight } from './geography';
-import { BUILDING } from '../geo/data';
-import type { BuildingPlan } from './buildings';
+import { HOMESTEAD_MOUNDS, WATER_LEVEL, bankAt, nearBackwater, onRoad, shapePoint, terrainHeight, type Mound } from './geography';
+import { HUB_GHAT } from './plan';
 import { buildHull, type HullShape } from './hull';
 import { SHELTERED, waveHeightGlsl, waveSlopeGlsl } from './waves';
+import type { Waterway } from './waterways';
+
+// The homesteads (বাড়ি): on each mound the houses stand round the swept yard (উঠান), the main house across
+// its back looking out over it toward the way the homestead faces, the others along its sides, the kitchen
+// at a front corner and the cowshed at the back; a haystack by the mound's foot. Where a homestead comes
+// down to the river or the khal it has its own ghat, and a boat tied up at some of them.
 
 export interface HutPlan {
   x: number;
   y: number;
   z: number;
   ry: number;
-  /** Length along local x, width along local z. */
+  /** Length along local x, width along local z (its door looks along local +z). */
   l: number;
   w: number;
   roof: 'thatch' | 'tin';
   wall: RGB;
+  kind: 'house' | 'kitchen' | 'shed';
 }
 
-/** Where a homestead comes down to the khal: its brick ghat, how far along the khal and on which side (kept clear of grass). */
+/** Where a homestead (or the village) comes down to its water: its ghat's foot at the water's edge, the way up the bank, and the waterway. */
 export interface Ghat {
   x: number;
   z: number;
+  up: number;
+  way: Waterway;
   s: number;
   side: 1 | -1;
 }
 
 const WALLS: RGB[] = [rgb('#a88458'), rgb('#b8946a'), rgb('#9a7a4a'), rgb('#c4b69a')];
-/** Houses this near the khal's middle are built as huts in detail (seen close from the boat), m. */
-const HUT_REACH = 60;
-/** A ghat for a homestead this near the khal, and no nearer another ghat than this (m). */
-const GHAT_REACH = 38;
-const GHAT_SPACING = 110;
 
-/**
- * The map's houses near the khal, to be built here as huts in detail; the rest of the buildings are
- * world/buildings.ts's. Deterministic.
- */
-export function planHuts(buildings: readonly BuildingPlan[]): { huts: HutPlan[]; rest: BuildingPlan[] } {
-  const rng = new Rng(21);
-  const huts: HutPlan[] = [];
-  const rest: BuildingPlan[] = [];
-  for (const b of buildings) {
-    const f = khalFrame(b.x, b.z);
-    if (b.kind !== BUILDING.house || !f || f.d > HUT_REACH) {
-      rest.push(b);
-      continue;
-    }
-    huts.push({ x: b.x, y: b.base + 0.2, z: b.z, ry: b.ry, l: b.l, w: b.w, roof: rng.next() < 0.55 ? 'thatch' : 'tin', wall: rng.pick(WALLS) });
-  }
-  return { huts, rest };
+/** The houses of one homestead, laid round its yard in the mound's frame (u toward its face, v across). */
+function homestead(m: Mound, rng: Rng, out: HutPlan[]): void {
+  const put = (u: number, v: number, turn: number, l: number, w: number, kind: HutPlan['kind'], roof: HutPlan['roof']) => {
+    const p = shapePoint(m, u, v);
+    out.push({ x: p.x, y: terrainHeight(p.x, p.z) + 0.02, z: p.z, ry: m.face + turn, l, w, roof, wall: rng.pick(WALLS), kind });
+  };
+  const tin = (): HutPlan['roof'] => (rng.next() < 0.6 ? 'tin' : 'thatch');
+  // the main house across the back of the yard, looking out over it
+  put(-m.hu * 0.5, rng.range(-1, 1), 0, rng.range(7.5, 9.5), rng.range(4.4, 5.2), 'house', tin());
+  // one or two houses along the yard's sides, facing in
+  const sides = rng.next() < 0.55 ? [1, -1] : [rng.sign()];
+  for (const side of sides) put(rng.range(-2.5, 0.5), side * m.hv * 0.52, (side * Math.PI) / 2, rng.range(5.8, 7.2), rng.range(3.8, 4.4), 'house', tin());
+  // the kitchen at a front corner, under thatch, and the cowshed at a back corner
+  const k = sides.length === 2 ? rng.sign() : -sides[0];
+  put(m.hu * 0.4, k * m.hv * 0.52, (k * Math.PI) / 2, rng.range(3.2, 3.8), rng.range(2.8, 3.2), 'kitchen', 'thatch');
+  put(-m.hu * 0.52, -k * m.hv * 0.62, (-k * Math.PI) / 2, rng.range(4.5, 5.5), rng.range(3, 3.4), 'shed', rng.next() < 0.7 ? 'thatch' : 'tin');
 }
 
-/** The ghats: one below a homestead by the khal, spaced along it, none at the bridge or where the khal opens into the bil. */
-export function planGhats(huts: readonly HutPlan[]): Ghat[] {
+/** The homesteads' houses, deterministic. */
+export function planHuts(): HutPlan[] {
+  const rng = new Rng(21);
+  const huts: HutPlan[] = [];
+  for (const m of HOMESTEAD_MOUNDS) homestead(m, rng, huts);
+  return huts;
+}
+
+/** The ghats: the village's below the banyan first, then each homestead's that has one, at the water's edge of the nearest bank. */
+export function planGhats(): Ghat[] {
   const out: Ghat[] = [];
-  const near: { s: number; side: 1 | -1 }[] = [];
-  for (const h of huts) {
-    const f = khalFrame(h.x, h.z);
-    if (f && f.d < GHAT_REACH) near.push({ s: f.s, side: f.side });
-  }
-  near.sort((a, b) => a.s - b.s);
-  for (const { s, side } of near) {
-    if (Math.abs(s - JOURNEY.bridge) < 45 || s > JOURNEY.head - 40) continue;
-    if (out.some((g) => Math.abs(g.s - s) < GHAT_SPACING)) continue;
-    const p = khalAt(s);
-    const half = khalHalfWidth(s);
-    out.push({ x: p.x + Math.cos(p.heading) * half * side, z: p.z - Math.sin(p.heading) * half * side, s, side });
+  const at = (x: number, z: number) => {
+    const b = bankAt(x, z);
+    if (b) out.push({ x: b.x, z: b.z, up: b.up, way: b.way, s: b.s, side: b.side });
+  };
+  at(HUB_GHAT[0], HUB_GHAT[1]);
+  // a homestead's ghat comes down from its front, straight to the water
+  for (const m of HOMESTEAD_MOUNDS) {
+    if (!m.home?.ghat) continue;
+    const front = shapePoint(m, m.hu + 4, 0);
+    at(front.x, front.z);
   }
   return out;
 }
@@ -210,21 +218,18 @@ function haystack(b: MeshBuilder, x: number, z: number, rng: Rng, poles: MeshBui
   poles.add(new CylinderGeometry(0.05, 0.06, 1.4, 5), new Matrix4().makeTranslation(x, y + hgt + 0.4, z), rgb('#6a5a3e'));
 }
 
-/** Brick steps from the top of the bank down into the khal's water. */
+/** Brick steps from the top of the bank down into the water, square to the bank. */
 function ghat(b: MeshBuilder, g: Ghat): void {
-  const p = khalAt(g.s);
-  const half = khalHalfWidth(g.s);
-  // outward from the khal's middle toward this bank
-  const nx = Math.cos(p.heading) * g.side;
-  const nz = -Math.sin(p.heading) * g.side;
-  const top = terrainHeight(p.x + nx * (half + 9), p.z + nz * (half + 9));
-  const steps = 7;
+  const ux = Math.sin(g.up);
+  const uz = Math.cos(g.up);
+  const steps = 9;
+  const top = terrainHeight(g.x + ux * 9, g.z + uz * 9);
   for (let i = 0; i < steps; i++) {
     const t = i / (steps - 1);
-    const d = half + 8 - t * 9;
-    const y = top - t * (top - KHAL_LEVEL + 0.45);
-    const m = new Matrix4().compose(new Vector3(p.x + nx * d, y - 0.6, p.z + nz * d), new Quaternion().setFromEuler(new Euler(0, p.heading, 0)), new Vector3(1, 1, 1));
-    b.add(new BoxGeometry(2.6, 1.2, 1.7), m, i % 2 ? rgb('#8a4a32') : rgb('#7c4230'));
+    const d = 9 - t * 10.2;
+    const y = top - t * (top - WATER_LEVEL + 0.45);
+    const m = new Matrix4().compose(new Vector3(g.x + ux * d, y - 0.6, g.z + uz * d), new Quaternion().setFromEuler(new Euler(0, g.up, 0)), new Vector3(1, 1, 1));
+    b.add(new BoxGeometry(2.6, 1.2, 1.4), m, i % 2 ? rgb('#8a4a32') : rgb('#7c4230'));
   }
 }
 
@@ -245,17 +250,15 @@ function moor(b: MeshBuilder, moorings: Mooring[], hull: MeshBuilder, m: Matrix4
   moorings.push({ from, to: b.vertexCount, x: m.elements[12], z: m.elements[14] });
 }
 
-/** A small boat tied up beside a ghat, along the bank, close in (the khal's middle stays open). */
+/** A small boat tied up beside a ghat, along the bank, close in (the water's middle stays open). */
 function mooredBoat(b: MeshBuilder, moorings: Mooring[], g: Ghat, rng: Rng): void {
   const hull = new MeshBuilder();
   buildHull(hull, SMALL_BOAT, { tar: rgb('#2a2018'), top: rgb('#5a4a38') });
   const s = g.s + rng.sign() * rng.range(4.5, 6);
-  const p = khalAt(s);
-  const d = khalHalfWidth(s) - 1.3;
-  const x = p.x + Math.cos(p.heading) * d * g.side;
-  const z = p.z - Math.sin(p.heading) * d * g.side;
+  const p = g.way.at(s);
+  const e = g.way.beside(s, g.side, g.way.half(s) - 1.3);
   const m = new Matrix4().compose(
-    new Vector3(x, 0.05, z),
+    new Vector3(e.x, 0.05, e.z),
     new Quaternion().setFromEuler(new Euler(rng.range(-0.04, 0.04), p.heading + rng.range(-0.15, 0.15), g.side * rng.range(0.02, 0.06))),
     new Vector3(1, 1, 1),
   );
@@ -277,23 +280,22 @@ export function buildVillages(huts: readonly HutPlan[], ghats: readonly Ghat[]):
 
   for (const h of huts) addHut(walls, h.roof === 'thatch' ? thatchRoofs : tinRoofs, h, rng);
 
-  // a haystack in some of the homesteads' yards, clear of the houses, the roads and the water
-  huts.forEach((h, i) => {
-    if (i % 4 !== 1) return;
-    for (let k = 0; k < 6; k++) {
-      const a = rng.range(0, Math.PI * 2);
-      const x = h.x + Math.cos(a) * rng.range(7, 12);
-      const z = h.z + Math.sin(a) * rng.range(7, 12);
-      if (nearBackwater(x, z, 8) || onRoad(x, z, 2) || huts.some((o) => Math.hypot(o.x - x, o.z - z) < 7) || bilReach(x, z) < 1.4) continue;
-      if (Math.hypot(x - BRIDGE.x, z - BRIDGE.z) < BRIDGE.half + 8) continue;
-      haystack(hay, x, z, rng, wood);
-      break;
+  // a haystack or two by most homesteads, at the foot of the mound's back corner, clear of the houses, the ways and the water
+  for (const m of HOMESTEAD_MOUNDS) {
+    if (rng.next() < 0.25) continue;
+    const stacks = rng.next() < 0.4 ? 2 : 1;
+    for (let n = 0, k = 0; n < stacks && k < 8; k++) {
+      const p = shapePoint(m, -m.hu * rng.range(0.2, 0.8), rng.sign() * (m.hv + rng.range(1.5, 4)));
+      if (nearBackwater(p.x, p.z, 6) || onRoad(p.x, p.z, 2.5) || huts.some((o) => Math.hypot(o.x - p.x, o.z - p.z) < 6)) continue;
+      haystack(hay, p.x, p.z, rng, wood);
+      n++;
     }
-  });
-  // the ghats, a boat tied up at every other one
+  }
+  // the ghats, a boat tied up at every other one and a second at the village's
   ghats.forEach((g, i) => {
     ghat(walls, g);
     if (i % 2 === 0) mooredBoat(afloat, moorings, g, rng);
+    if (i === 0) mooredBoat(afloat, moorings, g, rng);
   });
 
 
@@ -321,7 +323,7 @@ export function buildVillages(huts: readonly HutPlan[], ghats: readonly Ghat[]):
   add(thatchRoofs, thatchMat);
   add(tinRoofs, tinMat);
   add(wood, woodMat);
-  // moored boats float on the khal's water, each rocking as one piece on the (sheltered) ripples under its middle
+  // moored boats float on the water, each rocking as one piece on the (sheltered) ripples under its middle
   const boats = afloat.build();
   const middles = new Float32Array(boats.getAttribute('position').count * 2);
   for (const m of moorings) for (let k = m.from; k < m.to; k++) middles.set([m.x, m.z], k * 2);
@@ -335,7 +337,7 @@ export function buildVillages(huts: readonly HutPlan[], ghats: readonly Ghat[]):
         pars: `attribute vec2 aMoor;\n${waveHeightGlsl()}\n${waveSlopeGlsl()}\n`,
         code: `{
   vec2 tilt = waveSlope(aMoor) * ${SHELTERED.toFixed(2)};
-  transformed.y += ${KHAL_LEVEL.toFixed(2)} + waveHeight(aMoor) * ${SHELTERED.toFixed(2)} + dot(tilt, transformed.xz - aMoor);
+  transformed.y += ${WATER_LEVEL.toFixed(2)} + waveHeight(aMoor) * ${SHELTERED.toFixed(2)} + dot(tilt, transformed.xz - aMoor);
 }`,
       },
     }),

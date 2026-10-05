@@ -1,7 +1,9 @@
 import { G } from '../core/globals';
 import { WIND_MS } from '../env/wind';
-import { exposureAt } from './exposure';
 import { terrainHeight } from './geography';
+
+/** How open the water at (x, z) is to a sea's swell (0..1): none of this village's water is (its river runs far inland). */
+const exposureAt = (_x: number, _z: number): number => 0;
 
 // The river's surface, one definition for everything that floats on it (the boats' buoyancy, the plants'
 // bobbing, the nets) and, through the GLSL twins, for the water itself: its surface rises and falls with
