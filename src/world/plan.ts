@@ -134,6 +134,20 @@ export const OPENING_NEAR: Pt = [-905, 30];
  */
 export const FISHER_NEAR: Pt = [92, -14];
 
+/**
+ * The date palms tapped for their sap in winter (world/khejur.ts): a field path from the first para's riverside
+ * path up through the fields to the village road, and a row of palms along its east side, `side` m off its line,
+ * from and to shares of its length.
+ */
+export const KHEJUR_PATH: readonly Pt[] = [
+  [-849, 59],
+  [-851, 98],
+  [-849, 140],
+  [-845, 182],
+  [-842, 222],
+];
+export const KHEJUR_ROW = { side: 2.6, from: 0.22, to: 0.93, count: 7 };
+
 /** The old bridge carries the village road over the khal here (nearest point of the khal), and the bamboo sanko the field path over the side khal. */
 export const BRIDGE_NEAR: Pt = [23, 262];
 export const SANKO_NEAR: Pt = [150, 476];
@@ -395,6 +409,8 @@ export const ROADS: readonly RoadSpec[] = [
   { kind: 'earth', width: 1.2, along: { way: 'river', from: [60, -60], to: [520, -230], offset: 7.5 } },
   // and on the bank where she sets out, past the first para's fronts
   { kind: 'earth', width: 1.4, along: { way: 'river', from: [-990, 50], to: [-600, 140], offset: 7.5 } },
+  // the field path from it up past the date palms to the village road
+  { kind: 'earth', width: 1.1, points: [...KHEJUR_PATH] },
   // up to the homesteads north of the road
   { kind: 'earth', width: 1.3, points: [[-306, 294], [-318, 330], [-330, 364]] },
   { kind: 'earth', width: 1.3, points: [[-206, 248], [-196, 290], [-184, 318]] },

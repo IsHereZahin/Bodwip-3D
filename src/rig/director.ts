@@ -27,6 +27,45 @@ export interface SceneWorld {
    * runs 0.1 h a second, a time-lapse no camera on the moon could hold through a shot.
    */
   pace?: number;
+  /**
+   * The scene's own passage of time instead (a sunrise, a sunset, a moonrise seen whole in a few seconds): the
+   * hours past its opening hour at points through it, `[u, hours]` from u = 0 (0 h) to 1, passed through on a
+   * smooth monotone curve, slow where the keys crowd (the sun on the horizon) and never stopping.
+   */
+  sweep?: readonly (readonly [number, number])[];
+}
+
+/** The hours of a `sweep` at `u` (0..1): a monotone cubic through its keys (Fritsch–Carlson), so time never runs back or stops dead. */
+export function sweepAt(keys: readonly (readonly [number, number])[], u: number): number {
+  const n = keys.length;
+  if (u <= keys[0][0]) return keys[0][1];
+  if (u >= keys[n - 1][0]) return keys[n - 1][1];
+  const d: number[] = [];
+  for (let i = 0; i < n - 1; i++) d.push((keys[i + 1][1] - keys[i][1]) / (keys[i + 1][0] - keys[i][0]));
+  const m: number[] = [d[0]];
+  for (let i = 1; i < n - 1; i++) m.push(d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2);
+  m.push(d[n - 2]);
+  for (let i = 0; i < n - 1; i++) {
+    if (d[i] === 0) {
+      m[i] = m[i + 1] = 0;
+      continue;
+    }
+    const a = m[i] / d[i];
+    const b = m[i + 1] / d[i];
+    const h = a * a + b * b;
+    if (h > 9) {
+      const t = 3 / Math.sqrt(h);
+      m[i] = t * a * d[i];
+      m[i + 1] = t * b * d[i];
+    }
+  }
+  let k = 0;
+  while (u > keys[k + 1][0]) k++;
+  const span = keys[k + 1][0] - keys[k][0];
+  const t = (u - keys[k][0]) / span;
+  const t2 = t * t;
+  const t3 = t2 * t;
+  return (2 * t3 - 3 * t2 + 1) * keys[k][1] + (t3 - 2 * t2 + t) * span * m[k] + (-2 * t3 + 3 * t2) * keys[k + 1][1] + (t3 - t2) * span * m[k + 1];
 }
 
 /** What the tour may do to the world, and read from it (main.ts provides it). */
@@ -52,6 +91,16 @@ export interface Stage {
   gherFisherman(at: number): void;
   /** Lightning strikes at these many seconds from now, within the view (world/lightning.ts). */
   lightning(seconds: readonly number[]): void;
+  /** The scene's clock at this many hours past its opening hour (`SceneWorld.sweep`). */
+  sweep(hours: number): void;
+  /** The girl on the bridge: her head (world) and which way she faces (yaw). */
+  readonly girlHead: Vector3;
+  readonly girlYaw: number;
+  /** The majhi bareheaded, his mathal set down (as the rain begins: he will see to it himself, hero.ts). */
+  bareheaded(): void;
+  /** The date palm the film climbs (world/khejur.ts): its foot, its tapping cut, its pot's mouth, the way the cut faces; and the shot of its sap begun. */
+  readonly sapTree: { readonly foot: Vector3; readonly cut: Vector3; readonly mouth: Vector3; readonly out: Vector3 };
+  sap(): void;
   readonly sunDir: Vector3;
   readonly moonDir: Vector3;
   /** Builds whatever of each point's surroundings is not built yet (the ground, the grass, the crops), without showing it. */
@@ -67,6 +116,12 @@ export interface Stage {
 export interface Scene {
   caption: string;
   seconds: number;
+  /**
+   * A further shot of the scene before it, cut to as a film cuts within a scene (a short dissolve): its world and
+   * the boat go on as they are (its own `world` and `journey` unused), and the viewer's previous and next pass
+   * the whole scene.
+   */
+  shot?: boolean;
   world: SceneWorld;
   /** Where the boat is on her journey as the scene opens, for scenes in her waters; else she goes on. */
   journey?: number;
@@ -83,8 +138,9 @@ export interface Leaving {
   readonly boat: Vector3 | null;
 }
 
-/** Seconds a dissolve takes. */
+/** Seconds a dissolve takes between scenes, and between the shots of one scene. */
 const DISSOLVE = 2.2;
+const SHOT_DISSOLVE = 0.7;
 /** Seconds before a cut that the next shot's places begin to be built. */
 const WARM_AHEAD = 6;
 /** Where through a shot its places are readied. */
@@ -152,6 +208,8 @@ export class Director {
   private readonly tmp2 = new Vector3();
   /** The boat as a scene is entered, to tell whether it moved her. */
   private readonly boatWas = new Vector3();
+  /** How long the dissolve into the shot now showing takes (s). */
+  private dissolveFor = DISSOLVE;
 
   constructor(scenes: readonly Scene[], stage: Stage) {
     this.scenes = scenes;
@@ -175,12 +233,20 @@ export class Director {
     return this.playing;
   }
 
-  /** Which scene is showing (from 0), and how many there are. */
+  /** Which scene is showing (from 0, its shots counted as one), and how many there are. */
   get sceneIndex(): number {
-    return this.index;
+    let k = -1;
+    for (let i = 0; i <= this.index; i++) if (!this.scenes[i].shot) k++;
+    return Math.max(0, k);
   }
   get sceneCount(): number {
-    return this.scenes.length;
+    return this.scenes.filter((s) => !s.shot).length;
+  }
+
+  /** The first shot of the scene the shot `i` belongs to. */
+  private firstShot(i: number): number {
+    while (i > 0 && this.scenes[i].shot) i--;
+    return i;
   }
 
   /**
@@ -190,8 +256,13 @@ export class Director {
   skip(step: number): void {
     if (!this.playing) return;
     const n = this.scenes.length;
+    let i = this.firstShot(this.index);
+    if (step > 0) {
+      do i = (i + 1) % n;
+      while (this.scenes[i].shot);
+    } else i = this.firstShot((i - 1 + n) % n);
     this.leaveScene();
-    this.enter((((this.index + step) % n) + n) % n);
+    this.enter(i);
   }
 
   /** The shot being left, to draw beneath this frame's while a dissolve lasts; null otherwise. */
@@ -255,6 +326,7 @@ export class Director {
     this.frameCamera(scene, t, camera);
     this.caption = scene.caption;
     this.captionAlpha = scene.caption ? clamp(Math.min((this.time - 1.2) / 0.9, (scene.seconds - 1.6 - this.time) / 0.9), 0, 1) : 0;
+    if (scene.world.sweep && !scene.shot) this.stage.sweep(sweepAt(scene.world.sweep, clamp(this.time / scene.seconds, 0, 1)));
     // the last seconds: build the next shot's places ahead, a little each frame
     if (this.time > scene.seconds - WARM_AHEAD && !this.aheadDone) {
       this.ahead ??= this.pathOf(this.scenes[(this.index + 1) % this.scenes.length], true);
@@ -266,9 +338,20 @@ export class Director {
   cue(index: number, u: number, camera: PerspectiveCamera): void {
     this.finishLeaving();
     this.playing = true;
-    this.enter(((index % this.scenes.length) + this.scenes.length) % this.scenes.length);
+    const i = ((index % this.scenes.length) + this.scenes.length) % this.scenes.length;
+    // a later shot of a scene: the scene opened, and the boat on as far as she would have come by then
+    const first = this.firstShot(i);
+    this.enter(first);
+    if (i !== first) {
+      let elapsed = this.scenes[i].seconds * clamp(u, 0, 1);
+      for (let k = first; k < i; k++) elapsed += this.scenes[k].seconds;
+      const opening = this.scenes[first].journey;
+      if (opening !== undefined) this.stage.placeBoat(Math.min(1, opening + (elapsed * CRUISE) / JOURNEY.length));
+      this.index = i;
+    }
     const scene = this.scenes[this.index];
     this.time = scene.seconds * clamp(u, 0, 1);
+    if (scene.world.sweep && !scene.shot) this.stage.sweep(sweepAt(scene.world.sweep, clamp(u, 0, 1)));
     this.letterbox = 1;
     this.frameCamera(scene, 0, camera);
     this.caption = scene.caption;
@@ -280,8 +363,12 @@ export class Director {
     this.index = index;
     this.time = 0;
     this.boatWas.copy(this.stage.boatPos);
-    this.stage.set(scene.world);
-    if (scene.journey !== undefined) this.stage.placeBoat(scene.journey);
+    this.dissolveFor = scene.shot ? SHOT_DISSOLVE : DISSOLVE;
+    // a further shot of the same scene: its world goes on as it is
+    if (!scene.shot) {
+      this.stage.set(scene.world);
+      if (scene.journey !== undefined) this.stage.placeBoat(scene.journey);
+    }
     scene.begin?.(this.stage);
     // the shot being left keeps the boat where it had her if this one put her elsewhere (by its journey or in its
     // `begin`: the sunset's and the kash's do), or it would lose her and show her hole in the water
@@ -357,11 +444,11 @@ export class Director {
     const o = this.out;
     if (!o) return;
     o.since += dt;
-    if (o.since >= DISSOLVE) {
+    if (o.since >= this.dissolveFor) {
       this.finishLeaving();
       return;
     }
-    this.dissolve = 1 - smoothstep(0, DISSOLVE, o.since);
+    this.dissolve = 1 - smoothstep(0, this.dissolveFor, o.since);
     const cam = this.outCamera;
     cam.fov = camera.fov;
     cam.aspect = camera.aspect;

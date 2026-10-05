@@ -1,6 +1,7 @@
 // Downloads what the people are built from into scripts/humans/cache/ (git-ignored): MakeHuman's base mesh, its
 // default skeleton and skin weights, the macro targets for grown men and women (gender × age × muscle × weight,
-// the three ethnic shapes, height), and from the system asset pack only the members the characters use (the pack
+// the three ethnic shapes, height), the modelling targets the characters' `mods` name, and from the system asset
+// pack only the members the characters use (the pack
 // is a 280 MB zip; its members are read by range requests). All of it is CC0 (config.mjs).
 //
 //   node scripts/humans/fetch.mjs [--force]
@@ -10,7 +11,7 @@ import { pipeline } from 'node:stream/promises';
 import { Readable } from 'node:stream';
 import path from 'node:path';
 import { listZip, readZipMember } from '../geo/lib/zip.mjs';
-import { ASSETS, MAKEHUMAN, PACK, PACK_FOLDERS, RAW } from './config.mjs';
+import { ASSETS, CHARACTERS, MAKEHUMAN, PACK, PACK_FOLDERS, RAW } from './config.mjs';
 
 const force = process.argv.includes('--force');
 
@@ -24,6 +25,9 @@ for (const g of ['female', 'male'])
         for (const h of ['min', 'max']) files.push(`targets/macrodetails/height/${g}-${a}-${m}muscle-${w}weight-${h}height.target`);
       }
   }
+
+// the modelling targets the characters' faces and builds use
+for (const c of Object.values(CHARACTERS)) for (const m of Object.keys(c.mods ?? {})) if (!files.includes(`targets/${m}.target`)) files.push(`targets/${m}.target`);
 
 async function get(url, to) {
   if (existsSync(to) && !force) return false;

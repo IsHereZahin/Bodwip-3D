@@ -19,6 +19,8 @@ export const PACK = 'https://files.makehumancommunity.org/asset_packs/makehuman_
 export const PACK_FOLDERS = [
   'skins/middleage_asian_male/',
   'skins/middleage_african_male/',
+  'skins/young_asian_male/',
+  'skins/young_african_male/',
   'skins/old_asian_male/',
   'skins/old_african_male/',
   'skins/young_asian_female/',
@@ -29,19 +31,27 @@ export const PACK_FOLDERS = [
   'eyebrows/eyebrow010/',
   'eyelashes/eyelashes01/',
   'eyelashes/eyelashes02/',
+  'eyelashes/eyelashes04/',
   'hair/short04/',
   'hair/short02/',
   'hair/braid01/',
+  'hair/long01/',
+  'hair/short03/',
 ];
 
 /** A South Asian face from MakeHuman's three ethnic shapes [মডেল]. */
 const BENGALI = { caucasian: 0.56, asian: 0.24, african: 0.2 };
 
+/** Both sides of a face's paired modifier (eyes, cheeks) at one weight. */
+const both = (group, name, w) => ({ [`${group}/l-${name}`]: w, [`${group}/r-${name}`]: w });
+
 /**
  * The characters. `macro`: MakeHuman's macro sliders (gender 0 female .. 1 male; age 0.5 is 25 years, 1 is 90;
- * muscle, weight and height 0.5 average); `height`: metres, soles to crown, the body scaled to it; `skin`: two
- * of MakeHuman's skins (same layout) blended toward `tone` (sRGB), and `stubble` darkening the beard; `wear`:
- * what the clothes cover (build.mjs: hidden skin and the fitted garments).
+ * muscle, weight and height 0.5 average); `mods`: MakeHuman's modelling targets (targets/<group>/<name>) and their
+ * weights, the face and the build of one person rather than the average the macros give; `height`: metres, soles
+ * to crown, the body scaled to it; `skin`: two of MakeHuman's skins (same layout) blended toward `tone` (sRGB),
+ * and `stubble` darkening the beard; `wear`: what the clothes cover (build.mjs: hidden skin and the fitted
+ * garments). The faces are generic, made from sliders, not anyone's likeness.
  */
 export const CHARACTERS = {
   // the hero's majhi: a lean, sun-browned man in his forties
@@ -55,15 +65,76 @@ export const CHARACTERS = {
     hair: { proxy: 'hair/short04', tint: '#15100c' },
     wear: ['sando', 'lungi'],
   },
-  // the girl on the bridge: a slight young woman
+  // the young boatman the film follows, a fisherman's son of about twenty: lean and strong from the paddle and
+  // the net, broad in the shoulders and narrow in the waist, a clean jaw and high cheekbones, a straight nose,
+  // dark eyes under level brows, a little stubble, thick black hair worn short at the sides
+  tarun: {
+    macro: { gender: 1, age: 0.5, muscle: 0.66, weight: 0.3, height: 0.6, race: { caucasian: 0.5, asian: 0.24, african: 0.26 } },
+    mods: {
+      'head/head-age-decr': 0.45,
+      'head/head-oval': 0.3,
+      'head/head-scale-horiz-decr': 0.1,
+      'chin/chin-prominent-incr': 0.3,
+      'chin/chin-bones-incr': 0.4,
+      'chin/chin-width-incr': 0.1,
+      ...both('cheek', 'cheek-bones-incr', 0.3),
+      ...both('cheek', 'cheek-volume-decr', 0.3),
+      'nose/nose-scale-horiz-decr': 0.18,
+      'nose/nose-point-width-decr': 0.25,
+      'nose/nose-hump-decr': 0.25,
+      'nose/nose-nostrils-width-decr': 0.2,
+      'mouth/mouth-lowerlip-volume-incr': 0.15,
+      'mouth/mouth-angles-up': 0.1,
+      ...both('eyes', 'eye-bag-decr', 0.5),
+      ...both('eyes', 'eye-scale-incr', 0.06),
+      'eyebrows/eyebrows-trans-down': 0.15,
+      'neck/neck-scale-horiz-incr': 0.15,
+      'torso/torso-vshape-incr': 0.2,
+      'torso/torso-muscle-pectoral-incr': 0.15,
+      'torso/torso-muscle-dorsi-incr': 0.15,
+    },
+    height: 1.71,
+    // a warm, healthy wheaten brown, sun-touched
+    skin: { light: 'skins/young_asian_male/young_lightskinned_male_diffuse3.png', dark: 'skins/young_african_male/young_darkskinned_male_diffuse.png', tone: '#b68460', stubble: 0.28 },
+    eyes: 'eyes/materials/brown_eye.png',
+    brows: 'eyebrows/eyebrow001',
+    lashes: 'eyelashes/eyelashes01',
+    // worn a little long and loose, so the wind lifts it, held off his face by the headband
+    hair: { proxy: 'hair/short03', tint: '#100b08', loose: true, tuck: 0.055 },
+    wear: ['sando', 'lungi'],
+  },
+  // the girl on the bridge: an ordinary village girl of seventeen, slight, with a young open face (the macros
+  // stop at twenty-five; the face is made younger), a small chin, large dark eyes, her long hair loose; a simple
+  // red lehenga's blouse (its skirt and ওড়না are cloth)
   meye: {
-    macro: { gender: 0, age: 0.5, muscle: 0.42, weight: 0.4, height: 0.4, race: BENGALI },
+    macro: { gender: 0, age: 0.5, muscle: 0.4, weight: 0.36, height: 0.38, race: BENGALI },
+    mods: {
+      'head/head-age-decr': 0.85,
+      'head/head-oval': 0.3,
+      'head/head-scale-vert-decr': 0.12,
+      'head/head-scale-horiz-decr': 0.04,
+      'chin/chin-width-decr': 0.18,
+      'chin/chin-height-decr': 0.2,
+      ...both('cheek', 'cheek-volume-incr', 0.2),
+      'nose/nose-scale-horiz-decr': 0.18,
+      'nose/nose-scale-vert-decr': 0.15,
+      'nose/nose-volume-decr': 0.2,
+      'nose/nose-point-width-decr': 0.2,
+      'nose/nose-nostrils-width-decr': 0.15,
+      'mouth/mouth-scale-horiz-decr': 0.08,
+      'mouth/mouth-lowerlip-volume-incr': 0.12,
+      'mouth/mouth-angles-up': 0.1,
+      ...both('eyes', 'eye-scale-incr', 0.2),
+      ...both('eyes', 'eye-bag-decr', 0.7),
+      'neck/neck-scale-horiz-decr': 0.18,
+    },
     height: 1.53,
-    skin: { light: 'skins/young_asian_female/young_lightskinned_female_diffuse3.png', dark: 'skins/young_african_female/young_darkskinned_female_diffuse.png', tone: '#a06a48', stubble: 0 },
+    // a warm, fair wheaten complexion
+    skin: { light: 'skins/young_asian_female/young_lightskinned_female_diffuse3.png', dark: 'skins/young_african_female/young_darkskinned_female_diffuse.png', tone: '#c28c66', stubble: 0 },
     eyes: 'eyes/materials/brown_eye.png',
     brows: 'eyebrows/eyebrow010',
-    lashes: 'eyelashes/eyelashes02',
-    hair: { proxy: 'hair/braid01', tint: '#120d0a', braid: true },
-    wear: ['kameez', 'salwar'],
+    lashes: 'eyelashes/eyelashes04',
+    hair: { proxy: 'hair/long01', tint: '#0e0907', loose: true },
+    wear: ['blouse'],
   },
 };

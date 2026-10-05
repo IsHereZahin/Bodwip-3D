@@ -6,7 +6,7 @@ import type { Texture } from 'three';
 // the measurements the posing and the cloth need. Awaited at the top level, as the map is, so the people are
 // built synchronously.
 
-export type HumanName = 'majhi' | 'meye';
+export type HumanName = 'majhi' | 'tarun' | 'meye';
 
 interface ArrayRef {
   type: 'Int16Array' | 'Int8Array' | 'Float32Array' | 'Uint8Array' | 'Uint16Array' | 'Uint32Array';
@@ -22,6 +22,8 @@ interface PartRefs {
   skinWeight: ArrayRef;
   index: ArrayRef;
   cut?: ArrayRef;
+  free?: ArrayRef;
+  lock?: ArrayRef;
 }
 
 export interface Part {
@@ -34,6 +36,9 @@ export interface Part {
   index: Uint16Array | Uint32Array;
   /** A garment's: how far in from its edge each vertex is (0.5 at the edge; it is cut there by alpha). */
   cut?: Uint8Array;
+  /** Loose hair's: how far (mm) the air may move each vertex, and each lock's own number (0..255). */
+  free?: Uint8Array;
+  lock?: Uint8Array;
 }
 
 /** The skin's outline round a vertical axis, row by row (see radiusMap in scripts/humans/build.mjs). */
@@ -138,6 +143,8 @@ async function load(): Promise<Record<HumanName, HumanData>> {
         skinWeight: view(p.skinWeight) as Uint8Array,
         index: view(p.index) as Uint16Array | Uint32Array,
         ...(p.cut ? { cut: view(p.cut) as Uint8Array } : {}),
+        ...(p.free ? { free: view(p.free) as Uint8Array } : {}),
+        ...(p.lock ? { lock: view(p.lock) as Uint8Array } : {}),
       };
     }
     const braid = c.extra?.braid ?? [];

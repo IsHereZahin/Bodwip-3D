@@ -101,7 +101,7 @@ const MAX_POWER = 2.2;
 const MAX_HEEL = 0.24;
 
 /** Where in the stroke he rests the paddle when not rowing: near the end of the recovery, blade forward and clear. */
-const REST_PHASE = 0.93;
+export const REST_PHASE = 0.93;
 /** A mooring line: how hard it pulls her back to her place (N/m), and its damping (N·s/m). */
 const MOOR = { k: 140, c: 420 };
 

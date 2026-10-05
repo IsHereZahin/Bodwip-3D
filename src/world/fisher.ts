@@ -7,6 +7,7 @@ import { MeshBuilder, rgb, scaleRgb } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { castNetTexture, softSpotTexture, weaveTexture } from '../render/textures';
 import { Boatman, type OarPose, type Outfit } from './boatman';
+import type { HumanName } from './humanData';
 import { fishGeometry, type Fish } from './fish';
 import { WATER_LEVEL, terrainHeight, waterRise } from './geography';
 import { buildHull, hullHalfWidthAt, hullStation, type HullShape } from './hull';
@@ -46,8 +47,11 @@ const T = { windup: 1.6, swing: 2.9, release: 3.3, through: 3.45, land: 4.6, gra
 /** The catch: how many fish come up in the net. */
 const CATCH = 5;
 
-/** His clothes: a faded check lungi rolled to the knee, a grey sando, a checked gamchha. */
-const OUTFIT: Outfit = { lungi: ['#4a5a3a', '#cfc6a8', '#24301c'], vest: '#b9b2a2', gamchha: ['#8c2f28', '#e8dfcc', '#4a1612'], seed: 91 };
+/**
+ * On the river it is the young majhi (`tarun`) out with his net in his own clothes for it: a faded green check
+ * lungi rolled to the knee, a washed sky-blue sando, a checked gamchha; bareheaded.
+ */
+const OUTFIT: Outfit = { lungi: ['#3e5a3a', '#cfc6a8', '#22301c'], vest: '#a9c3d6', gamchha: ['#8c2f28', '#e8dfcc', '#4a1612'], seed: 91, hat: false };
 
 /** Where the dinghy lies: off the middle toward the south bank, her bow across the river and a little upstream; the place the net falls. */
 const SITE = (() => {
@@ -75,6 +79,8 @@ export interface FisherPlace {
   ground?: number;
   water?: number;
   outfit?: Outfit;
+  /** Whose body (the young majhi's on the river unless given). */
+  who?: HumanName;
 }
 
 const ease = (x: number) => smoothstep(0, 1, x);
@@ -156,7 +162,7 @@ export class Fisher {
       this.boat.position.set(place.x, WATER_LEVEL, place.z);
     }
     this.boat.rotation.set(0, place.yaw, 0, 'YXZ');
-    this.man = new Boatman(this.stance, [0.014, 0.014], place.outfit ?? OUTFIT);
+    this.man = new Boatman(this.stance, [0.014, 0.014], place.outfit ?? OUTFIT, place.who ?? 'tarun');
     this.boat.add(this.man.group);
     // his soft shadow on the boards or the bund
     const shadow = new Mesh(

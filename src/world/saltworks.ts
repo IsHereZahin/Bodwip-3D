@@ -91,6 +91,8 @@ export function gherStand(): FisherPlace {
     // the rain's water standing over the old pond's floor
     water: groundAt(POND_END * 0.5, F.d * 0.55).y + 0.3,
     outfit: GHER_OUTFIT,
+    // an older man, the gher's keeper, under his mathal
+    who: 'majhi',
   };
 }
 

@@ -22,6 +22,13 @@ const CATCH_Z = -1.75;
 const EXIT_Z = -3.2;
 const BLADE_X = 1.08;
 const DEPTH = 0.3;
+/**
+ * How far the shaft leans out over the side from the vertical (rad), and how high the blade is carried back
+ * over the water (m): leaning out so, his top hand works at his chest in front of his right shoulder through the
+ * whole stroke and never comes up to his face, and the blade goes back low, just clear of the water.
+ */
+const LEAN_OUT = 0.5;
+const RECOVERY_LIFT = 0.14;
 /** The mean drive (N) that holds her at cruising speed against the water's drag; it comes in pulses. */
 export const MEAN_THRUST = 89;
 /** Her speed through the water (m/s) at his steady stroke. */
@@ -66,16 +73,16 @@ export function paddlePose(phase: number, out: PaddlePose, power = 1): PaddlePos
     const arc = Math.sin(Math.PI * u);
     out.blade.set(BLADE_X + 0.03 * arc + 0.08 * smoothstep(0.75, 1, u), -depth * Math.pow(arc, 0.7), CATCH_Z + (EXIT_Z - CATCH_Z) * e);
     theta = 0.35 - 0.65 * e;
-    psi = 0.38 - 0.05 * arc + 0.07 * smoothstep(0.6, 1, u);
+    psi = LEAN_OUT - 0.05 * arc + 0.07 * smoothstep(0.6, 1, u);
     feather = 0.6 * smoothstep(0.7, 1, u);
   } else {
     // the recovery: lifted out and swung forward wide and low, edge-on, squared again for the catch
     const v = (phase - PULL) / (1 - PULL);
     const e = ease(v);
     const arc = Math.sin(Math.PI * v);
-    out.blade.set(BLADE_X + 0.08 * (1 - smoothstep(0.5, 1, v)) + 0.5 * arc, 0.32 * Math.pow(arc, 0.6), EXIT_Z + (CATCH_Z - EXIT_Z) * e);
+    out.blade.set(BLADE_X + 0.08 * (1 - smoothstep(0.5, 1, v)) + 0.4 * arc, RECOVERY_LIFT * Math.pow(arc, 0.6), EXIT_Z + (CATCH_Z - EXIT_Z) * e);
     theta = -0.3 + 0.65 * e;
-    psi = 0.45 + 0.35 * arc - 0.07 * smoothstep(0.5, 1, v);
+    psi = LEAN_OUT + 0.07 + 0.22 * arc - 0.07 * smoothstep(0.5, 1, v);
     feather = 0.6 + (Math.PI / 2 - 0.6) * smoothstep(0, 0.25, v) - (Math.PI / 2) * smoothstep(0.7, 1, v);
   }
   // down the shaft: out over the side by psi, the blade ahead of the grip by theta

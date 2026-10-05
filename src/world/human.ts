@@ -18,7 +18,9 @@ import {
   Skeleton,
   SkinnedMesh,
   Sphere,
+  Vector2,
   Vector3,
+  Vector4,
 } from 'three';
 import type { IUniform, Material } from 'three';
 import { patchMaterial } from '../render/patch';
@@ -49,6 +51,48 @@ const THUMB_RADIUS = 0.0105;
 /** How far the eyes turn from straight ahead, and blinks: how often (s, a range) and how long. */
 const EYE_REACH = 0.45;
 const BLINK = { min: 2.2, max: 6.5, close: 0.07, open: 0.16 };
+// Loose hair in the wind, before the skinning (in the head's bind frame), as hair really answers it: most of it
+// barely stirs, and now and then a few locks (`aLock`, each card its own number) lift and go back, each on its
+// own time, more of them in a gust. Each moves within its reach (`aFree`, m: none at the roots, most at the ends
+// and down the back, as the build measures it), downwind and lifted with the air past it, with a little ripple of
+// its own; never in toward the head and body (the part of a move toward the neck's line is taken out), and never
+// down or forward over the face (`uHairFace`: the brow's height and the face's front plane), so the eyes stay clear.
+const HAIR_PARS = /* glsl */ `
+attribute float aFree;
+attribute float aLock;
+uniform vec4 uHairWind;
+uniform vec2 uHairAxis;
+uniform vec2 uHairFace;
+`;
+const HAIR_CODE = /* glsl */ `
+if (aFree > 0.0) {
+  float hr = aFree;
+  vec3 hp = transformed;
+  float ht = uHairWind.w;
+  vec3 hw = uHairWind.xyz;
+  float hs = length(hw);
+  // the gust here now, and whether this lock is one the air has taken: its own slow chance in time
+  float gust = 0.55 + 0.9 * vnoise(vec2(ht * 0.3, hp.x * 3.0 + hp.z * 2.0));
+  float lockT = vnoise(vec2(ht * (0.32 + 0.25 * aLock) + aLock * 37.0, aLock * 11.0));
+  float taken = smoothstep(0.74 - 0.12 * min(1.0, hs * gust * 0.12), 0.9, lockT);
+  vec3 ripple = vec3(vnoise(hp.yz * 23.0 + vec2(ht * 2.1, aLock * 9.0)), vnoise(hp.xz * 23.0 + vec2(aLock * 5.0, ht * 1.8)), vnoise(hp.xy * 23.0 + vec2(ht * 2.4, 3.0))) - 0.5;
+  vec3 down = hw / max(hs, 0.001);
+  vec3 hd = down * min(1.0, 0.08 * hs * gust) + vec3(0.0, 0.45 * min(1.0, 0.07 * hs * gust), 0.0) + ripple * (0.25 + 0.04 * hs);
+  // all of it stirs a little with the air; the taken locks lift and stream
+  hd *= hr * (0.1 + 0.9 * taken);
+  vec2 inward = normalize(uHairAxis - hp.xz + vec2(1e-5));
+  float hin = dot(hd.xz, inward);
+  if (hin > 0.0) hd.xz -= inward * hin;
+  // over the face: only up and back
+  if (hp.z > uHairFace.y && hp.y < uHairFace.x) {
+    hd.y = max(hd.y, 0.0);
+    hd.z = min(hd.z, 0.0);
+  }
+  float hl = length(hd);
+  if (hl > hr) hd *= hr / hl;
+  transformed += hd;
+}
+`;
 
 // Dual quaternion skinning: each bone's pose as a dual quaternion (its turn, and its move), blended by the
 // weights and applied as one rigid motion, so a shoulder raised or a forearm twisted keeps its volume where the
@@ -171,8 +215,13 @@ export function enclosing(map: RadiusMap, y: number): { zc: number; a: number; b
   return { zc, a, b };
 }
 
-/** The materials of the parts the clothes make (by part name: 'vest', 'kameez', 'salwar'). */
+/** The materials of the parts the clothes make (by part name: 'vest', 'blouse'). */
 export type Garments = Record<string, Material>;
+
+export interface HumanOptions {
+  /** Hair worn loose: it moves in the wind (`hairWind`). */
+  flowingHair?: boolean;
+}
 
 export class Human {
   readonly group = new Group();
@@ -223,8 +272,10 @@ export class Human {
   private readonly dqUniform: IUniform<DataTexture>;
   private nextBlink = 1.5;
   private blinkAt = -10;
+  /** Loose hair's air: xyz the air moving past the head (m/s, in the head's bind frame), w seconds. */
+  readonly hairWind = new Vector4();
 
-  constructor(name: HumanName, garments: Garments = {}) {
+  constructor(name: HumanName, garments: Garments = {}, options: HumanOptions = {}) {
     const data = (this.data = HUMANS[name]);
     this.group.name = `human:${name}`;
     data.names.forEach((n, i) => this.index.set(n, i));
@@ -278,21 +329,42 @@ export class Human {
       });
     }
 
-    // materials: a photographed skin that scatters a little light; wet, glossy eyes; cards of hair, brows and lashes
+    // materials: a photographed skin that scatters a little light, with the soft sheen of its fine down at the
+    // edges and a skin's weaker gloss; wet, glossy eyes; cards of hair, brows and lashes
     const tex = data.textures;
-    const skin = patchMaterial(new MeshStandardMaterial({ map: tex.skin, roughness: 0.6 }), { translucency: 0.25, skin: 0.32 });
+    const skin = patchMaterial(
+      new MeshPhysicalMaterial({ map: tex.skin, roughness: 0.52, specularIntensity: 0.7, sheen: 0.35, sheenRoughness: 0.55, sheenColor: '#e6b8a0' }),
+      { translucency: 0.25, skin: 0.36 },
+    );
     const eyes = patchMaterial(
       new MeshPhysicalMaterial({ map: tex.eyes, roughness: 0.25, clearcoat: 1, clearcoatRoughness: 0.04, alphaTest: 0.5 }),
       {},
     );
     const cards = (map: typeof tex.hair, roughness: number, alphaTest: number) =>
       patchMaterial(new MeshStandardMaterial({ map, roughness, alphaTest, alphaToCoverage: true, side: DoubleSide }), { translucency: 0.5 });
+    const neck = this.bindOf('neck01');
+    const hair = options.flowingHair
+      ? patchMaterial(new MeshStandardMaterial({ map: tex.hair, roughness: 0.48, alphaTest: 0.4, alphaToCoverage: true, side: DoubleSide }), {
+          translucency: 0.6,
+          vertex: {
+            key: 'hairwind',
+            pars: HAIR_PARS,
+            code: HAIR_CODE,
+            uniforms: {
+              uHairWind: { value: this.hairWind },
+              uHairAxis: { value: new Vector2(neck.x, neck.z) },
+              // above the brows, and in front of the eyes' backs: the face the wind must not cover
+              uHairFace: { value: new Vector2(this.bindOf('eye.L').y + 0.06, this.bindOf('eye.L').z - 0.05) },
+            },
+          },
+        })
+      : cards(tex.hair, 0.5, 0.4);
     const materials: Record<string, Material> = {
       body: skin,
       eyes,
       brows: cards(tex.brows, 0.8, 0.3),
       lashes: cards(tex.lashes, 0.8, 0.3),
-      hair: cards(tex.hair, 0.5, 0.4),
+      hair,
       ...garments,
     };
 
@@ -310,6 +382,18 @@ export class Human {
       g.setAttribute('uv', new BufferAttribute(part.uv, 2));
       g.setAttribute('skinIndex', new BufferAttribute(part.skinIndex, 4));
       g.setAttribute('skinWeight', new BufferAttribute(part.skinWeight, 4, true));
+      if (key === 'hair' && options.flowingHair) {
+        // how far the air may move each part of it (mm in the data)
+        const n = part.position.length / 3;
+        const free = new Float32Array(n);
+        const lock = new Float32Array(n);
+        for (let i = 0; i < n; i++) {
+          free[i] = (part.free?.[i] ?? 0) / 1000;
+          lock[i] = (part.lock?.[i] ?? 0) / 255;
+        }
+        g.setAttribute('aFree', new BufferAttribute(free, 1));
+        g.setAttribute('aLock', new BufferAttribute(lock, 1));
+      }
       if (garments[key]) {
         const n = part.position.length / 3;
         const rgba = new Float32Array(n * 4).fill(1);

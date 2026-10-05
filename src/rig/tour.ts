@@ -3,7 +3,7 @@ import { angleDelta, lerp, smoothstep } from '../core/mathx';
 import { makeSeasonState, seasonAt } from '../env/season';
 import { plotCropAt } from '../world/crops';
 import { FISHER_SITE } from '../world/fisher';
-import { BIL, BRIDGE, HOMESTEAD_MOUNDS, JOURNEY, SALT_CREEK, WATER_LEVEL, corridorDistance, journeyAt, journeyFrame, journeyHalfWidth, landUse, saltPoint, shapePoint, terrainHeight, waterLevelAt, waterRise } from '../world/geography';
+import { BIL, BRIDGE, HOMESTEAD_MOUNDS, JOURNEY, SALT_CREEK, WATER_LEVEL, bridgeDeck, bridgeFrame, bridgeToWorld, corridorDistance, journeyAt, journeyFrame, journeyHalfWidth, landUse, saltPoint, shapePoint, terrainHeight, waterLevelAt, waterRise } from '../world/geography';
 import { bloomRank } from '../world/leaves';
 import { LILY_PONDS } from '../world/ponds';
 import { SALT_FIELD, type Pt } from '../world/plan';
@@ -14,18 +14,20 @@ import { groundAt } from '../world/terrain';
 import { kashStand, treeCrowns } from '../world/vegetation';
 import type { Ghat } from '../world/village';
 import { bilPoint } from '../world/waterways';
-import type { Scene, Stage } from './director';
+import type { Scene, SceneWorld, Stage } from './director';
 
-// The film tour: a year and a day in the village, as a short documentary would show it. A winter dawn in mist
-// and the boatman at sunrise, mustard in the fields, the village's ghat and the salt field at work; spring's
-// blossom and a nor'wester; the monsoon's rain and its flooded fields; under the old bridge and out into the
-// shapla bil, the train going by, a village pond and the kash of autumn; a fisherman casting his net and the
-// golden harvest; and the evening on the water: sunset, moonrise and night. What each caption names is what
-// its shot looks at: the places are found from the village as it stands (the crops a season gives a field,
-// the trees in flower, the homestead nearest the water), not guessed.
-// Each scene sets its own season, hour and weather (director.ts). The waters are narrow and their banks are
-// wooded, so the low shots look along them, from the water; the sun and the moon are framed by placing the
-// boat where her way runs toward them.
+// The film tour: a year in the village round its young majhi, as a short film would tell it. A winter dawn
+// rising over the misty khal, the date palms' sap dripping into its pots, the young majhi paddling down the river
+// in the morning sun, the village's ghat, the road between its tal palms, the mustard and the salt field, the
+// afternoon train; spring's blossom and a nor'wester; the rain coming on as he puts on his mathal, and on the old
+// bridge in the rain a girl with a red umbrella who watches him come and go under it (seven shots); the salt
+// field kept as a gher, the aman in the floods, the shapla bil; a pond, the kash, the majhi with his net, the
+// reaping; and the evening on the water: a sunset seen whole, the moon rising, the night. What each caption
+// names is what its shot looks at: the places are found from the village as it stands (the crops a season gives
+// a field, the trees in flower, the homestead nearest the water), not guessed.
+// Each scene sets its own season, hour and weather (director.ts); the sunrise, the sunset and the moonrise sweep
+// their own time through them. The waters are narrow and their banks are wooded, so the low shots look along
+// them, from the water; the sun and the moon are framed by placing the boat where her way runs toward them.
 
 /** The journey's fraction at `s` m along the boat's way (for placing the boat). */
 const fractionAt = (s: number) => s / JOURNEY.length;
@@ -282,17 +284,26 @@ const SALT_MEN = rakerStations();
 /** How high (rad) the night's last shot looks toward the moon's bearing. */
 const NIGHT_LIFT = 0.38;
 
+/** The bridge's scene: the rains, an afternoon of drizzle (the girl's umbrella open, the majhi's mathal on). */
+const BRIDGE_WORLD: SceneWorld = { day: 205, hour: 15.6, weather: 'drizzle', wind: 0.5 };
+
+/** A point of the bridge's frame (`bx` along it, `bz` along the khal) `up` m above the khal's water. */
+function onBridgeFrame(bx: number, bz: number, up: number, out: Vector3): Vector3 {
+  const w = bridgeToWorld(bx, bz);
+  return out.set(w.x, BRIDGE.water + up, w.z);
+}
+
 /**
  * The film's scenes; `ghats` are the village's (world/village.ts planGhats), the first its ghat below the banyan.
  *
- * Told as a cinematographer would tell a year in the village, in five movements: a winter morning (dawn over the
- * khal from the air, the boatman, the village's ghat, the road out between its tal palms, the mustard beside it,
- * the salt field where the creek brings the sea's water, the afternoon train across the mustard); the turning
- * year (spring's red blossom, a nor'wester); the rains (the khal in the rain, the salt field kept as a fish gher,
- * the aman planted in the floods, the shapla bil); autumn and the harvest (a pond, the kash, the fisherman's net,
- * the reaping); and the evening on the water to the night. Each shot is chosen for its subject: wide where a
- * place is set, low and close where a hand works, rising where the land should open out; and runs as long as its
- * story needs.
+ * Told as a cinematographer would tell a year in the village, in five movements: a winter morning (the sunrise
+ * over the khal from the air, the date palms' sap, the young majhi, the village's ghat, the road out between its
+ * tal palms, the mustard beside it, the salt field where the creek brings the sea's water, the afternoon train
+ * across the mustard); the turning year (spring's red blossom, a nor'wester); the rains (the rain coming on the
+ * khal, the girl on the bridge, the salt field kept as a fish gher, the aman planted in the floods, the shapla
+ * bil); autumn and the harvest (a pond, the kash, the majhi's net, the reaping); and the evening on the water to
+ * the night. Each shot is chosen for its subject: wide where a place is set, low and close where a hand works,
+ * rising where the land should open out; and runs as long as its story needs.
  */
 export function tourScenes(ghats: readonly Ghat[]): Scene[] {
   // per-scene choices made as each scene opens
@@ -337,24 +348,56 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
     // ---------- a winter morning ----------
     {
       caption: 'শীতের ভোর',
-      seconds: 16,
-      world: { day: 14, hour: { at: 'sunrise', offset: 0 }, weather: 'clear', wind: 0.2 },
+      seconds: 18,
+      // the sunrise seen whole: the blue before dawn, the glow along the horizon, the sun coming up out of the
+      // mist at the khal's end behind the boat, and the morning's first light on the water and the fields
+      world: { day: 14, hour: { at: 'sunrise', offset: -0.55 }, weather: 'clear', wind: 0.2, sweep: [[0, 0], [0.3, 0.3], [0.55, 0.5], [0.75, 0.64], [1, 0.9]] },
       journey: fractionAt(40),
       begin: (s) => s.birds(s.boatPos, s.boatCourse + Math.PI),
       // the establishing shot: down out of the sky over the misty khal and its fields onto the boat coming up it
       pose: (u, s, pos, look) => {
-        onWay(alongOf(s.boatPos) + lerp(60, 22, u), 0, lerp(16, 3.2, ease(u)), pos);
+        onWay(alongOf(s.boatPos) + lerp(62, 22, u), 0, lerp(16, 3.2, ease(u)), pos);
         rel(s, 0, 0, lerp(0.4, 1.4, u), look);
       },
     },
     {
-      caption: 'মাঝি',
-      seconds: 11,
-      world: { day: 14, hour: { at: 'sunrise', offset: 0.08 }, weather: 'clear', wind: 0.2 },
-      // close beside the boatman as he paddles, the low sun through the mist behind him
+      caption: 'খেজুরের রস',
+      seconds: 17,
+      world: { day: 14, hour: { at: 'sunrise', offset: 0.45 }, weather: 'clear', wind: 0.15 },
+      begin: (s) => s.sap(),
+      // in the mist beside the field path, at the foot of a tapped date palm: up its zig-zag trunk to the pot
+      // tied under the fresh cut, the sap dripping from the bamboo spout into it; then back and out across the
+      // field until the row of palms with their pots stands in the morning mist, the low sun behind the camera
       pose: (u, s, pos, look) => {
-        rel(s, -7, lerp(2.6, -0.8, u), 1.6, pos);
-        rel(s, -2.8, 0, 1.55, look).lerp(rel(s, 12, 0, 2, a), 0.2);
+        const k = s.sapTree;
+        const out = tmpA.copy(k.out);
+        const side = tmpB.set(out.z, 0, -out.x);
+        if (u < 0.42) {
+          const e = ease(u / 0.42);
+          pos.copy(k.foot).addScaledVector(out, lerp(1.6, 0.95, e)).addScaledVector(side, 0.35).setY(lerp(k.foot.y + 0.5, k.mouth.y + 0.12, e));
+          look.copy(k.foot).setY(lerp(k.foot.y + 3, k.mouth.y - 0.02, e)).addScaledVector(out, 0.2 * e);
+        } else if (u < 0.72) {
+          const e = ease((u - 0.42) / 0.3);
+          // close over the pot's mouth, looking down into it: the drops falling from the spout into the sap
+          pos.copy(k.mouth).addScaledVector(out, lerp(0.95, 0.36, e)).addScaledVector(side, lerp(0.35, 0.1, e)).setY(k.mouth.y + lerp(0.12, 0.55, e));
+          look.copy(k.mouth).setY(k.mouth.y - 0.07).addScaledVector(out, -0.03);
+        } else {
+          const e = ease((u - 0.72) / 0.28);
+          pos.copy(k.mouth).addScaledVector(out, lerp(0.55, 9, e)).addScaledVector(side, lerp(0.18, 5, e)).setY(lerp(k.mouth.y + 0.3, k.foot.y + 3.2, e));
+          look.copy(k.mouth).setY(k.mouth.y - 0.03).lerp(a.copy(k.foot).setY(k.foot.y + 3.8).addScaledVector(side, -6), e);
+        }
+      },
+    },
+    {
+      caption: 'মাঝি',
+      seconds: 12,
+      world: { day: 14, hour: { at: 'sunrise', offset: 0.75 }, weather: 'clear', wind: 0.25 },
+      journey: fractionAt(150),
+      // the young majhi: beside him on the water on his paddle's side as he paddles down the river, the low winter
+      // sun in the south-east on his face, the camera drawing in a little; the blade dipping between
+      pose: (u, s, pos, look) => {
+        rel(s, lerp(-1.75, -2.2, u), lerp(2.6, 2.05, u), lerp(1.85, 1.9, u), pos);
+        rel(s, -2.95, 0.25, 1.85, look).lerp(rel(s, 6, 0.5, 1.6, a), 0.1);
       },
     },
     {
@@ -473,13 +516,110 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
     // ---------- the rains ----------
     {
       caption: 'বর্ষার খাল',
-      seconds: 12,
+      seconds: 14,
       world: { day: 195, hour: 11.0, weather: 'rain', wind: null },
       journey: fractionAt(JOURNEY.bridge + 220),
-      // ahead of the boat in the rain, low over the khal, as she comes on
+      // the rain comes on as the majhi paddles up the khal: beside him on the water, he rests his paddle, reaches
+      // back for his mathal and puts it on, settles it, and paddles on, the rain hissing on the water round him
+      begin: (s) => s.bareheaded(),
       pose: (u, s, pos, look) => {
-        rel(s, lerp(15, 10, u), lerp(-3, -2.2, u), 1.5, pos);
-        rel(s, -1, 0, 1.1, look);
+        rel(s, lerp(-1.6, -2.1, u), lerp(-2.7, -2.2, u), lerp(1.8, 1.85, u), pos);
+        rel(s, -3.0, 0.15, 1.8, look).lerp(rel(s, 5, 0.5, 1.4, a), 0.08);
+      },
+    },
+    // the bridge, in the rain: the girl with her red umbrella sees the majhi coming up the khal, watches him come,
+    // crosses the deck as he goes under it and watches him go. Seven shots, cut as a film cuts within a scene.
+    {
+      caption: 'লাল ছাতা',
+      seconds: 6.5,
+      world: BRIDGE_WORLD,
+      journey: fractionAt(JOURNEY.bridge - 28),
+      // wide: low behind and beside the boat on the khal, the old bridge ahead with the red umbrella on it
+      pose: (u, _s, pos, look) => {
+        onWay(JOURNEY.bridge - lerp(37, 33, u), 4.6, 1.5, pos);
+        onBridgeFrame(-0.6, 0, BRIDGE.crown - 0.6, look);
+      },
+    },
+    {
+      caption: '',
+      seconds: 4.5,
+      shot: true,
+      world: BRIDGE_WORLD,
+      // medium on the girl, from out over the khal before her: her face turned down to the boat coming, the umbrella
+      // over her, the parapet's coping under her hand
+      pose: (u, s, pos, look) => {
+        const g = s.girlHead;
+        const f = bridgeFrame(g.x, g.z);
+        onBridgeFrame(f.x + lerp(1.9, 1.6, u), -BRIDGE.width / 2 - lerp(1.3, 1.05, u), 0, pos);
+        pos.y = g.y - 0.15;
+        look.copy(g).setY(g.y - 0.12);
+      },
+    },
+    {
+      caption: '',
+      seconds: 4.5,
+      shot: true,
+      world: BRIDGE_WORLD,
+      // tracking with the boat, low over his left shoulder from behind: him paddling under his mathal, the bridge
+      // ahead with the red umbrella on it, coming nearer
+      pose: (u, s, pos, look) => {
+        rel(s, lerp(-4.9, -5.1, u), -1.25, 2.05, pos);
+        rel(s, 1.5, 0.3, 1.6, look).lerp(s.girlHead, 0.2);
+      },
+    },
+    {
+      caption: '',
+      seconds: 9,
+      shot: true,
+      world: BRIDGE_WORLD,
+      // on the deck, from down its slope: she turns from the parapet as he goes under and crosses to the other
+      pose: (u, s, pos, look) => {
+        const g = s.girlHead;
+        const along = tmpA.set(Math.cos(BRIDGE.angle), 0, -Math.sin(BRIDGE.angle));
+        const bx = bridgeFrame(g.x, g.z).x - lerp(5.6, 5.0, u);
+        onBridgeFrame(bx, lerp(-0.6, 0.4, u), 0, pos);
+        pos.y = BRIDGE.water + bridgeDeck(bx) + 1.45;
+        look.copy(g).setY(g.y - 0.25).addScaledVector(along, -0.2);
+      },
+    },
+    {
+      caption: '',
+      seconds: 4.5,
+      shot: true,
+      world: BRIDGE_WORLD,
+      // low on the water up the khal: the boat coming out from under the arch toward the camera, and past it
+      pose: (u, s, pos, look) => {
+        onWay(JOURNEY.bridge + lerp(27, 24, u), 4.2, 1.0, pos);
+        rel(s, 0, 0, 1.2, look).lerp(onBridgeFrame(0, 0, BRIDGE.crown - 1.5, b), 0.35);
+      },
+    },
+    {
+      caption: '',
+      seconds: 5,
+      shot: true,
+      world: BRIDGE_WORLD,
+      // over her shoulder at the far parapet: past her and her umbrella down to the boat going on up the khal
+      pose: (u, s, pos, look) => {
+        const g = s.girlHead;
+        const fwd = tmpA.set(Math.sin(s.girlYaw), 0, Math.cos(s.girlYaw));
+        const right = tmpB.set(-fwd.z, 0, fwd.x);
+        pos.copy(g).addScaledVector(fwd, lerp(-2.0, -1.8, u)).addScaledVector(right, 0.9).setY(g.y + lerp(1.0, 0.9, u));
+        rel(s, 0.5, 0, 0.6, look);
+      },
+    },
+    {
+      caption: '',
+      seconds: 6,
+      shot: true,
+      world: BRIDGE_WORLD,
+      // close on her face from beyond the far parapet: she watches him go up the khal, her hair stirring in the
+      // wet wind under the red paper, the camera drawing in
+      pose: (u, s, pos, look) => {
+        const g = s.girlHead;
+        const fwd = tmpA.set(Math.sin(s.girlYaw), 0, Math.cos(s.girlYaw));
+        const right = tmpB.set(-fwd.z, 0, fwd.x);
+        pos.copy(g).addScaledVector(fwd, lerp(1.45, 1.1, ease(u))).addScaledVector(right, lerp(-0.6, -0.45, u)).setY(g.y - 0.12);
+        look.copy(g).setY(g.y - 0.06);
       },
     },
     {
@@ -554,9 +694,9 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       caption: 'জেলের জাল',
       seconds: 16,
       world: { day: 300, hour: 16.3, weather: 'clear', wind: 0.3 },
-      // over the shoulder of a fisherman in his dinghy, the low sun behind: he winds round and casts, and the net
-      // opens toward the far bank into a wide circle catching the light, falls, sinks; he hauls it in hand over
-      // hand and lifts it out
+      // over the shoulder of the young majhi out with his net in his dinghy, the low sun behind: he winds round and
+      // casts, and the net opens toward the far bank into a wide circle catching the light, falls, sinks; he
+      // hauls it in hand over hand and lifts it out
       journey: 0.15,
       begin: (s) => s.fisherman(0.4),
       pose: (u, _s, pos, look) => {
@@ -580,37 +720,27 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
 
     // ---------- evening and night on the water ----------
     {
-      caption: 'সেতুর নিচে',
-      seconds: 16,
-      world: { day: 300, hour: { at: 'sunset', offset: -0.7 }, weather: 'clear', wind: 0.4 },
-      journey: fractionAt(JOURNEY.bridge - 20),
-      // low behind the boat as she goes under the old bridge in the evening light, the girl with her umbrella above
-      pose: (u, s, pos, look) => {
-        const at = alongOf(s.boatPos);
-        onWay(at - lerp(12, 9, u), 0, lerp(1.9, 1.5, u), pos);
-        onWay(at + 10, 0, 2.2, look).lerp(rel(s, 0, 0, 1.3, a), 0.4);
-      },
-    },
-    {
       caption: 'সূর্যাস্ত',
-      seconds: 14,
-      world: { day: 300, hour: { at: 'sunset', offset: -0.04 }, weather: 'clear', wind: 0.15 },
-      // behind the boat paddling up the khal toward the low sun, off to one side of her
+      seconds: 18,
+      // the sunset seen whole: the afternoon's gold, the sun sinking to the trees at the khal's end and reddening,
+      // touching, gone; the sky deepening to crimson after it and the dusk coming on
+      world: { day: 300, hour: { at: 'sunset', offset: -0.55 }, weather: 'clear', wind: 0.15, sweep: [[0, 0], [0.35, 0.36], [0.6, 0.55], [0.8, 0.66], [1, 0.84]] },
+      // behind the boat paddling up the khal toward the low sun, off to one side of her, drawing in slowly
       begin: (s) => {
         s.placeBoat(fractionAt(facing(s.sunDir, 0.3)));
         s.birds(s.boatPos, s.boatCourse);
       },
       pose: (u, s, pos, look) => {
-        onWay(alongOf(s.boatPos) - lerp(19, 14, u), 0, 1.0, pos);
-        rel(s, 0, 0, 1.2, look);
+        onWay(alongOf(s.boatPos) - lerp(21, 14, ease(u)), 0, lerp(1.2, 0.95, u), pos);
+        rel(s, 0, 0, lerp(1.4, 1.1, u), look);
       },
     },
     {
       caption: 'চাঁদ ওঠা',
-      seconds: 14,
-      world: { day: 300, moon: 14.8, hour: { at: 'moonrise', offset: 0.35 }, weather: 'clear', wind: 0.15 },
-      // out in the bil, where nothing stands between the boat and the rising moon: low behind her, the full moon
-      // off to one side of her lantern
+      seconds: 16,
+      // the moonrise: the evening sky over the bil, the full moon's rim over the trees, the moon clearing them
+      // amber and paling as it climbs, its light coming onto the water
+      world: { day: 300, moon: 14.8, hour: { at: 'moonrise', offset: -0.12 }, weather: 'clear', wind: 0.15, sweep: [[0, 0], [0.4, 0.2], [0.7, 0.38], [1, 0.6]] },
       // (far enough short of the journey's end that she is not taken back to its start in the mist mid-shot)
       journey: fractionAt(JOURNEY.head + 40),
       pose: (u, s, pos, look) => {
@@ -619,7 +749,9 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
         const aside = tmpB.set(away.z, 0, -away.x);
         overOpenWater(pos.copy(s.boatPos).addScaledVector(away, -lerp(17, 12, u)).addScaledVector(aside, lerp(3, 1.5, u)), s.boatPos).setY(surface() + 1.3);
         const toBoat = a.subVectors(rel(s, 0, 0, 1.2, look), pos).normalize();
-        look.copy(pos).addScaledVector(toBoat.lerp(m, 0.55).normalize(), 30);
+        // toward where the moon is or is coming up, never down into the water before it is up
+        b.set(m.x, Math.max(m.y, 0.05), m.z).normalize();
+        look.copy(pos).addScaledVector(toBoat.lerp(b, 0.55).normalize(), 30);
       },
     },
     {

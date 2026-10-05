@@ -106,9 +106,11 @@ function proxyWeights(ref) {
 // ---- geometry helpers ----
 
 const targets = new Map();
-function target(file) {
-  if (!targets.has(file)) targets.set(file, readTarget(path.join(MAKEHUMAN, 'targets/macrodetails', file)));
-  return targets.get(file);
+/** A target by its path under targets/ (the macros' under macrodetails/). */
+function target(file, dir = 'macrodetails') {
+  const key = `${dir}/${file}`;
+  if (!targets.has(key)) targets.set(key, readTarget(path.join(MAKEHUMAN, 'targets', dir, file)));
+  return targets.get(key);
 }
 
 /** Corner lists → triangles (quads split along their first diagonal). */
@@ -153,9 +155,11 @@ function vertexNormals(tris, pos, count) {
  * A mesh part from triangles over original vertices: corners sharing a vertex and a texture coordinate become
  * one vertex. `pos`/`nrm` per original vertex (metres), `vt` the flat texture coordinates, `skin(v)` its weights.
  */
-function part(tris, pos, nrm, vt, skin, cut = null) {
+function part(tris, pos, nrm, vt, skin, cut = null, free = null, lock = null) {
   const map = new Map();
   const C = [];
+  const F = [];
+  const K = [];
   const P = [];
   const N = [];
   const U = [];
@@ -178,6 +182,8 @@ function part(tris, pos, nrm, vt, skin, cut = null) {
         SI.push(...s.idx);
         SW.push(...s.q);
         if (cut) C.push(cut(c.v));
+        if (free) F.push(free(c.v));
+        if (lock) K.push(lock(c.v));
       }
       index.push(k);
     }
@@ -189,6 +195,8 @@ function part(tris, pos, nrm, vt, skin, cut = null) {
     skinWeight: Uint8Array.from(SW),
     index: map.size < 65536 ? Uint16Array.from(index) : Uint32Array.from(index),
     ...(cut ? { cut: Uint8Array.from(C) } : {}),
+    ...(free ? { free: Uint8Array.from(F) } : {}),
+    ...(lock ? { lock: Uint8Array.from(K) } : {}),
   };
 }
 
@@ -359,6 +367,8 @@ for (const [name, spec] of Object.entries(CHARACTERS)) {
   // the body shaped by the macro targets, in metres, soles at y = 0, scaled to the height asked
   const dm = Float64Array.from(base.v);
   for (const [file, w] of macroTargets(spec.macro)) applyTarget(dm, target(file), w);
+  // then the person's own face and build, over the macros' average
+  for (const [mod, w] of Object.entries(spec.mods ?? {})) applyTarget(dm, target(`${mod}.target`, '.'), w);
   let ymin = Infinity;
   let ymax = -Infinity;
   for (let i = 0; i < 13380; i++) {
@@ -560,8 +570,9 @@ for (const [name, spec] of Object.entries(CHARACTERS)) {
       }
       const deep = interior(BODY, region);
       for (let i = 0; i < NV; i++) if (deep[i]) hide[i] = 1;
-    } else if (garment === 'kameez') {
-      // the kameez from its round neck to the hips (its skirt below is cloth), with sleeves to just above the elbows
+    } else if (garment === 'blouse') {
+      // a plain cotton saree blouse: a round neck, short sleeves to the middle of the upper arm, its hem at the
+      // waist (the saree's skirt and আঁচল are cloth, world/girl.ts)
       const sleeve = (i) => {
         const side = P[i * 3] > 0 ? 0 : 1;
         const a = L.gh[side];
@@ -572,47 +583,26 @@ for (const [name, spec] of Object.entries(CHARACTERS)) {
         return { t: (d[0] * ab[0] + d[1] * ab[1] + d[2] * ab[2]) / (len * len), len };
       };
       shell(
-        'kameez',
+        'blouse',
         (i) => {
           const c = cat(i);
           const p = pos(i);
           const { t, len } = sleeve(i);
           const arm = smooth(0.2, 0.6, arms(c));
           return Math.min(
-            p[1] - (L.hip[1] + 0.03),
+            p[1] - (L.pelvis[1] + 0.09),
             N[1] + 0.03 - p[1],
-            outside(p, [0, N[1] + 0.005, N[2] + 0.03], 0.066, 0.08, 0.105, 0.11),
-            0.1 * (1 - arm) + (0.82 - t) * len * arm,
+            outside(p, [0, N[1] - 0.008, N[2] + 0.034], 0.072, 0.09, 0.115, 0.12),
+            0.1 * (1 - arm) + (0.5 - t) * len * arm,
             (0.5 - c.head) * 0.1,
           );
         },
         (i) => {
           const c = cat(i);
           const arm = smooth(0.2, 0.6, arms(c));
-          return 0.007 + arm * 0.014 * smooth(0.2, 0.82, sleeve(i).t);
+          return 0.006 + arm * 0.008 * smooth(0.1, 0.5, sleeve(i).t);
         },
-        { top: L.chest[1] + 0.02, bottom: L.hip[1] + 0.02, back: true },
-      );
-    } else if (garment === 'salwar') {
-      // loose trousers from the drawstring at the waist (under the kameez) to the cuffs gathered at the ankles
-      const cuff = L.ankle[1] + 0.03;
-      const waist = L.pelvis[1] + 0.05;
-      shell(
-        'salwar',
-        (i) => {
-          const y = P[i * 3 + 1];
-          return Math.min(waist - y, y - cuff, (0.4 - arms(cat(i))) * 0.1);
-        },
-        (i) => {
-          const [x, y, z] = pos(i);
-          const t = (y - cuff) / (waist - cuff);
-          const loose = 0.008 + 0.03 * smooth(0, 0.16, t) + 0.008 * Math.sin(Math.PI * Math.min(1, t / 0.7)) - 0.022 * smooth(0.85, 1, t);
-          // gathered into folds at the cuff
-          const side = x > 0 ? 1 : -1;
-          const knee = L.knee;
-          const th = Math.atan2(z - knee[2], x - side * Math.abs(knee[0]));
-          return loose + 0.005 * (1 - smooth(0, 0.14, t)) * Math.sin(th * 12);
-        },
+        { top: L.chest[1] + 0.02, bottom: L.pelvis[1] + 0.09, back: true },
       );
     }
   }
@@ -659,6 +649,49 @@ for (const [name, spec] of Object.entries(CHARACTERS)) {
   proxy('lashes', path.join(ASSETS, `${spec.lashes}/${path.basename(spec.lashes)}.mhclo`), bendToward(() => [0, 0.2, 1], 0.6));
   const hairFile = path.join(ASSETS, `${spec.hair.proxy}/${path.basename(spec.hair.proxy)}.mhclo`);
   const hair = proxy('hair', hairFile, bendToward(fromHead, 0.65));
+  // a headband holds the hair off his face: what of it hangs in front below the band's line is lifted and
+  // tucked up under it, so his brow and eyes stay clear
+  if (spec.hair.tuck !== undefined) {
+    const line = L.eye[1] + spec.hair.tuck;
+    for (let i = 0; i < hair.px.refs.length; i++) {
+      const y = hair.at[i * 3 + 1];
+      const z = hair.at[i * 3 + 2];
+      if (z > L.eye[2] - 0.06 && y < line) {
+        hair.at[i * 3 + 1] = line - (line - y) * 0.12;
+        hair.at[i * 3 + 2] = z + 0.004;
+      }
+    }
+  }
+  // how far each part of the hair may be moved by the air (mm, for world/human.ts): the more, the farther it
+  // stands out from the scalp (a short cut's ends and its fringe), and long hair the more the lower it hangs
+  if (spec.hair.loose) {
+    const scalp = [];
+    for (let i = 0; i < 13380; i++) if (catW.head[i] > 0.5 && P[i * 3 + 1] > L.eye[1] - 0.06) scalp.push(i);
+    const eyeY = L.eye[1];
+    const reach = (v) => {
+      const x = hair.at[v * 3];
+      const y = hair.at[v * 3 + 1];
+      const z = hair.at[v * 3 + 2];
+      let best = Infinity;
+      for (const k of scalp) best = Math.min(best, (P[k * 3] - x) ** 2 + (P[k * 3 + 1] - y) ** 2 + (P[k * 3 + 2] - z) ** 2);
+      const out = Math.sqrt(best);
+      const hang = smooth(eyeY - 0.06, eyeY - 0.42, y);
+      return Math.round(Math.min(0.24, Math.max(0.9 * Math.max(0, out - 0.004), 0.24 * hang)) * 1000);
+    };
+    // each lock (a card: a piece of the mesh joined to nothing else) its own number, so the wind takes them one by one
+    const root = Int32Array.from({ length: hair.px.refs.length }, (_, i) => i);
+    const find = (a) => {
+      while (root[a] !== a) a = root[a] = root[root[a]];
+      return a;
+    };
+    for (const f of hair.px.obj.faces) for (let k = 1; k < f.corners.length; k++) root[find(f.corners[k].v)] = find(f.corners[0].v);
+    const lock = (v) => {
+      const h = Math.sin(find(v) * 12.9898) * 43758.5453;
+      return Math.floor((h - Math.floor(h)) * 256) & 255;
+    };
+    const tris = triangles(hair.px.obj.faces);
+    parts.hair = part(tris, hair.at, hair.n, hair.px.obj.vt, (v) => skinOf(proxyWeights(hair.px.refs[v])), null, reach, lock);
+  }
 
   // the braid: its hanging part gets a chain of bones of its own, which the scene swings (world/human.ts)
   let braid = null;

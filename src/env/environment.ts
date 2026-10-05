@@ -163,6 +163,15 @@ export class Environment {
     // the season's sunlight: harsher in the summer, cooler in the winter
     const warm = s ? s.warm : 0;
     this.sunColor.multiply(tmpB.setRGB(1 + 0.4 * warm, 1, 1 - 0.6 * warm));
+    // the evening's last colour: as the sun nears the horizon and for a while after it has gone, the low sky,
+    // its glow and the sun itself deepen through orange to crimson (the morning's turn is the fog's, below)
+    const dusk = hour > 12 ? smoothstep(4, 0.5, elev) * smoothstep(-8, -3, elev) * (1 - 0.7 * overcast) : 0;
+    if (dusk > 0) {
+      this.sky.horizon.multiply(tmpB.setRGB(1 + 0.12 * dusk, 1 - 0.32 * dusk, 1 - 0.42 * dusk));
+      G.uGlow.value.multiply(tmpB.setRGB(1 + 0.3 * dusk, 1 - 0.35 * dusk, 1 - 0.5 * dusk));
+      G.uFogColor.value.multiply(tmpB.setRGB(1 + 0.06 * dusk, 1 - 0.14 * dusk, 1 - 0.2 * dusk));
+      this.sunColor.multiply(tmpB.setRGB(1, 1 - 0.3 * dusk, 1 - 0.45 * dusk));
+    }
     // the disc sinks below the horizon over the last degree
     const visible = smoothstep(-1.2, 0.6, elev);
     G.uSunColor.value.copy(this.sunColor).multiplyScalar(sunE * visible * (s ? s.light : 1) * (1 - 0.8 * overcast));

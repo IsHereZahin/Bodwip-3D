@@ -31,6 +31,9 @@ import { JOURNEY, WATER_LEVEL, journeyAt, journeyFrame, setWaterRise, terrainHei
 import { Drift } from './world/drift';
 import { sea, updateSea } from './world/waves';
 import { HeroBoat } from './world/hero';
+import { PaddleSplash } from './world/splash';
+import { Khejur } from './world/khejur';
+import { STROKE_SECONDS } from './world/paddle';
 import { Life } from './world/life';
 import { Crops } from './world/crops';
 import { Meadow } from './world/meadow';
@@ -186,6 +189,13 @@ async function main(hud: Hud): Promise<void> {
   scene.add(train.group);
   const girl = new Girl();
   scene.add(girl.group);
+  // the date palms tapped for their sap in winter
+  const khejur = new Khejur();
+  scene.add(khejur.group);
+  // the drops the majhi's blade throws
+  const splash = new PaddleSplash();
+  scene.add(splash.points);
+  const splashBack = new Vector3();
   scene.add(buildPondLife());
   const bil = new Bil();
   scene.add(bil.group);
@@ -229,8 +239,10 @@ async function main(hud: Hud): Promise<void> {
   // ---- the film tour's stage: what its scenes set in the world (season, hour, moon, weather, the boat,
   // the birds) and read from it; the viewer's own world is kept and put back after ----
   let kept: { time: number; day: number; moon: number; speed: number; playing: boolean; weather: WeatherChoice; wind: number | null; journey: number } | null = null;
-  // the clock's pace in the scene shown (SceneWorld.pace); the viewer's own clock runs at 1
+  // the clock's pace in the scene shown (SceneWorld.pace); the viewer's own clock runs at 1; where a sweep starts
   let scenePace = 1;
+  let sweepFrom = 0;
+  const girlHead = new Vector3();
   const settleWorld = () => {
     updateSky(0, true);
     env.update(clock.hour, clock.moonAge);
@@ -248,13 +260,17 @@ async function main(hud: Hud): Promise<void> {
         const ev = clock.today().find((e) => e.kind === h.at);
         clock.setHour(ev ? hourOf(ev) + h.offset : h.at === 'sunrise' ? 6 : 18);
       }
-      // the scene's own time runs as it would
+      // the scene's own time runs as it would, or as its sweep takes it (sweep())
       clock.speed = 1;
-      clock.playing = true;
+      clock.playing = !world.sweep;
+      sweepFrom = clock.time;
       scenePace = world.pace ?? 1;
       weather.choice = world.weather;
       wind.override = world.wind;
       settleWorld();
+      // a new scene: his mathal is as its weather wants it, as if it had been all along
+      hero.wantHat(hatWanted());
+      hero.settleHat();
     },
     save() {
       finishTurns();
@@ -298,6 +314,18 @@ async function main(hud: Hud): Promise<void> {
     fisherman: (at) => fisher.cue(at),
     lightning: (seconds) => lightning.schedule(seconds),
     gherFisherman: (at) => saltWorks.cueGher(at),
+    bareheaded: () => hero.settleHat(false),
+    sap: () => khejur.cue(t),
+    sapTree: khejur.hero,
+    sweep: (hours) => {
+      clock.time = sweepFrom + hours / 24;
+    },
+    get girlHead() {
+      return girl.body.bone('head').getWorldPosition(girlHead);
+    },
+    get girlYaw() {
+      return girl.group.rotation.y;
+    },
     get sunDir() {
       return env.sunDir;
     },
@@ -838,6 +866,9 @@ async function main(hud: Hud): Promise<void> {
     sky.shift.x += w.x * (0.4 + 0.6 * w.z) * dt * 0.0035;
     sky.shift.y += w.y * (0.4 + 0.6 * w.z) * dt * 0.0035;
   };
+  /** The majhi's mathal: on in a hard sun (high, clear, out of the cool of winter) or in the rain; off when it is mild. */
+  const hatWanted = () => weather.rain > 0.15 || (env.sunDir.y > 0.55 && G.uOvercast.value < 0.45 && season.warm > -0.1);
+  const majhiHead = new Vector3();
   const step = (dt: number) => {
     t += dt;
     G.uTime.value = t;
@@ -859,12 +890,17 @@ async function main(hud: Hud): Promise<void> {
     // the boat floats and is paddled by physics; the boatman's weight from last frame trims her
     rig.update(dt, t, hero.crew);
     const b = rig.boat;
+    hero.wantHat(hatWanted());
     director.update(dt, t, camera);
     hero.update(dt, t, env.lamp, b);
-    girl.update(dt, t, b.pos, weather.rain);
+    splash.update(dt, hero.blade, hero.bladeWet, b.power, splashBack.set(-Math.sin(b.heading), 0, -Math.cos(b.heading)), renderer.domElement.height);
+    // the girl on the bridge watches the majhi himself (his head, as he is posed this frame)
+    hero.man.body.group.updateWorldMatrix(true, false);
+    girl.update(dt, t, hero.man.body.group.localToWorld(majhiHead.copy(hero.man.body.head)), weather.rain, season.rain > 0.25);
     saltWorks.update(dt, t, camera.position, season.salt);
     fisher.update(dt, t, camera.position);
     harvest.update(dt, t, camera.position, season.crops[2]);
+    khejur.update(t, camera.position, clock.dayOfYear, clock.hour);
     train.update(t, env.night);
     water.boat.set(b.pos.x, b.pos.z, b.heading, b.speed);
     water.oar.set(hero.bladeLocal.x, hero.bladeLocal.z, hero.bladeDrive, hero.bladeWet);
@@ -1010,6 +1046,9 @@ async function main(hud: Hud): Promise<void> {
           // the boat goes in after the river has its level
           if (o.journey !== undefined) rig.place(o.journey);
           env.update(clock.hour, clock.moonAge);
+          // his mathal as this moment's weather has it
+          hero.wantHat(hatWanted());
+          hero.settleHat();
           const body = o.face === 'sun' ? env.sunDir : env.moonDir;
           if (o.free) {
             const [x, y, z, yaw, pitch] = o.free;
@@ -1132,6 +1171,16 @@ async function main(hud: Hud): Promise<void> {
           step(0);
           return stats;
         },
+        /** The date palm the film climbs: its foot, cut, pot's mouth and the way the cut faces. */
+        sapTree() {
+          const r = (v: Vector3) => [v.x, v.y, v.z].map((k) => Math.round(k * 1000) / 1000);
+          return { foot: r(khejur.hero.foot), cut: r(khejur.hero.cut), mouth: r(khejur.hero.mouth), out: r(khejur.hero.out) };
+        },
+        /** Holds the majhi's stroke at `phase` (0..1, the blade going in at 0) for a still of his rowing. */
+        stroke(phase: number) {
+          rig.boat.strokeTime = phase * STROKE_SECONDS;
+          step(0);
+        },
         /** Puts the fisherman `at` s into his cast (he throws ≈3.3 s in). */
         fisher(at: number) {
           fisher.cue(at);
@@ -1148,6 +1197,8 @@ async function main(hud: Hud): Promise<void> {
             salt: saltWorks.workers,
             heading: rig.boat.heading,
             girlYaw: girl.group.rotation.y,
+            umbrella: girl.umbrella,
+            rainy: season.rain,
           };
         },
         resume() {

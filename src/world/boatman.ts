@@ -1,15 +1,17 @@
-import { DoubleSide, Euler, Group, LatheGeometry, Matrix4, Mesh, MeshStandardMaterial, Quaternion, SphereGeometry, TorusGeometry, Vector2, Vector3 } from 'three';
+import { BufferAttribute, BufferGeometry, DoubleSide, Euler, Group, LatheGeometry, Matrix4, Mesh, MeshStandardMaterial, Quaternion, SphereGeometry, TorusGeometry, Vector2, Vector3 } from 'three';
 import { MeshBuilder } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { clothTexture, weaveTexture } from '../render/textures';
 import type { Crew } from './boatPhysics';
 import { ClothRibbon, ClothTube, type Ring } from './cloth';
 import { Human, enclosing, radiusAt, type Grip } from './human';
-import type { HumanName } from './humanData';
+import { HUMANS, type HumanName } from './humanData';
 import type { BodyDrive } from './paddle';
 
-// The majhi: a lean, weathered boatman paddling with a বৈঠা at the stern, standing and facing the bow, under
-// a wide palm-leaf mathal. His body is a person as games make one (human.ts: MakeHuman's body on a skeleton,
+// A boatman paddling with a বৈঠা at the stern, standing and facing the bow: the film's young majhi (`tarun`), his
+// hair loose and lifting in the wind, a red cotton ফিতা tied round his head with its ends loose behind, and his
+// palm-leaf mathal, which he puts on and takes off as the sun and the rain ask (hero.ts); or an older man always
+// under his (the same body works the salt and the harvest). His body is a person as games make one (human.ts: MakeHuman's body on a skeleton,
 // a photographed skin, eyes, hair). Each frame his feet stay planted on the boards while the rest of him
 // balances: he keeps upright as the deck rolls under him (a beat late, as people do) and works the stroke with
 // his whole body (wound up and reaching at the catch, unwinding, sinking at the knees and leaning out over the
@@ -110,21 +112,45 @@ function spring(x: number, v: number, target: number, f: number, zeta: number, d
   return [x + v * dt, v];
 }
 
-/** What he wears: the lungi's check (ground, stripe, thin thread), the sando, the gamchha's check (sRGB), and a seed for the weave. */
+/**
+ * What he wears: the lungi's check (ground, stripe, thin thread), the sando, the gamchha's check (sRGB), and a
+ * seed for the weave; `hat`: the palm-leaf mathal always on his head (true, the default), or put on and taken off
+ * by whoever moves him (false: `hat` is then placed each frame); `band`: a cotton headband of that colour.
+ */
 export interface Outfit {
   lungi: readonly [string, string, string];
   vest: string;
   gamchha: readonly [string, string, string];
   seed: number;
+  hat?: boolean;
+  band?: string;
 }
 
-/** The majhi's: a blue checked lungi, an off-white sando, a red gamchha. */
+/** The older boatmen's and workers': a blue checked lungi, an off-white sando, a red gamchha, the mathal. */
 export const MAJHI_OUTFIT: Outfit = {
   lungi: ['#2c4a86', '#e8e2d2', '#16244a'],
   vest: '#d6cfbf',
   gamchha: ['#a8342a', '#efe6d6', '#5a1410'],
   seed: 71,
 };
+
+/**
+ * The young boatman's (`tarun`): a deep indigo lungi checked in teal and cream, a clean white sando that shows his
+ * shoulders, the red-and-white gamchha over one of them; bareheaded, so his face and hair are seen.
+ */
+export const TARUN_OUTFIT: Outfit = {
+  lungi: ['#1f2f5c', '#3f8a86', '#e2dccb'],
+  vest: '#ece8de',
+  gamchha: ['#b3312a', '#f1ebdd', '#5e1610'],
+  seed: 83,
+  hat: false,
+  band: '#9c2a22',
+};
+
+/** The mathal's middle above the head bone's head (bind, before its tip back), and that tip back (rad). */
+const HAT_SEAT = { drop: -0.112, back: -0.012, tip: -0.12 };
+/** The ফিতা: its width (m), how far it stands off the skin over the forehead and over the hair, its ends' particles. */
+const BAND = { width: 0.022, skin: 0.004, hair: 0.016, tails: 6, segment: 0.034 };
 
 export interface BoatTilt {
   rotX: number;
@@ -166,6 +192,10 @@ export class Boatman {
   /** How far his hands' holds were from his shoulders this frame, over his arms' length (debug). */
   stretch = 0;
   readonly body: Human;
+  /** The mathal when it comes off (`Outfit.hat` false): a child of his frame, placed by whoever moves him; else null. */
+  readonly hat: Group | null = null;
+  /** How much the wind may move his hair (less under the mathal). */
+  hairFree = 1;
 
   private readonly stance: Vector3;
   private readonly feet: Vector3[] = [];
@@ -217,6 +247,15 @@ export class Boatman {
   private readonly lean = new Vector3();
   private readonly pole = new Vector3();
   private readonly end = new Vector3();
+  /** The mathal's seat on his head, from the head bone's head (bind frame). */
+  private readonly hatSeat = new Vector3();
+  /** The ফিতা's two loose ends, the knot they hang from (bind, on the back of his head), and the head's middle (bind). */
+  private readonly tails: ClothRibbon[] = [];
+  private readonly knot0 = new Vector3();
+  private readonly knot1 = new Vector3();
+  private readonly back = new Vector3();
+  private readonly skull = new Vector3();
+  private readonly skullAt = new Vector3();
 
   /**
    * `stance`: the middle of his feet on the boards (boat frame); `barRadii`: the radius of what his right
@@ -249,7 +288,8 @@ export class Boatman {
     });
     const g = this.group;
 
-    const body = (this.body = new Human(who, { vest: vestMat }));
+    // loose hair where the body's hair was built to move (human.ts)
+    const body = (this.body = new Human(who, { vest: vestMat }, { flowingHair: Boolean(HUMANS[who].parts.hair?.free) }));
     g.add(body.group);
     const { dims } = body;
     this.reach = dims.upperArm + dims.foreArm;
@@ -278,10 +318,18 @@ export class Boatman {
     const hatHolder = new Group();
     hatHolder.add(hat, rim);
     const crown = new Vector3(...body.data.crown);
-    hatHolder.position.copy(crown).sub(body.bindOf('head')).add(this.v.set(0, -0.112, -0.012));
-    hatHolder.rotation.x = -0.12;
-    body.bone('head').add(hatHolder);
+    this.hatSeat.copy(crown).sub(body.bindOf('head')).add(this.v.set(0, HAT_SEAT.drop, HAT_SEAT.back));
     for (const m of [hat, rim]) m.castShadow = false;
+    if (outfit.hat !== false) {
+      hatHolder.position.copy(this.hatSeat);
+      hatHolder.rotation.x = HAT_SEAT.tip;
+      body.bone('head').add(hatHolder);
+    } else {
+      // one that comes off: in his frame, placed each frame (on his head, in his hand, or set down)
+      this.hat = hatHolder;
+      g.add(hatHolder);
+    }
+    if (outfit.band) this.tieBand(outfit.band, seed);
 
     // the hands closed round what they hold
     [-1, 1].forEach((side, i) => {
@@ -339,6 +387,109 @@ export class Boatman {
 
     this.restPelvis.set(stance.x, stance.y + this.pelvisHeight, stance.z);
   }
+
+  /**
+   * The ফিতা: a strip of red cotton round his head from his forehead, just above his brows, round over his hair
+   * at the sides to the back, where it is knotted a little lower, its two ends hanging loose. The band is laid on
+   * him (each point out from the skull to the skin, then over the hair) and rides with his head; the ends are cloth.
+   */
+  private tieBand(colour: string, seed: number): void {
+    const body = this.body;
+    const eye = body.bindOf('eye.L');
+    const head = body.bindOf('head');
+    this.skull.set(0, eye.y + 0.03, eye.z - 0.085);
+    const weave = clothTexture(colour, colour, colour, seed + 3, true);
+    weave.map.repeat.set(6, 1);
+    const mat = patchMaterial(
+      new MeshStandardMaterial({ map: weave.map, normalMap: weave.normal, normalScale: new Vector2(0.5, 0.5), roughness: 0.92, side: DoubleSide }),
+      { translucency: 0.4 },
+    );
+    const N = 56;
+    const pos: number[] = [];
+    const nrm: number[] = [];
+    const uv: number[] = [];
+    const index: number[] = [];
+    const up = new Vector3();
+    for (let k = 0; k <= N; k++) {
+      const th = (k / N) * Math.PI * 2;
+      const front = 0.5 + 0.5 * Math.cos(th);
+      // across the forehead high, round the back a little lower, over the occiput
+      const y = eye.y + 0.042 * front + 0.006 * (1 - front);
+      const dir = this.v.set(Math.sin(th), 0, Math.cos(th));
+      const from = this.v2.set(this.skull.x, y, this.skull.z);
+      const hit = body.cast(from, dir);
+      const at = hit ? hit.point.clone() : from.clone().addScaledVector(dir, 0.09);
+      const out = (hit ? hit.normal.clone() : dir.clone()).setY(0).normalize();
+      // on the skin at the forehead, over the hair from the temples round
+      at.addScaledVector(out, BAND.skin + (BAND.hair - BAND.skin) * (1 - smoothstep(0.55, 0.9, front)));
+      // a little fuller where it is drawn tight over the knot
+      const knot = Math.exp(-(((th - Math.PI) / 0.25) ** 2));
+      at.addScaledVector(out, 0.004 * knot);
+      up.set(0, 1, 0).addScaledVector(out, -out.y).normalize();
+      for (const s of [-1, 1]) {
+        const p = at.clone().addScaledVector(up, (s * BAND.width) / 2).sub(head);
+        pos.push(p.x, p.y, p.z);
+        nrm.push(out.x, out.y, out.z);
+        uv.push(k / N, s < 0 ? 0 : 1);
+      }
+      if (k < N) {
+        const a = k * 2;
+        index.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+      }
+      if (k === N / 2) {
+        // the knot at the back, and where its ends come from (bind)
+        this.back.copy(out);
+        this.knot0.copy(at).addScaledVector(up, -0.006).addScaledVector(out, 0.012);
+        this.knot1.copy(this.knot0).addScaledVector(this.v3.crossVectors(up, out).normalize(), 0.012);
+      }
+    }
+    const geo = new BufferGeometry();
+    geo.setAttribute('position', new BufferAttribute(new Float32Array(pos), 3));
+    geo.setAttribute('normal', new BufferAttribute(new Float32Array(nrm), 3));
+    geo.setAttribute('uv', new BufferAttribute(new Float32Array(uv), 2));
+    geo.setIndex(index);
+    const band = new Mesh(geo, mat);
+    // the knot itself: a twist of the cloth
+    const knot = new Mesh(new SphereGeometry(1, 10, 8), mat);
+    knot.scale.set(0.017, 0.013, 0.011);
+    knot.position.copy(this.knot0).addScaledVector(this.back, -0.004).sub(head);
+    const holder = new Group();
+    holder.add(band, knot);
+    for (const m of [band, knot]) m.castShadow = false;
+    body.bone('head').add(holder);
+    // the two ends, each held at the knot by its first two particles
+    for (let i = 0; i < 2; i++) {
+      const tail = new ClothRibbon(mat, BAND.tails, BAND.segment, 0.024 - i * 0.003, [0, 1], 1, 1);
+      tail.mesh.castShadow = false;
+      this.tails.push(tail);
+      this.group.add(tail.mesh);
+    }
+  }
+
+  /** Where the mathal sits on his head as he is posed now (his frame): its middle and its turn. */
+  hatOnHead(pos: Vector3, quat: Quaternion): void {
+    pos.copy(this.hatSeat).applyQuaternion(this.body.headQ).add(this.body.head);
+    quat.copy(this.body.headQ).multiply(this.q.setFromAxisAngle(this.v.set(1, 0, 0), HAT_SEAT.tip));
+  }
+
+  /** The ফিতা's ends: held at the knot, the first particle a little back from the second, both carried by his head. */
+  private readonly tailPin = (k: number) => (i: number, p: Vector3, n: Vector3): void => {
+    const at = this.v.copy(k === 0 ? this.knot0 : this.knot1);
+    if (i === 0) at.addScaledVector(this.back, -0.006);
+    this.body.onHead(at, p);
+    n.copy(this.back).applyQuaternion(this.body.headQ);
+  };
+
+  private readonly tailOut = (p: Vector3, out: Vector3): void => {
+    out.subVectors(p, this.skullAt).normalize();
+  };
+
+  /** Keeps the ends off the back of his head and neck. */
+  private readonly tailKeep = (p: Vector3): void => {
+    const d = this.v3.subVectors(p, this.skullAt);
+    const r = d.length();
+    if (r < 0.105 && r > 1e-5) p.addScaledVector(d, (0.105 - r) / r);
+  };
 
   /** The ring of the lungi at `t` (0 its top .. 1 its hem), where his hips and knees put it. */
   private readonly lungiRing = (t: number, out: Ring): Ring => {
@@ -438,9 +589,9 @@ export class Boatman {
     p.copy(v.sub(bind).applyQuaternion(this.chestQ)).add(body.chest);
   };
 
-  /** Elbows out and down, a little back. */
+  /** Elbows down by his sides and a little out and back, as a paddler's stay: never winged out at the shoulder. */
   private poleOf(arm: Arm): Vector3 {
-    return this.pole.set(arm.side * 0.5, -0.6, -0.25).applyQuaternion(this.chestQ).add(arm.shoulder);
+    return this.pole.set(arm.side * 0.32, -0.9, -0.22).applyQuaternion(this.chestQ).add(arm.shoulder);
   }
 
   /**
@@ -526,6 +677,9 @@ export class Boatman {
     this.headQ.setFromEuler(this.e.set(-tilt.rotX * 0.9 + 0.08 + 0.2 * drive.bend, 0.25 * drive.twist, -tilt.rotZ * 0.9, 'YXZ'));
     this.look.set(0, -1.5, 25).applyQuaternion(this.headQ).add(body.head);
     body.setHead(this.headQ, this.look, time);
+    // the air past his head, in its own frame, for his loose hair
+    this.v.copy(wind).multiplyScalar(this.hairFree).applyQuaternion(this.q.copy(this.headQ).invert());
+    body.hairWind.set(this.v.x, this.v.y, this.v.z, time);
 
     // legs: from the hips to the planted feet, knees forward and a little out
     for (let i = 0; i < 2; i++) {
@@ -554,6 +708,10 @@ export class Boatman {
     this.cAy.set(0, 1, 0).applyQuaternion(this.chestQ);
     this.lungi.update(dt, time, this.lungiRing, wind, this.keepOffLegs);
     this.gamchha.update(dt, time, this.gamchhaPin, this.awayFromChest, this.keepOffChest, wind, gravity);
+    if (this.tails.length) {
+      this.body.onHead(this.skull, this.skullAt);
+      this.tails.forEach((tail, k) => tail.update(dt, time + k * 1.7, this.tailPin(k), this.tailOut, this.tailKeep, wind, gravity));
+    }
 
     // his weight, for the boat: his hips and his chest (which leans out over the blade with each pull)
     this.crew.x = (this.pelvis.x - this.restPelvis.x) * 0.6 + (body.chest.x - this.stance.x) * 0.4;
