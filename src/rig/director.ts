@@ -22,6 +22,11 @@ export interface SceneWorld {
   weather: WeatherChoice;
   /** Wind strength held for the scene, or null for the weather's own. */
   wind: number | null;
+  /**
+   * How fast the sky's clock runs in the scene, times its own pace (1 if absent). Away from a rise or a set it
+   * runs 0.1 h a second, a time-lapse no camera on the moon could hold through a shot.
+   */
+  pace?: number;
 }
 
 /** What the tour may do to the world, and read from it (main.ts provides it). */
@@ -43,6 +48,10 @@ export interface Stage {
   train(s: number, west: boolean): void;
   /** Puts the fisherman `at` s into his cast (world/fisher.ts: he throws a little over three seconds in). */
   fisherman(at: number): void;
+  /** Puts the gher's fisherman (world/saltworks.ts, in the rains) `at` s into his cast. */
+  gherFisherman(at: number): void;
+  /** Lightning strikes at these many seconds from now, within the view (world/lightning.ts). */
+  lightning(seconds: readonly number[]): void;
   readonly sunDir: Vector3;
   readonly moonDir: Vector3;
   /** Builds whatever of each point's surroundings is not built yet (the ground, the grass, the crops), without showing it. */
@@ -101,6 +110,9 @@ interface Outgoing {
   boatVel: Vector3;
   course: number;
   moved: boolean;
+  /** Its sun and moon: a shot posed by them (the night's) is posed by its own, not the one coming in. */
+  sun: Vector3;
+  moon: Vector3;
 }
 
 export class Director {
@@ -138,6 +150,8 @@ export class Director {
   private readonly viewVel = new Vector3();
   private readonly tmp = new Vector3();
   private readonly tmp2 = new Vector3();
+  /** The boat as a scene is entered, to tell whether it moved her. */
+  private readonly boatWas = new Vector3();
 
   constructor(scenes: readonly Scene[], stage: Stage) {
     this.scenes = scenes;
@@ -150,6 +164,8 @@ export class Director {
     this.ghost = Object.create(stage, {
       boatPos: { get: () => self.ghostPos },
       boatCourse: { get: () => self.out?.course ?? 0 },
+      sunDir: { get: () => self.out?.sun ?? stage.sunDir },
+      moonDir: { get: () => self.out?.moon ?? stage.moonDir },
     }) as Stage;
     this.leavingView = { camera: this.outCamera, boat: null };
   }
@@ -263,10 +279,13 @@ export class Director {
     const scene = this.scenes[index];
     this.index = index;
     this.time = 0;
+    this.boatWas.copy(this.stage.boatPos);
     this.stage.set(scene.world);
     if (scene.journey !== undefined) this.stage.placeBoat(scene.journey);
-    if (this.out) this.out.moved = scene.journey !== undefined;
     scene.begin?.(this.stage);
+    // the shot being left keeps the boat where it had her if this one put her elsewhere (by its journey or in its
+    // `begin`: the sunset's and the kash's do), or it would lose her and show her hole in the water
+    if (this.out) this.out.moved = Math.hypot(this.stage.boatPos.x - this.boatWas.x, this.stage.boatPos.z - this.boatWas.z) > 0.5;
     this.ahead = null;
     this.aheadDone = false;
     // whatever was not built ahead is built now, along the whole shot
@@ -319,6 +338,8 @@ export class Director {
       boatVel: new Vector3(),
       course: 0,
       moved: false,
+      sun: this.stage.sunDir.clone(),
+      moon: this.stage.moonDir.clone(),
     };
     this.stage.leave();
     return this.out;

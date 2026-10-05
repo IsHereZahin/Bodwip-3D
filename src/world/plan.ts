@@ -101,6 +101,23 @@ export const SIDE_KHAL_POINTS: readonly Pt[] = [
   [252, 760],
 ];
 
+/**
+ * The tidal creek (খাঁড়ি) that brings the sea's salt water up to the salt field (SALT_FIELD) from the south, out
+ * of the haze toward the coast, ending beside the field's settling pond, where a sluice lets the brine in. It is
+ * not joined to the river, whose water is fresh: salt is made from the sea's. South to north.
+ */
+export const SALT_CREEK_POINTS: readonly Pt[] = [
+  [-1345, -560],
+  [-1300, -470],
+  [-1335, -390],
+  [-1290, -320],
+  [-1312, -255],
+  [-1272, -195],
+  [-1294, -140],
+  [-1266, -100],
+  [-1259, -68],
+];
+
 /** The shapla bil: its middle, half its length (along the khal's way in) and half its width (m). */
 export const BIL_SPEC = { x: 150, z: 815, halfLen: 185, halfWid: 120 } as const;
 

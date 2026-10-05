@@ -1,7 +1,7 @@
 import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
 import { SegmentIndex } from '../core/segmentIndex';
-import { BIL_SPEC, BRIDGE_NEAR, CHAR, INTO_BIL, JOURNEY_FROM, KHAL_POINTS, KHAL_ROCKS, OPENING_NEAR, RIVER_POINTS, SANKO_NEAR, SIDE_KHAL_POINTS, WATER_LEVEL, WORLD, type Pt } from './plan';
+import { BIL_SPEC, BRIDGE_NEAR, CHAR, INTO_BIL, JOURNEY_FROM, KHAL_POINTS, KHAL_ROCKS, OPENING_NEAR, RIVER_POINTS, SALT_CREEK_POINTS, SANKO_NEAR, SIDE_KHAL_POINTS, type Pt, WATER_LEVEL, WORLD } from './plan';
 
 // The village's waters (world/plan.ts): the small river, the khal leaving it northward, the side khal through
 // the fields, and the shapla bil at the khal's head; and the boat's journey through them. Each waterway is a
@@ -216,7 +216,13 @@ export const SIDE_KHAL = new Waterway('side khal', SIDE_KHAL_POINTS, 30, 0, (lin
   depth: () => 0.9,
 }));
 
-export const WATERWAYS: readonly Waterway[] = [RIVER, KHAL, SIDE_KHAL];
+/** The salt creek: ≈7 m of the sea's water by the salt field, widening toward the coast; tidal, so still here. */
+export const SALT_CREEK = new Waterway('salt creek', SALT_CREEK_POINTS, 60, 0, (line) => ({
+  half: (s) => 3.4 + 0.4 * wander(s, 29) + 3 * (1 - smoothstep(0, 260, s)) - 0.6 * smoothstep(line.length - 30, line.length, s),
+  depth: (s) => 1.3 + 0.6 * (1 - smoothstep(0, 260, s)),
+}));
+
+export const WATERWAYS: readonly Waterway[] = [RIVER, KHAL, SIDE_KHAL, SALT_CREEK];
 
 /** How much of (x, z) lies on the river's sandy char, on the inside of its broad bend opposite the zamindar house (0..1). */
 export function charShare(x: number, z: number): number {

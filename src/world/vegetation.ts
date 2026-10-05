@@ -40,6 +40,7 @@ import {
   onRoad,
   pondReach,
   routeGap,
+  SALT_CREEK,
   shapePoint,
   terrainHeight,
   waterLevelAt,
@@ -377,6 +378,31 @@ function flowerBush(rng: Rng): TreeParts {
   return { wood: stems.build(), leaves: leaves.build() };
 }
 
+/**
+ * Golpata (nipa palm), as the salt creeks and the tide's mud grow it: no trunk, a clump of long, stiff
+ * pinnate fronds rising straight out of the mud and arching over, a few old ones yellowed and bent down.
+ */
+function nipa(rng: Rng): TreeParts {
+  const leaves = new MeshBuilder();
+  const N = rng.int(12, 17);
+  const base = new Vector3(0, 0.1, 0);
+  for (let i = 0; i < N; i++) {
+    const old = i % 5 === 0;
+    leafStrip(leaves, {
+      base: base.clone().add(new Vector3(rng.range(-0.4, 0.4), 0, rng.range(-0.4, 0.4))),
+      az: (i / N) * Math.PI * 2 + rng.range(-0.3, 0.3),
+      elev: old ? rng.range(0.15, 0.5) : rng.range(0.8, 1.3),
+      len: rng.range(5, 7.5),
+      droop: old ? rng.range(0.3, 0.45) : rng.range(0.1, 0.2),
+      halfWidth: 0.75,
+      profile: frondProfile,
+      fold: 0.3,
+      color: old ? rgb('#b39a5c') : scaleRgb(WHITE, rng.range(0.82, 1.05)),
+    });
+  }
+  return { wood: new MeshBuilder().build(), leaves: leaves.build() };
+}
+
 function hibiscus(rng: Rng): TreeParts {
   const stems = new MeshBuilder();
   const leaves = new MeshBuilder();
@@ -710,6 +736,7 @@ export function buildVegetation(
   );
   const joba = variants(2, hibiscus);
   const bushes = variants(3, flowerBush);
+  const golpata = variants(3, nipa);
   // akashmoni (Acacia auriculiformis), among the commonest trees of Bengal's homesteads and roadsides: an
   // upright trunk, a dense rounded crown
   // the hills' tall trees (garjan and their like): a long straight bole and a tall narrow crown, so the
@@ -754,6 +781,7 @@ export function buildVegetation(
     bamboo: bucket(bamboos, mats.bamboo, culmMat),
     joba: bucket(joba, mats.hibiscus, flowerMat),
     bush: bucket(bushes, mats.bush),
+    nipa: bucket(golpata, mats.frond, palmWood),
     akashmoni: bucket(akashmoni, mats.akashmoni),
     garjan: bucket(garjan, mats.garjan),
     tal: bucket(tals, mats.fan, palmWood),
@@ -892,6 +920,8 @@ export function buildVegetation(
   // the old trees along the river's and the khals' banks, on the levee's top: a rain tree, a mango, a palm
   // leaning out over the water; thicker where the homesteads are, few along the fields, none on the char
   for (const way of WATERWAYS) {
+    // (the salt creek has its own: golpata in the tide's mud)
+    if (way === SALT_CREEK) continue;
     const step = way === SIDE_KHAL ? 26 : 16;
     for (let s = 0; s < way.length; s += step * rng.range(0.7, 1.3)) {
       for (const side of [-1, 1] as const) {
@@ -1052,6 +1082,21 @@ export function buildVegetation(
     }
   }
 
+  // golpata along the salt creek, in clumps in the tide's mud just above the water, thick near the salt field
+  // and on toward the coast
+  for (const side of [-1, 1] as const) {
+    for (let s = rng.range(2, 6); s < SALT_CREEK.length - 8; s += rng.range(3, 9)) {
+      const c = SALT_CREEK.beside(s, side, SALT_CREEK.half(s) + rng.range(0.4, 4));
+      for (let k = 0; k < rng.int(1, 4); k++) {
+        const x = c.x + (k ? rng.range(-2.5, 2.5) : 0);
+        const z = c.z + (k ? rng.range(-2.5, 2.5) : 0);
+        if (terrainHeight(x, z) < WATER_LEVEL + 0.05 || onLandmark(x, z, 1) || !occ.free(x, z, 1.6)) continue;
+        occ.add(x, z, 1.6);
+        put(B.nipa, at(x, z, rng, rng.range(0.85, 1.3), 0.15));
+      }
+    }
+  }
+
   // the trees near the boat's way and by the water show in the water's mirror; those far off on the plain are
   // left out of it (from the water they stand behind the banks' own trees)
   const mirrored = (p: Placement) => journeyDistance(p.x, p.z) < 260 || nearBackwater(p.x, p.z, 12);
@@ -1119,6 +1164,7 @@ export function buildVegetation(
   // grass tufts along the waters' banks: thickest along the lip of the bank, where it shows from the boat
   const grassItems: Placement[][] = grass.map(() => []);
   for (const way of WATERWAYS) {
+    if (way === SALT_CREEK) continue;
     for (const side of [-1, 1] as const) {
       for (let s = 0; s < way.length; s += 1.3) {
         const p0 = way.at(s);

@@ -155,7 +155,9 @@ export class Environment {
     toGrey(this.sky.horizon, overcast * 0.7);
     toGrey(G.uFogColor.value, overcast * 0.6);
     G.uGlow.value.multiplyScalar(1 - 0.8 * overcast);
-    this.sky.zenith.addScalar(flash * 0.25);
+    // lightning: the sky a little paler for an instant (the cloud round the strike is the sky shader's)
+    this.sky.zenith.addScalar(flash * 0.06);
+    this.sky.horizon.addScalar(flash * 0.04);
     this.sky.cloud.value = cloud;
     G.uOvercast.value = overcast;
     // the season's sunlight: harsher in the summer, cooler in the winter
@@ -165,7 +167,7 @@ export class Environment {
     const visible = smoothstep(-1.2, 0.6, elev);
     G.uSunColor.value.copy(this.sunColor).multiplyScalar(sunE * visible * (s ? s.light : 1) * (1 - 0.8 * overcast));
     G.uSunDir.value.copy(this.sunDir);
-    this.exposure = (a.exposure + (b.exposure - a.exposure) * t) * (1 + 0.15 * overcast + 0.6 * flash);
+    this.exposure = (a.exposure + (b.exposure - a.exposure) * t) * (1 + 0.15 * overcast + 0.25 * flash);
     // mist gathers on the river before sunrise and burns off as the sun climbs; evenings stay clear. In
     // the winter and late autumn the mornings drown in fog; dust and rain thicken the air
     const dawn = hour < 12 ? smoothstep(-14, -4, elev) * smoothstep(12, 2, elev) : 0;
@@ -207,7 +209,7 @@ export class Environment {
     this.hemi.color.set(a.hemiSky).lerp(tmpB.set(b.hemiSky), t);
     toGrey(this.hemi.color, overcast * 0.6);
     this.hemi.groundColor.set(a.hemiGround).lerp(tmpB.set(b.hemiGround), t);
-    this.hemi.intensity = (a.hemiE + (b.hemiE - a.hemiE) * t) * (1 + 0.3 * overcast) + flash * 2.5;
+    this.hemi.intensity = (a.hemiE + (b.hemiE - a.hemiE) * t) * (1 + 0.3 * overcast) + flash * 0.8;
 
     this.water.color.set(a.water).lerp(tmpB.set(b.water), t);
     // the season's silt, against the autumn the looks were made for

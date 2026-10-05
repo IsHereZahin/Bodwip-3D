@@ -32,6 +32,8 @@ const COLORS = {
   marsh: rgb('#5a6c38'),
   /** The salt field's grey clay (render/patch.ts paints its beds over it). */
   clay: rgb('#6f685d'),
+  /** The salt creek's flats: grey-brown tidal mud, a salt-burnt grass on it. */
+  flats: rgb('#6c6452'),
 };
 
 /**
@@ -61,7 +63,7 @@ interface ClassLook {
   bare: number;
 }
 
-const LOOK: Record<'field' | 'yard' | 'mound' | 'verge' | 'sand' | 'marsh' | 'salt', ClassLook> = {
+const LOOK: Record<'field' | 'yard' | 'mound' | 'verge' | 'sand' | 'marsh' | 'salt' | 'flats', ClassLook> = {
   field: { color: COLORS.grassA, zone: 1, grass: 0.75, dirt: 0.15, sand: 0, bare: 0 },
   // the yard is clay swept smooth: the fine sand layer's grain under its colour, little of the gravelly dirt or the cracked mud
   yard: { color: COLORS.yard, zone: 0, grass: 0.02, dirt: 0.08, sand: 0.6, bare: 1 },
@@ -71,6 +73,8 @@ const LOOK: Record<'field' | 'yard' | 'mound' | 'verge' | 'sand' | 'marsh' | 'sa
   marsh: { color: COLORS.marsh, zone: 0, grass: 0.85, dirt: 0, sand: 0, bare: 0 },
   // the salt field: its zone below 0 (render/patch.ts paints the beds, bunds and brine), kept bare
   salt: { color: COLORS.clay, zone: -1, grass: 0, dirt: 0.4, sand: 0.3, bare: 1 },
+  // the creek's flats: mud with a thin, low, yellowed grass
+  flats: { color: COLORS.flats, zone: 0, grass: 0.3, dirt: 0.55, sand: 0.1, bare: 0 },
 };
 
 const blend: ClassLook = { color: [0, 0, 0], zone: 0, grass: 0, dirt: 0, sand: 0, bare: 0 };
@@ -86,6 +90,7 @@ function blendedLook(x: number, z: number): ClassLook {
     [LOOK.sand, u.sand],
     [LOOK.marsh, u.marsh],
     [LOOK.salt, u.salt],
+    [LOOK.flats, u.flats],
   ];
   let total = 0;
   for (const [, w] of parts) total += w;

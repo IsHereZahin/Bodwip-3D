@@ -10,6 +10,7 @@ import {
   JOURNEY,
   KHAL,
   RIVER,
+  SALT_CREEK,
   SIDE_KHAL,
   WATERWAYS,
   bilLocal,
@@ -97,6 +98,8 @@ const EDGE_DEPTH = 0.12;
 function bankWidth(way: (typeof WATERWAYS)[number], x: number, z: number): number {
   if (way === SIDE_KHAL) return 3;
   if (way === KHAL) return 5;
+  // the salt creek's banks are the tide's mud, wide and low
+  if (way === SALT_CREEK) return 9;
   // the river's char: on the inside of its broad bend the bank lies down into a long, low beach of sand
   return 7 + 30 * charShare(x, z);
 }
@@ -170,6 +173,16 @@ const BIL_LANE = { depth: 1.5, half: 4, side: 14 };
 function bilLane(x: number, z: number): number {
   if (!nearBil(x, z) || bilReach(x, z) > 1.45) return 0;
   return BIL_LANE.depth * smoothstep(BIL_LANE.half + BIL_LANE.side, BIL_LANE.half, journeyDistance(x, z));
+}
+
+/**
+ * How much of (x, z) is the salt creek's flats (0..1): the tide's grey mud and salt-burnt grass either side of it,
+ * where nothing is sown (the field crops keep off).
+ */
+export function creekFlats(x: number, z: number): number {
+  const f = SALT_CREEK.frame(x, z);
+  if (!f) return 0;
+  return smoothstep(40, 14, f.d - SALT_CREEK.half(f.s));
 }
 
 /** The ground the bil leaves at (x, z): its bowl, then a low marshy rim rising slowly to the fields; the boat's lane through both. */
@@ -412,10 +425,12 @@ export interface LandUse {
   marsh: number;
   /** The salt field's beds and bunds. */
   salt: number;
+  /** The salt creek's mud flats. */
+  flats: number;
   field: number;
 }
 
-const use: LandUse = { yard: 0, mound: 0, verge: 0, sand: 0, marsh: 0, salt: 0, field: 0 };
+const use: LandUse = { yard: 0, mound: 0, verge: 0, sand: 0, marsh: 0, salt: 0, flats: 0, field: 0 };
 
 /** How much of (x, z) is each kind of ground (see LandUse). The result is reused. */
 export function landUse(x: number, z: number): LandUse {
@@ -447,13 +462,15 @@ export function landUse(x: number, z: number): LandUse {
   const sand = charShare(x, z) * (1 - mound);
   const marsh = bilMarsh(x, z);
   const salt = saltShare(x, z);
+  const flats = creekFlats(x, z) * (1 - salt);
   use.yard = yard;
   use.mound = Math.max(0, mound - yard);
-  use.verge = Math.max(0, verge * (1 - mound) - sand - salt);
+  use.verge = Math.max(0, verge * (1 - mound) - sand - salt - flats);
   use.sand = sand;
   use.marsh = marsh;
   use.salt = salt;
-  use.field = Math.max(0, 1 - mound - use.verge - sand - marsh - salt);
+  use.flats = flats;
+  use.field = Math.max(0, 1 - mound - use.verge - sand - marsh - salt - flats);
   return use;
 }
 
@@ -502,4 +519,4 @@ export function bankAt(x: number, z: number): BankSpot | null {
   return best;
 }
 
-export { KHAL, RIVER, SIDE_KHAL, WATERWAYS };
+export { KHAL, RIVER, SALT_CREEK, SIDE_KHAL, WATERWAYS };

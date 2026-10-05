@@ -80,6 +80,8 @@ export const G = {
   uOvercast: { value: 0 },
   /** How much cloud lies on the hills (0..1): winter's mornings and evenings most, some in the rains (main.ts). */
   uHillCloud: { value: 0 },
+  /** A lightning strike's light (world/lightning.ts): xyz the way to where it lights the cloud from within, w how bright now. */
+  uLightning: { value: new Vector4(0, 1, 0, 0) },
 };
 
 /** Drawn by the main camera only: never seen in the mirror pass. */

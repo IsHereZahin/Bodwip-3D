@@ -6,7 +6,7 @@ import { patchMaterial } from '../render/patch';
 import { hyacinthLeafTexture } from '../render/textures';
 import { windAt } from '../env/wind';
 import type { BoatBody } from './boatPhysics';
-import { WATER_LEVEL, inlandWaterAt, meanWaterLevelAt, risenLevel, terrainHeight, waterLevelAt, waterwayAt } from './geography';
+import { SALT_CREEK, WATER_LEVEL, inlandWaterAt, meanWaterLevelAt, risenLevel, terrainHeight, waterLevelAt, waterwayAt } from './geography';
 import { HERO_HULL, heroBeamAtWater, hullHalfWidthAt, type HullShape } from './hull';
 import { wakeHeight } from './wake';
 import { SHELTERED, waveHeight, waveSlope } from './waves';
@@ -453,9 +453,10 @@ export class Drift {
       const x = vx + Math.cos(a) * r;
       const z = vz + Math.sin(a) * r;
       if (!inlandWaterAt(x, z) || waterLevelAt(x, z) - terrainHeight(x, z) < FLOATS) continue;
-      // in the khal (and on its way across the bil) they gather in the slack water along the banks, out of the boats' way
+      // in the khal (and on its way across the bil) they gather in the slack water along the banks, out of the
+      // boats' way; none in the salt creek, whose water is the sea's
       const w = waterwayAt(x, z);
-      if (w && w.d < w.half - EDGE) continue;
+      if (w && (w.d < w.half - EDGE || w.way === SALT_CREEK)) continue;
       return [x, z];
     }
     return null;

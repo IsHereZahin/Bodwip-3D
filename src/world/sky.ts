@@ -109,6 +109,11 @@ void main() {
     cloudCol += uKeyColor * 0.12 * uNight;
     // rain cloud: a low, dark, even grey
     cloudCol *= 1.0 - 0.45 * uOvercast;
+    // lightning lights the cloud from within round the strike, its thicker parts most, and the rest a little
+    if (uLightning.w > 0.001) {
+      float near = max(dot(rd, uLightning.xyz), 0.0);
+      cloudCol += vec3(0.74, 0.77, 1.0) * uLightning.w * (0.035 + 1.1 * pow(near, 16.0) + 0.3 * pow(near, 5.0)) * (0.55 + 0.6 * d);
+    }
     cov *= smoothstep(0.0, 0.14, y) * 0.95;
   }
   col += disc * (1.0 - cov) + night * (1.0 - cov * 0.9);

@@ -3,7 +3,7 @@ import { G, LAYER_NO_REFLECT } from '../core/globals';
 import { smoothstep } from '../core/mathx';
 import { glslHash12 } from '../core/noise';
 import { Rng } from '../core/rng';
-import { windAt } from '../env/wind';
+import { gustAt, windAt } from '../env/wind';
 import { patchMaterial } from '../render/patch';
 import { terrainHeight, waterLevelAt, waterwayAt } from './geography';
 import type { Crown } from './vegetation';
@@ -179,7 +179,9 @@ export class FallingLeaves {
           const bloom = c.blossom && season.z > 0.02 ? bloomAt(c.x, c.z) : 0;
           // the bigger the crown, the more it sheds; those by the camera the most, where a leaf shows
           const size = (c.r / 4) ** 2 * (1 + 2 * (1 - smoothstep(10, 40, Math.hypot(c.x - eye.x, c.z - eye.z))));
-          const petals = bloom * 7 * size * storm;
+          // petals let go in the gusts as they pass over the crown, a few between them, so they come in flurries
+          const gust = gustAt(c.x, c.z);
+          const petals = bloom * 7 * size * storm * (0.3 + 0.7 * gust * gust);
           const leaves = dry * size * storm;
           for (let k = Math.floor(petals * dt + this.rng.next()); k > 0; k--) this.fromCrown(c, true, season.y);
           for (let k = Math.floor(leaves * dt + this.rng.next()); k > 0; k--) this.fromCrown(c, false, season.y);

@@ -19,9 +19,9 @@ export class Weather {
   squall = 0;
   /** How wet the land is, 0..1. */
   wet = 0;
-  /** A lightning flash's light, 0..1, decaying fast. */
+  /** The light of the lightning now showing, 0..1 (world/lightning.ts sets it each frame; the environment reads it). */
   flash = 0;
-  /** Set for one update when a flash strikes, so the thunder can follow it. */
+  /** Set for one update when lightning strikes (world/lightning.ts draws it; the thunder follows). */
   struck = false;
   private nextStrike = 10;
 
@@ -61,11 +61,9 @@ export class Weather {
     else this.wet += (this.rain - this.wet) * (1 - Math.exp(-dt / (900 * (0.4 + this.cloud))));
     // lightning in heavy rain, more often in a storm
     this.struck = false;
-    this.flash = Math.max(0, this.flash - dt * 6);
     if (this.rain > 0.55) {
       this.nextStrike -= dt * (this.rain - 0.5) * (1 + 2 * this.squall);
       if (this.nextStrike <= 0) {
-        this.flash = 1;
         this.struck = true;
         this.nextStrike = 4 + Math.random() * 14;
       }

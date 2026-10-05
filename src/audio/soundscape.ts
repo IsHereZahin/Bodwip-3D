@@ -164,11 +164,12 @@ export class Soundscape {
     o.stop(t + 1.8);
   }
 
-  /** Thunder after a lightning flash: a low roll that swells and dies away. */
-  thunder(): void {
+  /** Thunder after a lightning strike `metres` off: it comes at the speed of sound, a low roll that swells and dies away, quieter from further. */
+  thunder(metres: number): void {
     const ctx = this.ctx;
     if (!ctx || !this.master || this.muted) return;
-    const t = ctx.currentTime + 0.4 + Math.random() * 2.5;
+    const t = ctx.currentTime + metres / 343;
+    const loud = 0.6 * Math.min(1, 900 / Math.max(metres, 300));
     const s = ctx.createBufferSource();
     s.buffer = this.noise;
     s.playbackRate.value = 0.35 + Math.random() * 0.15;
@@ -177,7 +178,7 @@ export class Soundscape {
     lp.frequency.value = 160;
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.5, t + 0.25);
+    g.gain.exponentialRampToValueAtTime(loud, t + 0.25);
     g.gain.exponentialRampToValueAtTime(0.0001, t + 3.5 + Math.random() * 2);
     s.connect(lp).connect(g).connect(this.master);
     s.start(t, Math.random() * 2);

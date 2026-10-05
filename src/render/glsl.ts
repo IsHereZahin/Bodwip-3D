@@ -65,6 +65,7 @@ uniform float uWet;
 uniform float uRain;
 uniform float uOvercast;
 uniform float uHillCloud;
+uniform vec4 uLightning;
 
 float hash12(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);

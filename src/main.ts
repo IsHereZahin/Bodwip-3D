@@ -16,7 +16,7 @@ import { setMaxAnisotropy } from './render/textures';
 import { Director, type Leaving, type Stage } from './rig/director';
 import { MapPanel } from './ui/mapPanel';
 import { WorldLook, type Captured } from './render/snapshot';
-import { tourScenes } from './rig/tour';
+import { cropField, tourScenes } from './rig/tour';
 import { Rig, VIEWS } from './rig/rig';
 import type { ViewName } from './rig/rig';
 import { EVENT_NOW, clockLabel } from './ui/bangla';
@@ -47,6 +47,8 @@ import { FallingLeaves } from './world/leaves';
 import { Fish } from './world/fish';
 import { Songbirds } from './world/songbirds';
 import { Fisher } from './world/fisher';
+import { Harvest } from './world/harvest';
+import { Lightning } from './world/lightning';
 import { SaltWorks } from './world/saltworks';
 import { buildStones } from './world/stones';
 import { buildVillages, planGhats, planHuts } from './world/village';
@@ -164,6 +166,9 @@ async function main(hud: Hud): Promise<void> {
   // the fisherman casting his net on the river below the khal's mouth (his net's rings are the fish's)
   const fisher = new Fisher(fish);
   scene.add(fisher.group);
+  // the aman harvest in Hemanta, on the field the film looks across for it
+  const harvest = new Harvest(cropField(2, 318));
+  scene.add(harvest.group);
   // the ways, in 1.3 km cells: the far ones are left undrawn
   const roads = buildRoads(terrainHeight);
   scene.add(roads);
@@ -173,7 +178,7 @@ async function main(hud: Hud): Promise<void> {
   // stones along the banks and at the water's edge, and the khal's rocks the boat goes round
   scene.add(buildStones());
   // the salt field by where she sets out, and the men raking its salt in the dry months
-  const saltWorks = new SaltWorks();
+  const saltWorks = new SaltWorks(fish);
   scene.add(saltWorks.group);
   // the railway across the fields north of the bil, and its train now and then
   scene.add(buildRailway());
@@ -211,6 +216,8 @@ async function main(hud: Hud): Promise<void> {
   const wind = new Wind();
   const rain = buildRain(girl.shelter);
   scene.add(rain);
+  const lightning = new Lightning();
+  scene.add(lightning.mesh);
   const env = new Environment(sky, water);
   env.season = season;
   env.weather = weather;
@@ -222,6 +229,8 @@ async function main(hud: Hud): Promise<void> {
   // ---- the film tour's stage: what its scenes set in the world (season, hour, moon, weather, the boat,
   // the birds) and read from it; the viewer's own world is kept and put back after ----
   let kept: { time: number; day: number; moon: number; speed: number; playing: boolean; weather: WeatherChoice; wind: number | null; journey: number } | null = null;
+  // the clock's pace in the scene shown (SceneWorld.pace); the viewer's own clock runs at 1
+  let scenePace = 1;
   const settleWorld = () => {
     updateSky(0, true);
     env.update(clock.hour, clock.moonAge);
@@ -242,6 +251,7 @@ async function main(hud: Hud): Promise<void> {
       // the scene's own time runs as it would
       clock.speed = 1;
       clock.playing = true;
+      scenePace = world.pace ?? 1;
       weather.choice = world.weather;
       wind.override = world.wind;
       settleWorld();
@@ -266,6 +276,7 @@ async function main(hud: Hud): Promise<void> {
       clock.setMoonAge(kept.moon);
       clock.speed = kept.speed;
       clock.playing = kept.playing;
+      scenePace = 1;
       weather.choice = kept.weather;
       wind.override = kept.wind;
       rig.place(kept.journey);
@@ -285,6 +296,8 @@ async function main(hud: Hud): Promise<void> {
     birds: (at, heading) => life.launchAll(at, heading, 60),
     train: (s, west) => train.place(t, s, west),
     fisherman: (at) => fisher.cue(at),
+    lightning: (seconds) => lightning.schedule(seconds),
+    gherFisherman: (at) => saltWorks.cueGher(at),
     get sunDir() {
       return env.sunDir;
     },
@@ -828,10 +841,15 @@ async function main(hud: Hud): Promise<void> {
   const step = (dt: number) => {
     t += dt;
     G.uTime.value = t;
-    clock.boost = held.has('KeyT') ? Math.max(1, 40 / clock.speed) : 1;
+    clock.boost = (held.has('KeyT') ? Math.max(1, 40 / clock.speed) : 1) * (director.active ? scenePace : 1);
     if (!scrubbing) clock.advance(dt);
     turn(dt);
     updateSky(dt, false);
+    // lightning where the storm strikes (in a shot, or ahead of whoever is looking, mostly within the view), its
+    // light on the cloud and the land, and the thunder after it
+    const fell = lightning.update(dt, camera, weather.struck, director.active || Math.random() < 0.7);
+    if (fell !== null) sound.thunder(fell);
+    weather.flash = lightning.light;
     env.update(clock.hour, shownMoon());
     // cloud on the hills: in winter (and late autumn) lying thick in the mornings and evenings, thinner at noon;
     // in the rains it hangs on them while it rains
@@ -846,6 +864,7 @@ async function main(hud: Hud): Promise<void> {
     girl.update(dt, t, b.pos, weather.rain);
     saltWorks.update(dt, t, camera.position, season.salt);
     fisher.update(dt, t, camera.position);
+    harvest.update(dt, t, camera.position, season.crops[2]);
     train.update(t, env.night);
     water.boat.set(b.pos.x, b.pos.z, b.heading, b.speed);
     water.oar.set(hero.bladeLocal.x, hero.bladeLocal.z, hero.bladeDrive, hero.bladeWet);
@@ -874,7 +893,6 @@ async function main(hud: Hud): Promise<void> {
     else rig.focus(focus);
     focus.set(Math.round(focus.x / 12) * 12, 0, Math.round(focus.z / 12) * 12);
     if (env.aimShadow(focus, false)) renderer.shadowMap.needsUpdate = true;
-    if (weather.struck) sound.thunder();
     sound.update(dt, env.night, G.uWind.value.z, weather.rain);
   };
   updateSky(0, true);
@@ -1107,6 +1125,12 @@ async function main(hud: Hud): Promise<void> {
         birds(ahead = 40) {
           life.launchAll(rig.boat.pos, rig.boat.heading, ahead);
           step(0.016);
+        },
+        /** A lightning strike in the view, held `age` s into it (0 its first stroke at its brightest). */
+        bolt(age = 0) {
+          const stats = lightning.strikeNow(camera, age);
+          step(0);
+          return stats;
         },
         /** Puts the fisherman `at` s into his cast (he throws ≈3.3 s in). */
         fisher(at: number) {

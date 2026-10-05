@@ -23,7 +23,9 @@ import { instanced, type Placement } from '../render/instancing';
 import { patchMaterial } from '../render/patch';
 import { softSpotTexture, weaveTexture } from '../render/textures';
 import { Boatman, type Outfit, type OarPose } from './boatman';
-import { saltPoint, terrainHeight } from './geography';
+import { Fisher, type FisherPlace } from './fisher';
+import type { Fish } from './fish';
+import { SALT_CREEK, WATER_LEVEL, saltLocal, saltPoint, terrainHeight } from './geography';
 import type { BodyDrive } from './paddle';
 import { SALT_FIELD } from './plan';
 
@@ -35,7 +37,14 @@ import { SALT_FIELD } from './plan';
 // at work: three men raking the crust that has formed on the black plastic into lines toward the bund, a
 // basket or two by them. They are the boatman's body (human.ts) in their own lungis and gamchhas, each
 // drawing a wooden board on a bamboo handle (ফাউড়া) through the salt toward his feet, lifting it and reaching
-// out again. In the rains the farm lies flooded and nobody is there.
+// out again. The brine comes up from the sea by a tidal creek (world/waterways.ts SALT_CREEK) to a sluice by
+// the settling pond: a plank culvert through the creek's bank with its gate in grooves, and a trough on to the
+// field's feeder channel. In the rains, when no salt can be made, the flooded beds are kept as a fish and shrimp
+// gher, as the coast's salt farmers do: a man on a bund casts his net into the old settling pond, and a
+// watchman's hut stands on bamboo legs at the farm's corner.
+
+/** The gher's fisherman's clothes in the rains: a faded lungi, a dark sando. */
+const GHER_OUTFIT: Outfit = { lungi: ['#3f4f5e', '#b7b2a2', '#1e2833'], vest: '#5a5650', gamchha: ['#9a7a2a', '#e8dfcc', '#4a3a12'], seed: 95 };
 
 const F = SALT_FIELD;
 /** A bund's cross-section (m): its foot, its crown, its height. */
@@ -69,6 +78,20 @@ export function rakerStations(): { u: number; v: number }[] {
     }
   }
   return stations;
+}
+
+/** Where the gher's fisherman stands in the rains: on the settling pond's inner bund, facing into it (world/fisher.ts FisherPlace). */
+export function gherStand(): FisherPlace {
+  const at = groundAt(POND_END, F.d * 0.55);
+  return {
+    x: at.x,
+    z: at.z,
+    yaw: F.yaw + Math.PI,
+    ground: at.y + BUND.height - 0.02,
+    // the rain's water standing over the old pond's floor
+    water: groundAt(POND_END * 0.5, F.d * 0.55).y + 0.3,
+    outfit: GHER_OUTFIT,
+  };
 }
 
 /** The world's ground under a point of the field's frame. */
@@ -316,10 +339,17 @@ export class SaltWorks {
   readonly workers: readonly { x: number; y: number; z: number; yaw: number }[];
   private readonly people = new Group();
   private readonly rakers: Raker[] = [];
+  private readonly gherFisher: Fisher;
+  private hut = new Mesh();
 
-  constructor() {
+  constructor(fish: Fish) {
     const rng = new Rng(611);
     this.group.name = 'saltworks';
+    this.buildSluice(rng);
+    this.buildHut();
+    this.gherFisher = new Fisher(fish, gherStand());
+    this.gherFisher.group.visible = false;
+    this.group.add(this.gherFisher.group);
 
     // the bunds
     const bunds = new MeshBuilder();
@@ -405,10 +435,127 @@ export class SaltWorks {
   }
 
   /** `eye`: the camera; `salt`: the season's salt work (env/season.ts). */
+  /** Puts the gher's fisherman `at` s into his cast. */
+  cueGher(at: number): void {
+    this.gherFisher.cue(at);
+  }
+
+  /** `eye`: the camera; `salt`: the season's salt work (env/season.ts): salt made in the dry months, fish kept in the rains. */
   update(dt: number, t: number, eye: Vector3, salt: number): void {
     const working = salt > 0.5;
+    const gher = salt < 0.25;
     this.people.visible = working;
-    if (!working || Math.hypot(eye.x - F.x, eye.z - F.z) > 320) return;
-    for (const r of this.rakers) r.update(dt, t);
+    this.gherFisher.group.visible = gher;
+    this.hut.visible = gher;
+    if (Math.hypot(eye.x - F.x, eye.z - F.z) > 320) return;
+    if (working) for (const r of this.rakers) r.update(dt, t);
+    if (gher) this.gherFisher.update(dt, t, eye);
+  }
+
+  /**
+   * The sluice where the creek's salt water is let in: a culvert of planks through the creek's bank at its head,
+   * its gate raised in grooves between two posts, a plank across its top to walk on; and an open trough of planks
+   * from it to the field's edge, a little water in it.
+   */
+  private buildSluice(rng: Rng): void {
+    const end = SALT_CREEK.at(SALT_CREEK.length);
+    const f = saltLocal(end.x, end.z);
+    const edge = saltPoint(0.4, f.v);
+    const dx = edge.x - end.x;
+    const dz = edge.z - end.z;
+    const len = Math.hypot(dx, dz);
+    const yaw = Math.atan2(dx, dz);
+    const q = new Quaternion().setFromAxisAngle(UP, yaw);
+    const ux = dx / len;
+    const uz = dz / len;
+    const half = SALT_CREEK.half(SALT_CREEK.length);
+    const wood = new MeshBuilder();
+    const plank = (along: number, across: number, y: number, w: number, h: number, d: number, c: RGB) => {
+      const x = end.x + ux * along + uz * across;
+      const z = end.z + uz * along - ux * across;
+      wood.add(new BoxGeometry(w, h, d), new Matrix4().compose(new Vector3(x, y, z), q, new Vector3(1, 1, 1)), scaleRgb(c, rng.range(0.85, 1.05)));
+    };
+    const timber = rgb('#5b4a36');
+    const wet = rgb('#3c3226');
+    // the culvert: from just in the water up through the bank
+    const c0 = half - 0.4;
+    const c1 = half + 3.2;
+    const floorAt = (a: number) => {
+      const x = end.x + ux * a;
+      const z = end.z + uz * a;
+      return terrainHeight(x, z);
+    };
+    for (const side of [-1, 1]) {
+      for (let a = c0; a < c1; a += 0.9) {
+        const g = Math.min(floorAt(a), WATER_LEVEL + 0.3);
+        plank(a + 0.45, side * 0.5, g + 0.55, 0.08, 1.3, 0.92, a < half + 0.6 ? wet : timber);
+      }
+    }
+    // the gate between its posts at the water's end, raised a hand's breadth
+    const gy = WATER_LEVEL + 0.4;
+    for (const side of [-1, 1]) plank(c0 + 0.2, side * 0.62, gy + 0.4, 0.14, 2.0, 0.14, timber);
+    plank(c0 + 0.2, 0, gy + 0.25, 1.0, 0.9, 0.06, wet);
+    plank(c0 + 0.2, 0, gy + 1.35, 1.4, 0.1, 0.16, timber);
+    // a plank across the top to walk on
+    plank(half + 1.4, 0, floorAt(half + 1.4) + 1.25, 2.2, 0.06, 0.5, timber);
+    // the trough on to the field
+    const t0 = c1;
+    const t1 = len;
+    const n = Math.max(1, Math.ceil((t1 - t0) / 1.5));
+    for (let k = 0; k < n; k++) {
+      const a = t0 + ((k + 0.5) * (t1 - t0)) / n;
+      const g = floorAt(a);
+      const l = (t1 - t0) / n + 0.05;
+      plank(a, 0, g + 0.04, 0.7, 0.05, l, timber);
+      for (const side of [-1, 1]) plank(a, side * 0.33, g + 0.2, 0.05, 0.32, l, timber);
+    }
+    const mesh = new Mesh(wood.build(), patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), { grime: 0.5, wetline: true }));
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    this.group.add(mesh);
+    // the brine in the trough: a dark glossy strip
+    const water = new MeshBuilder();
+    for (let k = 0; k < n; k++) {
+      const a = t0 + ((k + 0.5) * (t1 - t0)) / n;
+      const x = end.x + ux * a;
+      const z = end.z + uz * a;
+      water.add(new BoxGeometry(0.58, 0.02, (t1 - t0) / n + 0.05), new Matrix4().compose(new Vector3(x, floorAt(a) + 0.12, z), q, new Vector3(1, 1, 1)), rgb('#2c3734'));
+    }
+    this.group.add(new Mesh(water.build(), patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.08 }), {})));
+  }
+
+  /** The gher's watchman's hut (টং ঘর): a mat-walled room on bamboo legs at the farm's corner, a thatched roof, a ladder. */
+  private buildHut(): void {
+    const at = groundAt(-5, F.d + 3);
+    const yaw = F.yaw - Math.PI / 2;
+    const q = new Quaternion().setFromAxisAngle(UP, yaw);
+    const place = (x: number, y: number, z: number) => new Vector3(x, y, z).applyQuaternion(q).add(new Vector3(at.x, at.y, at.z));
+    const b = new MeshBuilder();
+    const bamboo = rgb('#a39469');
+    const legs = 1.6;
+    for (const [x, z] of [[-1, -1], [1, -1], [-1, 1], [1, 1]] as const) b.add(new CylinderGeometry(0.06, 0.07, legs + 0.3, 6), new Matrix4().compose(place(x * 1.0, (legs + 0.3) / 2 - 0.3, z * 0.9), q, new Vector3(1, 1, 1)), bamboo);
+    b.add(new BoxGeometry(2.3, 0.08, 2.1), new Matrix4().compose(place(0, legs, 0), q, new Vector3(1, 1, 1)), rgb('#8a7a58'));
+    const mat = rgb('#9c8662');
+    b.add(new BoxGeometry(2.2, 1.3, 0.05), new Matrix4().compose(place(0, legs + 0.65, -1.0), q, new Vector3(1, 1, 1)), mat);
+    for (const x of [-1.08, 1.08]) b.add(new BoxGeometry(0.05, 1.3, 2.0), new Matrix4().compose(place(x, legs + 0.65, 0), q, new Vector3(1, 1, 1)), mat);
+    // the roof: two thatched slopes
+    const thatch = rgb('#8a7448');
+    for (const s of [-1, 1]) {
+      const first = b.vertexCount;
+      const n = new Vector3(s * 0.6, 1, 0).normalize().applyQuaternion(q);
+      b.vertex(place(s * 1.5, legs + 1.25, -1.35), n, 0, 0, thatch);
+      b.vertex(place(s * 1.5, legs + 1.25, 1.35), n, 1, 0, thatch);
+      b.vertex(place(0, legs + 2.05, 1.35), n, 1, 1, scaleRgb(thatch, 0.85));
+      b.vertex(place(0, legs + 2.05, -1.35), n, 0, 1, scaleRgb(thatch, 0.85));
+      if (s > 0) b.quad(first, first + 1, first + 2, first + 3);
+      else b.quad(first, first + 3, first + 2, first + 1);
+    }
+    // the ladder at its open front
+    for (const x of [-0.25, 0.25]) b.add(new CylinderGeometry(0.03, 0.03, 2.0, 5), new Matrix4().compose(place(x, legs / 2, 1.45), new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0).applyQuaternion(q), -0.32).multiply(q), new Vector3(1, 1, 1)), bamboo);
+    this.hut = new Mesh(b.build(), patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.9, side: DoubleSide }), { grime: 0.4 }));
+    this.hut.castShadow = true;
+    this.hut.receiveShadow = true;
+    this.hut.visible = false;
+    this.group.add(this.hut);
   }
 }

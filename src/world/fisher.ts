@@ -63,6 +63,20 @@ const SITE = (() => {
 /** Where the fisherman works and which way he faces (for the film's shot of him). */
 export const FISHER_SITE: { readonly x: number; readonly z: number; readonly yaw: number; readonly s: number } = SITE;
 
+/**
+ * Where a man casts: his place and the way he faces; on foot on a bund (`ground`, the height of his feet) or, by
+ * default, in his dinghy on the river; the water he fishes when it is not the river's (`water`: its surface,
+ * standing over its own floor), and his clothes.
+ */
+export interface FisherPlace {
+  x: number;
+  z: number;
+  yaw: number;
+  ground?: number;
+  water?: number;
+  outfit?: Outfit;
+}
+
 const ease = (x: number) => smoothstep(0, 1, x);
 /** Where `t` lies between `a` and `b`, 0..1. */
 const span = (t: number, a: number, b: number) => clamp((t - a) / (b - a), 0, 1);
@@ -73,6 +87,9 @@ export class Fisher {
   private readonly man: Boatman;
   private readonly fish: Fish;
   private readonly stance: Vector3;
+  private readonly site: FisherPlace;
+  /** In his dinghy on the river (else on foot on a bund). */
+  private readonly afloat: boolean;
   private readonly pose: OarPose = {
     holds: [
       { at: new Vector3(), thumb: new Vector3(0, 1, 0) },
@@ -116,61 +133,39 @@ export class Fisher {
   private readonly q = new Quaternion();
   private readonly axis = new Vector3();
 
-  constructor(fish: Fish) {
+  constructor(fish: Fish, place: FisherPlace = SITE) {
     this.fish = fish;
+    this.site = place;
+    this.afloat = place.ground === undefined;
     this.group.name = 'fisher';
     const rng = new Rng(97);
-
-    // the dinghy: her hull, floorboards from the stern seat to the bow, a thwart, a basket for the catch
-    const wood = new MeshBuilder();
-    buildHull(wood, DINGHY, { tar: rgb('#2b2119'), top: rgb('#5c4b38'), band: rgb('#6e2e24'), wet: true }, 0);
-    const deck = hullStation(DINGHY, STAND_AT).keel + 0.1;
-    // each board as wide as the hull is at its height there, so none shows through her planking
-    for (let s = 0.2; s <= 0.82; s += 0.155) {
-      const z = (s - 0.5) * DINGHY.len;
-      const w = Math.min(hullHalfWidthAt(DINGHY, s - 0.05, deck + 0.02), hullHalfWidthAt(DINGHY, s + 0.05, deck + 0.02)) * 2 - 0.04;
-      if (w > 0.1) wood.add(new BoxGeometry(w, 0.03, 0.6), new Matrix4().makeTranslation(0, deck, z), scaleRgb(rgb('#6b573e'), rng.range(0.85, 1.05)));
-    }
-    const seat = hullStation(DINGHY, 0.4);
-    wood.add(new BoxGeometry(seat.hb * 2 - 0.04, 0.04, 0.22), new Matrix4().makeTranslation(0, seat.sheer - 0.1, (0.4 - 0.5) * DINGHY.len), rgb('#5a4733'));
-    this.boat.add(new Mesh(wood.build(), patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), { grime: 0.35 })));
     const weave = weaveTexture(61);
     weave.repeat.set(6, 2);
     const basket = new Mesh(
       new LatheGeometry([new Vector2(0, 0), new Vector2(0.14, 0), new Vector2(0.2, 0.08), new Vector2(0.23, 0.2), new Vector2(0.21, 0.2), new Vector2(0.18, 0.08), new Vector2(0, 0.02)], 14),
       patchMaterial(new MeshStandardMaterial({ map: weave, color: '#c9b386', roughness: 0.9, side: DoubleSide }), { grime: 0.3 }),
     );
-    basket.position.set(-0.18, deck, (0.48 - 0.5) * DINGHY.len);
-    this.boat.add(basket);
-
-    this.stance = new Vector3(0, deck, (STAND_AT - 0.5) * DINGHY.len);
-    this.man = new Boatman(this.stance, [0.014, 0.014], OUTFIT);
+    if (!this.afloat) {
+      // on foot on a bund: his basket beside him
+      this.stance = new Vector3(0, 0, 0);
+      basket.position.set(-0.55, 0, -0.35);
+      this.boat.add(basket);
+      this.boat.position.set(place.x, place.ground ?? 0, place.z);
+    } else {
+      this.stance = this.buildDinghy(rng, basket);
+      this.boat.position.set(place.x, WATER_LEVEL, place.z);
+    }
+    this.boat.rotation.set(0, place.yaw, 0, 'YXZ');
+    this.man = new Boatman(this.stance, [0.014, 0.014], place.outfit ?? OUTFIT);
     this.boat.add(this.man.group);
-    // his soft shadow on the boards
+    // his soft shadow on the boards or the bund
     const shadow = new Mesh(
       new PlaneGeometry(0.8, 0.6).rotateX(-Math.PI / 2),
       new MeshBasicMaterial({ map: softSpotTexture(), transparent: true, depthWrite: false, color: '#000000', opacity: 0.45 }),
     );
     shadow.position.copy(this.stance).y += 0.02;
     this.boat.add(shadow);
-    this.boat.position.set(SITE.x, WATER_LEVEL, SITE.z);
-    this.boat.rotation.set(0, SITE.yaw, 0, 'YXZ');
     this.group.add(this.boat);
-
-    // the bamboo pole she is tied to, planted in the bed off her stern, and its rope
-    const back = new Vector3(0, 0, -DINGHY.len * 0.5 - 0.5).applyAxisAngle(new Vector3(0, 1, 0), SITE.yaw).add(new Vector3(SITE.x, 0, SITE.z));
-    const bed = terrainHeight(back.x, back.z);
-    const pole = new Mesh(
-      new CylinderGeometry(0.03, 0.04, WATER_LEVEL + 2.4 - bed, 6).translate(0, (WATER_LEVEL + 2.4 - bed) / 2, 0),
-      patchMaterial(new MeshStandardMaterial({ color: '#9c8c5c', roughness: 0.7 }), { grime: 0.4 }),
-    );
-    pole.position.set(back.x, bed, back.z);
-    pole.rotation.set(0.05, 0, -0.06);
-    this.group.add(pole);
-    const rope = new Mesh(new CylinderGeometry(0.008, 0.008, 0.75, 4).rotateX(Math.PI / 2), new MeshStandardMaterial({ color: '#5a4c36', roughness: 0.9 }));
-    rope.position.set(0, DINGHY.sheerMid + DINGHY.sheerRise * 0.6, -DINGHY.len * 0.5 - 0.15);
-    this.boat.add(rope);
-
     // the net: rings out from its crown, spokes round it; the twine's mesh laid on in the spread net's own plane
     const n = (NET.rings + 1) * NET.spokes;
     this.netPos = new Float32Array(n * 3);
@@ -251,10 +246,45 @@ export class Fisher {
     }
     // what moves stays out of the shadow map (it is not redrawn every frame), and out of the mirror
     this.group.traverse((o) => {
-      o.castShadow = false;
+      if (o.name !== 'pole') o.castShadow = false;
       o.layers.set(LAYER_NO_REFLECT);
     });
-    pole.castShadow = true;
+  }
+
+  /** The dinghy, tied to her bamboo pole: her hull, floorboards, a thwart, the basket; where he stands in her bow. */
+  private buildDinghy(rng: Rng, basket: Mesh): Vector3 {
+    const place = this.site;
+    // her hull, floorboards from the stern seat to the bow, a thwart, a basket for the catch
+    const wood = new MeshBuilder();
+    buildHull(wood, DINGHY, { tar: rgb('#2b2119'), top: rgb('#5c4b38'), band: rgb('#6e2e24'), wet: true }, 0);
+    const deck = hullStation(DINGHY, STAND_AT).keel + 0.1;
+    // each board as wide as the hull is at its height there, so none shows through her planking
+    for (let s = 0.2; s <= 0.82; s += 0.155) {
+      const z = (s - 0.5) * DINGHY.len;
+      const w = Math.min(hullHalfWidthAt(DINGHY, s - 0.05, deck + 0.02), hullHalfWidthAt(DINGHY, s + 0.05, deck + 0.02)) * 2 - 0.04;
+      if (w > 0.1) wood.add(new BoxGeometry(w, 0.03, 0.6), new Matrix4().makeTranslation(0, deck, z), scaleRgb(rgb('#6b573e'), rng.range(0.85, 1.05)));
+    }
+    const seat = hullStation(DINGHY, 0.4);
+    wood.add(new BoxGeometry(seat.hb * 2 - 0.04, 0.04, 0.22), new Matrix4().makeTranslation(0, seat.sheer - 0.1, (0.4 - 0.5) * DINGHY.len), rgb('#5a4733'));
+    this.boat.add(new Mesh(wood.build(), patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), { grime: 0.35 })));
+    basket.position.set(-0.18, deck, (0.48 - 0.5) * DINGHY.len);
+    this.boat.add(basket);
+
+    // the bamboo pole she is tied to, planted in the bed off her stern, and its rope
+    const back = new Vector3(0, 0, -DINGHY.len * 0.5 - 0.5).applyAxisAngle(new Vector3(0, 1, 0), place.yaw).add(new Vector3(place.x, 0, place.z));
+    const bed = terrainHeight(back.x, back.z);
+    const pole = new Mesh(
+      new CylinderGeometry(0.03, 0.04, WATER_LEVEL + 2.4 - bed, 6).translate(0, (WATER_LEVEL + 2.4 - bed) / 2, 0),
+      patchMaterial(new MeshStandardMaterial({ color: '#9c8c5c', roughness: 0.7 }), { grime: 0.4 }),
+    );
+    pole.position.set(back.x, bed, back.z);
+    pole.name = 'pole';
+    pole.rotation.set(0.05, 0, -0.06);
+    this.group.add(pole);
+    const rope = new Mesh(new CylinderGeometry(0.008, 0.008, 0.75, 4).rotateX(Math.PI / 2), new MeshStandardMaterial({ color: '#5a4c36', roughness: 0.9 }));
+    rope.position.set(0, DINGHY.sheerMid + DINGHY.sheerRise * 0.6, -DINGHY.len * 0.5 - 0.15);
+    this.boat.add(rope);
+    return new Vector3(0, deck, (STAND_AT - 0.5) * DINGHY.len);
   }
 
   /** Sets the cast `t` s in (0: holding the net, about to wind up; the throw comes at `T.release`). */
@@ -265,19 +295,19 @@ export class Fisher {
 
   /** `eye`: the camera; `t` the clock (s). Posed only while the camera is near enough to see it. */
   update(dt: number, t: number, eye: Vector3): void {
-    if (Math.hypot(eye.x - SITE.x, eye.z - SITE.z) > 420) return;
+    if (Math.hypot(eye.x - this.site.x, eye.z - this.site.z) > 420) return;
     this.time += dt;
     if (this.time >= T.cycle) {
       this.time -= T.cycle;
       this.splashed = false;
     }
-    const level = WATER_LEVEL + waterRise();
-    this.floatBoat(t, level);
+    const level = this.site.water ?? WATER_LEVEL + waterRise();
+    if (this.afloat) this.floatBoat(t, level);
     this.poseCast(this.time, level);
     // the man: his weight on the boards, the wind past him
-    windAt(SITE.x, SITE.z, this.air);
-    const c = Math.cos(SITE.yaw);
-    const s = Math.sin(SITE.yaw);
+    windAt(this.site.x, this.site.z, this.air);
+    const c = Math.cos(this.site.yaw);
+    const s = Math.sin(this.site.yaw);
     this.wind.set(this.air.x * c - this.air.z * s, 0, this.air.x * s + this.air.z * c);
     this.tilt.rotX = this.boat.rotation.x;
     this.tilt.rotZ = this.boat.rotation.z;
@@ -290,10 +320,10 @@ export class Fisher {
   /** She rides the sheltered ripples where she lies, and heels a little under his swing and his hauling. */
   private floatBoat(t: number, level: number): void {
     const b = this.boat;
-    waveSlope(SITE.x, SITE.z, t, this.slope, SHELTERED);
-    b.position.y = level + FLOAT + waveHeight(SITE.x, SITE.z, t, SHELTERED);
-    const c = Math.cos(SITE.yaw);
-    const s = Math.sin(SITE.yaw);
+    waveSlope(this.site.x, this.site.z, t, this.slope, SHELTERED);
+    b.position.y = level + FLOAT + waveHeight(this.site.x, this.site.z, t, SHELTERED);
+    const c = Math.cos(this.site.yaw);
+    const s = Math.sin(this.site.yaw);
     // the slopes along her and across her, and his weight (crew is in her frame: x across, z along)
     const along = this.slope.x * s + this.slope.z * c;
     const across = this.slope.x * c - this.slope.z * s;
@@ -444,7 +474,7 @@ export class Fisher {
       return;
     }
     // the bow, where he draws the crown to and lifts it out
-    const bow = this.boat.localToWorld(this.v2.set(0, 0, DINGHY.len * 0.5 + 0.2));
+    const bow = this.boat.localToWorld(this.v2.set(0, 0, this.afloat ? DINGHY.len * 0.5 + 0.2 : 0.9));
     if (t < haulEnd) {
       // each pull draws it a step nearer, the rim closing under it first; the last lifts the crown clear
       const k = (t - T.haul) / T.pull;
@@ -471,8 +501,8 @@ export class Fisher {
 
   /** Where the net falls: ahead of his feet, along her bow. */
   private landingPoint(level: number): Vector3 {
-    this.landing.set(Math.sin(SITE.yaw), 0, Math.cos(SITE.yaw)).multiplyScalar(CAST.reach + DINGHY.len * (STAND_AT - 0.5));
-    return this.landing.add(this.v.set(SITE.x, level, SITE.z));
+    this.landing.set(Math.sin(this.site.yaw), 0, Math.cos(this.site.yaw)).multiplyScalar(CAST.reach + (this.afloat ? DINGHY.len * (STAND_AT - 0.5) : 0));
+    return this.landing.add(this.v.set(this.site.x, level, this.site.z));
   }
 
   /** Water running out of the lifted net: small rings under it now and then. */
@@ -488,7 +518,7 @@ export class Fisher {
     const pos = this.netPos;
     const flying = this.lean > 0.001;
     // the lean: the spread net tilts back toward him in the air, about the line across his throw
-    this.axis.set(Math.cos(SITE.yaw), 0, -Math.sin(SITE.yaw));
+    this.axis.set(Math.cos(this.site.yaw), 0, -Math.sin(this.site.yaw));
     this.q.setFromAxisAngle(this.axis, -this.lean);
     const sunk = this.splashed;
     for (let i = 0; i <= NET.rings; i++) {
@@ -569,7 +599,7 @@ export class Fisher {
         this.v.set(0.32 + spot.u, this.stance.y + 0.04, this.stance.z - 0.1 + spot.v * 1.5);
         this.boat.localToWorld(this.v);
         m.position.copy(this.v);
-        m.rotation.set(0, SITE.yaw + spot.turn, Math.PI / 2 + flap);
+        m.rotation.set(0, this.site.yaw + spot.turn, Math.PI / 2 + flap);
       }
     });
   }
