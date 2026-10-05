@@ -6,9 +6,10 @@ import { SegmentIndex } from '../core/segmentIndex';
 import { MeshBuilder, rgb, scaleRgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { ROAD_SURFACES, roadAtlas } from '../render/textures';
+import { HOMESTEAD_MOUNDS, PONDS, pondReach, shapePoint } from './layout';
 import { PLAIN, ROAD_RAISE, ROADS, type Pt, type RoadPoint, type RoadSpec } from './plan';
 import { bridgeEnds, sankoEnds, type Point2 } from './sites';
-import { KHAL, RIVER, riverLevee } from './waterways';
+import { KHAL, RIVER, riverLevee, waterwayAt } from './waterways';
 
 // The village's ways (world/plan.ts ROADS): the brick road (herringbone brick, HBB, as Bengal's village roads
 // are laid) on its embankment a little above the fields, and the earth paths between the homesteads, the
@@ -28,7 +29,7 @@ const STEP = 2.5;
 /** A way comes onto a crossing straight for this far (m). */
 const APPROACH = 7;
 
-/** One straight piece of a way: its ends, half-width, the brick road's crest at each end, surface, and distance along it at each end. */
+/** One straight piece of a way: its ends, half-width, the raised road's crest at each end (NaN: it lies on the ground), surface, and distance along it at each end. */
 interface Reach {
   ax: number;
   az: number;
@@ -123,7 +124,7 @@ function curve(pts: readonly Pt[]): Pt[] {
   return out;
 }
 
-/** The brick road's crest along its points: the land under it (the fields and the river's levee) raised, smoothed along it. */
+/** A raised road's crest along its points: the land under it (the fields and the river's levee) raised, smoothed along it. */
 function crests(pts: readonly Pt[]): Float32Array {
   const land = pts.map(([x, z]) => PLAIN + riverLevee(x, z) + ROAD_RAISE);
   const out = new Float32Array(pts.length);
@@ -155,21 +156,63 @@ function alongBank(a: NonNullable<RoadSpec['along']>): Pt[] {
 const REACHES: Reach[] = [];
 /** Each piece's run of REACHES, for the joints between them. */
 const PIECES: { first: number; count: number }[] = [];
+
+/** Lays a piece of way along `pts` (already smooth): raised on its crests if `raised`, else on the ground. */
+function lay(pts: readonly Pt[], half: number, surface: Surface, raised: boolean): void {
+  const c = raised ? crests(pts) : null;
+  const first = REACHES.length;
+  let v = 0;
+  for (let k = 0; k + 1 < pts.length; k++) {
+    const [ax, az] = pts[k];
+    const [bx, bz] = pts[k + 1];
+    const len = Math.hypot(bx - ax, bz - az);
+    REACHES.push({ ax, az, bx, bz, half, ca: c ? c[k] : Number.NaN, cb: c ? c[k + 1] : Number.NaN, surface, va: v, vb: v + len });
+    v += len;
+  }
+  PIECES.push({ first, count: REACHES.length - first });
+}
+
 for (const road of ROADS) {
-  const half = road.width / 2;
-  for (const piece of road.along ? [alongBank(road.along)] : pieces(road.points ?? [])) {
-    const pts = curve(piece);
-    const c = road.kind === 'brick' ? crests(pts) : null;
-    const first = REACHES.length;
-    let v = 0;
-    for (let k = 0; k + 1 < pts.length; k++) {
-      const [ax, az] = pts[k];
-      const [bx, bz] = pts[k + 1];
-      const len = Math.hypot(bx - ax, bz - az);
-      REACHES.push({ ax, az, bx, bz, half, ca: c ? c[k] : Number.NaN, cb: c ? c[k + 1] : Number.NaN, surface: road.kind, va: v, vb: v + len });
-      v += len;
+  for (const piece of road.along ? [alongBank(road.along)] : pieces(road.points ?? [])) lay(curve(piece), road.width / 2, road.kind, road.kind === 'brick' && !road.flat);
+}
+
+/** Whether (x, z) is in water: a waterway or a pond (a way never runs through either). */
+function wet(x: number, z: number): boolean {
+  const w = waterwayAt(x, z);
+  if (w && w.d < w.half + 4) return true;
+  return PONDS.some((p) => Math.abs(p.x - x) < 40 && Math.abs(p.z - z) < 40 && pondReach(p, x, z) < 1.25);
+}
+
+/**
+ * Every homestead is reached by a way: one that no designed way passes close by gets a footpath of its own,
+ * from its yard to the nearest point of the ways, as long as it need not cross water to get there.
+ */
+{
+  const designed = REACHES.length;
+  for (const m of HOMESTEAD_MOUNDS) {
+    let best = { d: Infinity, x: 0, z: 0 };
+    for (let k = 0; k < designed; k++) {
+      const r = REACHES[k];
+      const sx = r.bx - r.ax;
+      const sz = r.bz - r.az;
+      const t = Math.min(1, Math.max(0, ((m.x - r.ax) * sx + (m.z - r.az) * sz) / (sx * sx + sz * sz || 1)));
+      const x = r.ax + sx * t;
+      const z = r.az + sz * t;
+      const d = Math.hypot(x - m.x, z - m.z);
+      if (d < best.d) best = { d, x, z };
     }
-    PIECES.push({ first, count: REACHES.length - first });
+    // a way already passes by the mound, or none is near enough to be worth a path
+    if (best.d < Math.max(m.hu, m.hv) + 6 || best.d > 160) continue;
+    const from = shapePoint(m, 0, 0);
+    const dir = Math.atan2(best.x - from.x, best.z - from.z);
+    const start = { x: from.x + Math.sin(dir) * Math.min(m.hu, m.hv) * 0.4, z: from.z + Math.cos(dir) * Math.min(m.hu, m.hv) * 0.4 };
+    const len = Math.hypot(best.x - start.x, best.z - start.z);
+    let dry = true;
+    for (let d = 0; d <= len && dry; d += 2) dry = !wet(start.x + ((best.x - start.x) * d) / len, start.z + ((best.z - start.z) * d) / len);
+    if (!dry) continue;
+    // a little bent, as a path worn across the fields is
+    const mid: Pt = [(start.x + best.x) / 2 + (best.z - start.z) * 0.08, (start.z + best.z) / 2 - (best.x - start.x) * 0.08];
+    lay(curve([[start.x, start.z], mid, [best.x, best.z]]), 0.6, 'earth', false);
   }
 }
 
@@ -179,7 +222,7 @@ const BRICK = new SegmentIndex(32);
 const BRICK_OF: number[] = [];
 REACHES.forEach((r, i) => {
   ALL.add(r.ax, r.az, r.bx, r.bz, r.half, 8);
-  if (r.surface === 'brick') {
+  if (!Number.isNaN(r.ca)) {
     BRICK.add(r.ax, r.az, r.bx, r.bz, r.half, SHOULDER + 8);
     BRICK_OF.push(i);
   }
@@ -203,7 +246,7 @@ export function roadCover(x: number, z: number): number {
   const hit = ALL.nearest(x, z);
   if (!hit) return 0;
   const r = REACHES[hit.index];
-  return 1 - smoothstep(r.half, r.half + (r.surface === 'brick' ? SHOULDER : 0.7), hit.d);
+  return 1 - smoothstep(r.half, r.half + (Number.isNaN(r.ca) ? 0.7 : SHOULDER), hit.d);
 }
 
 /** How far (x, z) is from the brick road's edge (m; ∞ away from it): its verges are grass, not field. */
@@ -218,14 +261,14 @@ export function onRoad(x: number, z: number, margin = 0): boolean {
   return hit !== null && hit.d < REACHES[hit.index].half + margin;
 }
 
-/** The ways' points, for laying things along them (trees along the road): each piece's points every STEP m, with its surface. */
-export function roadLines(): { surface: Surface; half: number; points: Pt[] }[] {
+/** The ways' points, for laying things along them (trees along the road): each piece's points every STEP m, its surface and whether it is raised. */
+export function roadLines(): { surface: Surface; raised: boolean; half: number; points: Pt[] }[] {
   return PIECES.map((p) => {
     const pts: Pt[] = [];
     for (let k = p.first; k < p.first + p.count; k++) pts.push([REACHES[k].ax, REACHES[k].az]);
     const last = REACHES[p.first + p.count - 1];
     pts.push([last.bx, last.bz]);
-    return { surface: REACHES[p.first].surface, half: REACHES[p.first].half, points: pts };
+    return { surface: REACHES[p.first].surface, raised: !Number.isNaN(REACHES[p.first].ca), half: REACHES[p.first].half, points: pts };
   });
 }
 
@@ -274,11 +317,12 @@ export function buildRoads(ground: (x: number, z: number) => number): Group {
       const height = (t: number, across: number) => {
         const x = r.ax + (r.bx - r.ax) * t + nx * across;
         const z = r.az + (r.bz - r.az) * t + nz * across;
-        return r.surface === 'brick' ? r.ca + (r.cb - r.ca) * t + LIFT : ground(x, z) + LIFT * 0.7;
+        return Number.isNaN(r.ca) ? ground(x, z) + LIFT * 0.7 : r.ca + (r.cb - r.ca) * t + LIFT;
       };
-      // brick lies flat on its crest; a path is laid over the ground in short steps, three points across
-      const along = r.surface === 'brick' ? 1 : Math.max(1, Math.round(len / 1.25));
-      const across = r.surface === 'brick' ? [-1, 1] : [-1, 0, 1];
+      // a raised road lies flat on its crest; a path is laid over the ground in short steps, three points across
+      const raised = !Number.isNaN(r.ca);
+      const along = raised ? 1 : Math.max(1, Math.round(len / 1.25));
+      const across = raised ? [-1, 1] : [-1, 0, 1];
       const s = b.vertexCount;
       for (let i = 0; i <= along; i++) {
         const t = i / along;
@@ -300,7 +344,7 @@ export function buildRoads(ground: (x: number, z: number) => number): Group {
           const a = (i / N) * Math.PI * 2;
           const x = r.bx + Math.cos(a) * r.half;
           const z = r.bz + Math.sin(a) * r.half;
-          b.vertex(at.set(x, r.surface === 'brick' ? y : ground(x, z) + LIFT * 0.7 - 0.002, z), up, atlasU(r.surface, 0.5 + 0.5 * Math.cos(a)), r.vb / 3 + 0.3 * Math.sin(a), c);
+          b.vertex(at.set(x, raised ? y : ground(x, z) + LIFT * 0.7 - 0.002, z), up, atlasU(r.surface, 0.5 + 0.5 * Math.cos(a)), r.vb / 3 + 0.3 * Math.sin(a), c);
         }
         for (let i = 0; i < N; i++) b.tri(j0, j0 + i + 2, j0 + i + 1);
       }

@@ -27,6 +27,7 @@ import {
   bilPoint,
   bilReach,
   charShare,
+  hillShare,
   inlandWaterAt,
   landUse,
   nearBackwater,
@@ -39,7 +40,7 @@ import {
   terrainHeight,
   type Mound,
 } from './geography';
-import { FAR_GROVES, WORLD } from './plan';
+import { FAR_GROVES, HILLS, WORLD } from './plan';
 import { roadLines } from './roads';
 import { KHAL, SIDE_KHAL, journeyDistance, type Waterway } from './waterways';
 import type { HutPlan } from './village';
@@ -706,7 +707,7 @@ export function buildVegetation(
   // the brick road under its trees: a row each side (rain trees and akashmoni, as the roads are planted),
   // gaps where houses, ponds or the bridge come up to it
   for (const line of roadLines()) {
-    if (line.surface !== 'brick') continue;
+    if (!line.raised) continue;
     const pts = line.points;
     for (let k = 0; k + 1 < pts.length; k += 5) {
       const [ax, az] = pts[k];
@@ -733,6 +734,30 @@ export function buildVegetation(
     if (landUse(x, z).field < 0.9) continue;
     const r = rng.next();
     plant(r < 0.45 ? (near ? B.date : B.dateFar) : r < 0.75 ? (near ? B.coconut : B.coconutFar) : near ? B.rain : B.far, x, z, 28, rng.range(0.85, 1.2));
+  }
+
+  // the hills' forest: crowns close over their slopes and tops; those the boat's way sees drawn in full, the
+  // rest cheap crowns that read the same through the haze
+  for (const hill of HILLS) {
+    const s = Math.sin(hill.yaw);
+    const c = Math.cos(hill.yaw);
+    // the hill the boat's way sees close is planted thick; those on the horizon with fewer, larger crowns that
+    // close over them the same through the haze
+    const seen = journeyDistance(hill.x, hill.z) < 700;
+    const n = Math.round((Math.PI * hill.r * hill.r * hill.stretch) / (seen ? 115 : 230));
+    for (let k = 0; k < n; k++) {
+      const a = rng.range(0, Math.PI * 2);
+      const d = Math.sqrt(rng.next()) * hill.r;
+      const la = Math.cos(a) * d * hill.stretch;
+      const lb = Math.sin(a) * d;
+      const x = hill.x + la * s + lb * c;
+      const z = hill.z + la * c - lb * s;
+      if (hillShare(x, z) < 0.5) continue;
+      const near = journeyDistance(x, z) < 450;
+      const r = rng.next();
+      const tree = near ? (r < 0.35 ? B.rain : r < 0.6 ? B.mango : r < 0.8 ? B.akashmoni : r < 0.9 ? B.date : B.bamboo) : r < 0.8 ? B.far : r < 0.9 ? B.dateFar : B.coconutFar;
+      plant(tree, x, z, near ? 3.2 : seen ? 4 : 6, near ? rng.range(1.0, 1.35) : seen ? rng.range(1.35, 1.7) : rng.range(1.8, 2.3));
+    }
   }
 
   // round the bil: groves standing back from its marshy rim, and hijol trees out in its shallows

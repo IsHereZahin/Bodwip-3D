@@ -44,6 +44,7 @@ import { buildSanko } from './world/sanko';
 import { buildYards } from './world/yard';
 import { BANYAN_CLEARING, buildBanyan } from './world/banyan';
 import { buildLandmarks } from './world/landmarks';
+import { Train, buildRailway } from './world/railway';
 import { buildWater } from './world/water';
 
 const BLACK = new Color(0, 0, 0);
@@ -140,6 +141,10 @@ async function main(hud: Hud): Promise<void> {
   cullBeyond(roads, 2600);
   scene.add(buildBridge());
   scene.add(buildSanko());
+  // the railway across the fields north of the bil, and its train now and then
+  scene.add(buildRailway());
+  const train = new Train();
+  scene.add(train.group);
   const girl = new Girl();
   scene.add(girl.group);
   scene.add(buildPondLife());
@@ -607,6 +612,7 @@ async function main(hud: Hud): Promise<void> {
     director.update(dt, t, camera);
     hero.update(dt, t, env.lamp, b);
     girl.update(dt, t, b.pos, weather.rain);
+    train.update(t, env.night);
     water.boat.set(b.pos.x, b.pos.z, b.heading, b.speed);
     water.oar.set(hero.bladeLocal.x, hero.bladeLocal.z, hero.bladeDrive, hero.bladeWet);
     water.swirl.copy(hero.swirl);
@@ -848,6 +854,11 @@ async function main(hud: Hud): Promise<void> {
             if (o.name === name) o.visible = true;
           });
           step(0);
+        },
+        /** Puts the train's nose `s` m along the railway (from its east end), running west if `forward`. */
+        train(s: number, forward = true) {
+          train.place(t, s, forward);
+          step(0.001);
         },
         birds(ahead = 40) {
           life.launchAll(rig.boat.pos, rig.boat.heading, ahead);

@@ -216,13 +216,36 @@ export const HOMESTEADS: readonly HomesteadSpec[] = [
 /** The old banyan at the corner of the river and the khal, its brick platform round the trunk, the village's ghat below it and the tea stall by the road. */
 export const BANYAN = { x: -46, z: 72, crown: 15 } as const;
 export const HUB_GHAT: Pt = [-62, 40];
-export const TEA_STALL = { x: -84, z: 104, face: W - 0.4 } as const;
+export const TEA_STALL = { x: -97, z: 106, face: E + 0.5 } as const;
 
 /** The zamindar house: its compound's middle, the way its front looks (over the river), and its compound's size (m). */
 export const ZAMINDAR = { x: -440, z: 240, face: S + 0.35, w: 72, d: 54, pond: { x: -530, z: 262, yaw: 0.35, halfW: 20, halfD: 13 } as PondSpec } as const;
 
 /** The mosque: its middle and the way its door looks (east: it faces the qibla, west, across its prayer hall); its pond before it. */
 export const MOSQUE = { x: 152, z: 212, face: E, w: 26, d: 24, pond: { x: 100, z: 206, yaw: 0, halfW: 17, halfD: 12, ghat: [116, 206] } as PondSpec } as const;
+
+/**
+ * The wooded hills (টিলা) that rise from the plain in a few places: one over the river's south bank down from the
+ * confluence (the boat sees it against the sunset from there), a higher one on the northern horizon behind the
+ * railway, a low ridge in the east. An ellipse each, `stretch` times longer along `yaw` (0 north), `h` m high.
+ */
+export const HILLS: readonly { x: number; z: number; r: number; h: number; stretch: number; yaw: number }[] = [
+  { x: 520, z: -430, r: 190, h: 24, stretch: 1.45, yaw: 1.25 },
+  { x: -420, z: 1340, r: 260, h: 36, stretch: 1.6, yaw: 1.4 },
+  { x: -1330, z: 620, r: 220, h: 18, stretch: 1.3, yaw: 0.4 },
+];
+
+/** The railway, east to west on its embankment north of the bil: the far side of the village from the river. */
+export const RAILWAY_POINTS: readonly Pt[] = [
+  [-1900, 1075],
+  [-1000, 1098],
+  [-200, 1122],
+  [500, 1118],
+  [1100, 1094],
+  [1900, 1062],
+];
+/** Its embankment: the rails' bed this far above the fields, its top this wide, its sides falling 1 in 2. */
+export const RAILWAY = { raise: 3.2, top: 6.5, slope: 0.5 } as const;
 
 /** The far villages: groves on their mounds out toward every horizon (only trees, seen through the haze). */
 export const FAR_GROVES: readonly { x: number; z: number; r: number }[] = [
@@ -235,7 +258,7 @@ export const FAR_GROVES: readonly { x: number; z: number; r: number }[] = [
   { x: 1250, z: 480, r: 130 },
   { x: 820, z: 930, r: 140 },
   { x: 300, z: 1230, r: 120 },
-  { x: -420, z: 1120, r: 140 },
+  { x: -430, z: 975, r: 120 },
   { x: -1000, z: 920, r: 120 },
   { x: -820, z: 720, r: 90 },
   { x: 680, z: 560, r: 100 },
@@ -252,6 +275,8 @@ export interface RoadSpec {
   /** Its designed points; or, for a path along a bank, `along`: from near one point to near another, `offset` m back from the water's edge, on their side of it. */
   points?: readonly RoadPoint[];
   along?: { way: 'river' | 'khal'; from: Pt; to: Pt; offset: number };
+  /** Brick laid flat on the ground, as a path is, not raised on an embankment (the hub's paving down to its ghat). */
+  flat?: boolean;
 }
 
 export const ROADS: readonly RoadSpec[] = [
@@ -270,11 +295,12 @@ export const ROADS: readonly RoadSpec[] = [
       [-400, 310],
       [-300, 292],
       [-215, 252],
-      [-150, 214],
-      [-100, 158],
-      [-72, 118],
-      [-66, 150],
-      [-64, 196],
+      [-152, 208],
+      [-108, 154],
+      [-84, 124],
+      [-66, 130],
+      [-58, 166],
+      [-58, 204],
       [-44, 240],
       'bridge-e',
       'bridge-w',
@@ -288,8 +314,13 @@ export const ROADS: readonly RoadSpec[] = [
       [1900, 360],
     ],
   },
+  // the hub's paving: from the road's bend under the banyan's crown down to the village's ghat
+  { kind: 'brick', width: 2.6, flat: true, points: [[-84, 122], [-74, 98], [-66, 74], [-62, 54]] },
   // the riverside path from the banyan's ghat to the zamindar house, along the bank's top past the homesteads' fronts
   { kind: 'earth', width: 1.5, along: { way: 'river', from: [-70, 60], to: [-395, 205], offset: 7.5 } },
+  // down the river past the confluence, a path along each bank's top joining the homesteads there
+  { kind: 'earth', width: 1.3, along: { way: 'river', from: [70, 30], to: [600, -140], offset: 7.5 } },
+  { kind: 'earth', width: 1.2, along: { way: 'river', from: [60, -60], to: [520, -230], offset: 7.5 } },
   // and on the bank where she sets out, past the first para's fronts
   { kind: 'earth', width: 1.4, along: { way: 'river', from: [-990, 50], to: [-600, 140], offset: 7.5 } },
   // up to the homesteads north of the road

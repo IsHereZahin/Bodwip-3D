@@ -541,7 +541,7 @@ export function buildLandmarks(): Group {
 
   const group = new Group();
   group.name = 'landmarks';
-  const plaster = plasterTexture(811);
+  const plaster = plasterTexture(811, { fallen: false });
   const brick = brickTexture(812);
   const peepal = leafClusterTexture(813, ['#2e5a1c', '#3b6b22', '#4b7d2a', '#5c8f34'], { count: 90, len: [0.12, 0.2], width: 0.6 });
   const add = (b: MeshBuilder, mat: MeshStandardMaterial) => {

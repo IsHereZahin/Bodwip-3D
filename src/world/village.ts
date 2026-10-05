@@ -273,7 +273,7 @@ export function buildVillages(huts: readonly HutPlan[], ghats: readonly Ghat[]):
 
   const group = new Group();
   group.name = 'villages';
-  const plaster = plasterTexture(44);
+  const plaster = plasterTexture(44, { fallen: false });
   const brick = brickTexture(45);
   const textured = (set: { map: ReturnType<typeof plasterTexture>['map']; normal: ReturnType<typeof plasterTexture>['normal'] }, roughness: number, grime: number) =>
     patchMaterial(new MeshStandardMaterial({ map: set.map, normalMap: set.normal, normalScale: new Vector2(0.7, 0.7), vertexColors: true, roughness }), { grime });

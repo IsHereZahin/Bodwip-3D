@@ -150,7 +150,7 @@ export function buildBanyan(bark: Surfaces['bark']): Group {
     new MeshStandardMaterial({ map: leafTex.map, normalMap: leafTex.normal, normalScale: new Vector2(0.9, 0.9), vertexColors: true, alphaTest: 0.42, alphaToCoverage: true, side: DoubleSide, roughness: 0.6 }),
     { wind: 0.2, windHeight: 14, translucency: 1, foliage: true, seasonal: 'leaf' },
   );
-  const plasterSet = plasterTexture(406);
+  const plasterSet = plasterTexture(406, { fallen: false });
   const stoneMat = patchMaterial(new MeshStandardMaterial({ map: plasterSet.map, normalMap: plasterSet.normal, vertexColors: true, roughness: 0.92 }), { grime: 0.45 });
   for (const [b, m] of [
     [wood, woodMat],

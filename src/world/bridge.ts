@@ -1,6 +1,6 @@
 import { BufferGeometry, DoubleSide, Group, Mesh, MeshStandardMaterial, Vector2, Vector3 } from 'three';
 import { Rng } from '../core/rng';
-import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
+import { MeshBuilder, mixRgb, rgb, scaleRgb, slab, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { brickTexture, plasterTexture } from '../render/textures';
 import { BRIDGE, bridgeDeck, bridgeSoffit, bridgeToWorld, terrainHeight } from './geography';
@@ -298,6 +298,21 @@ function tufts(rng: Rng): BufferGeometry {
   return b.build();
 }
 
+/** Where the plaster has fallen from the spandrels and the ramps' walls: patches of the brick under it, each its own size and place. */
+function fallenPatches(b: MeshBuilder, rng: Rng): void {
+  for (let k = 0; k < 12; k++) {
+    const side = rng.sign();
+    const x = rng.range(-BRIDGE.half + 3, BRIDGE.half - 3);
+    const floor = Math.abs(x) < HALF_SPAN ? bridgeSoffit(x) + 0.35 : Math.max(groundAt(x, side * OUTER) + 0.3, 0.4);
+    const ceil = bridgeDeck(x) - 0.25;
+    if (ceil - floor < 0.6) continue;
+    const w = rng.range(0.35, 0.9);
+    const h = rng.range(0.22, 0.5);
+    const y = rng.range(floor + h / 2, ceil - h / 2);
+    slab(b, x, y, side * (OUTER + 0.004), w, h, 0.012, 0, scaleRgb(rgb('#8a5038'), rng.range(0.8, 1)), BRICK_TILE);
+  }
+}
+
 /** Where random trees keep off (the bridge and its ramps). */
 export const BRIDGE_CLEARING = { x: BRIDGE.x, z: BRIDGE.z, r: BRIDGE.half + 4 };
 
@@ -322,7 +337,9 @@ export function buildBridge(): Group {
   const group = new Group();
   group.name = 'bridge';
   const rng = new Rng(311);
-  const plaster = plasterTexture(312);
+  // no fallen patches in the texture: repeated every tile they stood in rows along the walls like black
+  // marks; the brick shows instead through a few patches placed one by one (fallenPatches)
+  const plaster = plasterTexture(312, { fallen: false });
   const brick = brickTexture(313);
   const mat = (set: { map: Texture2; normal: Texture2 }, color: string, roughness: number, grime: number) =>
     patchMaterial(
@@ -337,6 +354,7 @@ export function buildBridge(): Group {
   walls(plasterB, rng);
   pillars(plasterB, rng);
   const brickB = new MeshBuilder();
+  fallenPatches(brickB, rng);
   archRing(brickB, rng);
   barrel(brickB, rng);
   abutments(brickB, rng);

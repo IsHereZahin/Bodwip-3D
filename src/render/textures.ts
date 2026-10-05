@@ -1108,6 +1108,38 @@ export function printTexture(ground: string, sprig: string, leaf: string, seed: 
 }
 
 
+/**
+ * A railway's bed seen from above, along v: grey-brown ballast stones packed round dark timber-and-concrete
+ * sleepers every 0.7 m (one repeat is two sleepers, 1.4 m), the rust-brown wear down the rails' lines. Tiles along v.
+ */
+export function trackTexture(): DataTexture {
+  const W = 128;
+  const H = 256;
+  const rng = new Rng(91);
+  const ctx = paint(W, H, (c) => {
+    c.fillStyle = 'rgb(112,104,94)';
+    c.fillRect(0, 0, W, H);
+    for (let i = 0; i < 5200; i++) {
+      const v = rng.int(70, 150);
+      c.fillStyle = `rgba(${v + 6},${v},${v - 8},0.8)`;
+      c.fillRect(rng.range(0, W), rng.range(0, H), rng.range(1, 3.5), rng.range(1, 3));
+    }
+    // the sleepers across the bed, a little short of its edges
+    for (const y of [H * 0.25, H * 0.75]) {
+      c.fillStyle = 'rgb(78,72,66)';
+      c.fillRect(W * 0.12, y - 10, W * 0.76, 20);
+      c.fillStyle = 'rgba(40,36,32,0.5)';
+      c.fillRect(W * 0.12, y + 7, W * 0.76, 3);
+    }
+    // rust along where the rails run
+    for (const x of [0.36, 0.64]) {
+      c.fillStyle = 'rgba(120,70,40,0.35)';
+      c.fillRect(W * x - 5, 0, 10, H);
+    }
+  });
+  return toTexture(ctx, { repeat: true });
+}
+
 /** The roads' surfaces, side by side in one texture (world/roads.ts draws a cell of roads in one call). */
 export const ROAD_SURFACES = ['asphalt', 'brick', 'earth'] as const;
 
