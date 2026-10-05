@@ -5,7 +5,7 @@ import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, type RGB } from '../render/builder';
 import { CROP_REACH } from '../render/glsl';
 import { patchMaterial } from '../render/patch';
-import { mustardCanopyTexture, mustardRacemeTexture, mustardTexture, riceCanopyTexture, riceHeadsTexture, riceHillTexture, riceRowTexture } from '../render/textures';
+import { mustardCanopyTexture, mustardRacemeTexture, riceCanopyTexture, riceHillTexture } from '../render/textures';
 import { onRoad, terrainHeight } from './geography';
 import { groundLattice } from './terrain';
 
@@ -58,14 +58,21 @@ const CHUNK = 8;
 /** A chunk's half-diagonal: how far its patches stand from its middle at most. */
 const CHUNK_REACH = CHUNK * 0.71;
 /**
- * Each level of detail's band (m, as `groundReach` measures): fading in over `in`, out over `out`. Real
- * plants, rows of cards under a canopy, the canopy alone; the last sinks into the painted plots.
+ * Each level of detail's band (m, as `groundReach` measures): fading in over `in`, out over `out`. The real
+ * plants, with their heads near (to `SWITCH`) and without them beyond (the same hills, so where one gives way to
+ * the other nothing changes but the heads, which have faded first); then the canopy alone, crossfading with the
+ * plants, and sinking into the painted plots. (A middle level of row cards was a step of its own: the user saw
+ * three kinds of crop one behind the other and asked for the middle one gone.)
  */
 const BANDS = [
-  { in: [-2, -1], out: [16, 21] },
-  { in: [16, 21], out: [40, 47] },
-  { in: [40, 47], out: [CROP_REACH.fade, CROP_REACH.edge] },
+  { in: [-2, -1], out: [1e4, 1e4 + 1] },
+  { in: [-2, -1], out: [CROP_REACH.fade, CROP_REACH.edge] },
+  { in: [CROP_REACH.fade, CROP_REACH.edge], out: CROP_REACH.canopy },
 ] as const;
+/** Chunks whose middle is nearer than this (m) have the plants with their heads; the heads fade before it. */
+const SWITCH = 23;
+/** The heads fade out over this (m, by `groundReach`), before any of their chunks give way to the headless ones. */
+const HEADS_OUT = [12, 16.5] as const;
 /** Milliseconds a frame may spend building chunks. */
 const BUILD_MS = 2.5;
 /** Seconds a chunk built late takes to grow up out of the ground. */
@@ -73,8 +80,8 @@ const GROW = 0.9;
 /** Chunks kept built: those in view, and the film's next shot's, made ahead of it. */
 const CACHE = 1400;
 /** A patch's side (m), near the camera and farther off. */
-const PATCH = [1.2, 2.4, 2.4] as const;
-const CAPACITY = [3000, 2600, 4800] as const;
+const PATCH = [1.2, 1.2, 2.4] as const;
+const CAPACITY = [3000, 5600, 7200] as const;
 /** Where the plants of a patch stand, as a share of the paddy zone (the terrain's own mask). */
 const ZONE_MIN = 0.55;
 
@@ -90,9 +97,9 @@ const UP = new Vector3(0, 1, 0);
  * stage), and over it three panicles, each a ribbon of the texture's panicle arching out from the top of a
  * tiller and hanging over (the shader lowers them out of sight until the heads come). Vertex colour: shading in
  * r and g, and in b whether it is a panicle; `uv` each vertex's offset from its hill's foot, the texture
- * coordinates in `uv1`.
+ * coordinates in `uv1`. Without `heads` the same hills, the panicles left out (the farther plants).
  */
-function ricePatch(seed: number): BufferGeometry {
+function ricePatch(seed: number, heads = true): BufferGeometry {
   const rng = new Rng(seed);
   const b = new MeshBuilder();
   const uv1: number[] = [];
@@ -134,6 +141,8 @@ function ricePatch(seed: number): BufferGeometry {
         const width = 0.032;
         const shade = rng.range(0.9, 1.05);
         const col: RGB = [shade, shade, 1];
+        // the same draws either way, so the hills stand alike with their heads or without
+        if (!heads) continue;
         const start = b.vertexCount;
         const steps = 3;
         for (let j = 0; j <= steps; j++) {
@@ -234,71 +243,15 @@ function mustardPatch(seed: number): BufferGeometry {
   return g;
 }
 
-/** A middling-far patch of rice, 2.4 m square: four row cards (0.6 m apart along its z, each standing for two rows), unit height. */
-function riceRows(): BufferGeometry {
-  const b = new MeshBuilder();
-  const S = PATCH[1];
-  for (let row = 0; row < 4; row++) {
-    const z = ((row + 0.5) / 4 - 0.5) * S;
-    const n = new Vector3(0, 0.7, row % 2 ? 0.7 : -0.7).normalize();
-    const s = b.vertex(new Vector3(-S / 2, 0, z), n, 0, 0);
-    b.vertex(new Vector3(S / 2, 0, z), n, 1, 0);
-    b.vertex(new Vector3(S / 2, 1, z), n, 1, 1);
-    b.vertex(new Vector3(-S / 2, 1, z), n, 0, 1);
-    b.quad(s, s + 1, s + 2, s + 3);
-  }
-  return b.build();
-}
-
-/** A middling-far patch's heads: a band of card along each row card's top (0.62..1.02 of the crop's height), unit height. */
-function riceHeadRows(): BufferGeometry {
-  const b = new MeshBuilder();
-  const S = PATCH[1];
-  for (let row = 0; row < 4; row++) {
-    const z = ((row + 0.5) / 4 - 0.5) * S;
-    const n = new Vector3(0, 0.7, row % 2 ? 0.7 : -0.7).normalize();
-    const s = b.vertex(new Vector3(-S / 2, 0.62, z), n, 0, 0);
-    b.vertex(new Vector3(S / 2, 0.62, z), n, 1, 0);
-    b.vertex(new Vector3(S / 2, 1.02, z), n, 1, 1);
-    b.vertex(new Vector3(-S / 2, 1.02, z), n, 0, 1);
-    b.quad(s, s + 1, s + 2, s + 3);
-  }
-  return b.build();
-}
-
 /** The crop's canopy seen from above: one quad over a far patch at `height` (unit). */
 function canopy(height: number): BufferGeometry {
   const b = new MeshBuilder();
-  const h = PATCH[1] / 2;
+  const h = PATCH[2] / 2;
   const s = b.vertex(new Vector3(-h, height, -h), UP, 0, 0);
   b.vertex(new Vector3(-h, height, h), UP, 0, 1);
   b.vertex(new Vector3(h, height, h), UP, 1, 1);
   b.vertex(new Vector3(h, height, -h), UP, 1, 0);
   b.quad(s, s + 1, s + 2, s + 3);
-  return b.build();
-}
-
-/** A middling-far patch of mustard: six bushes where the seed fell, each two crossed cards 0.9 m by 1.1 m. */
-function mustardCards(seed: number): BufferGeometry {
-  const rng = new Rng(seed);
-  const b = new MeshBuilder();
-  const S = PATCH[1];
-  for (let i = 0; i < 6; i++) {
-    const x = rng.range(-0.4, 0.4) * S;
-    const z = rng.range(-0.4, 0.4) * S;
-    const a0 = rng.range(0, Math.PI);
-    for (const a of [a0, a0 + Math.PI / 2]) {
-      const dx = Math.cos(a) * 0.45;
-      const dz = Math.sin(a) * 0.45;
-      const h = rng.range(0.95, 1.15);
-      const n = new Vector3(-dz, 0.8, dx).normalize();
-      const s = b.vertex(new Vector3(x - dx, 0, z - dz), n, 0, 0);
-      b.vertex(new Vector3(x + dx, 0, z + dz), n, 1, 0);
-      b.vertex(new Vector3(x + dx, h, z + dz), n, 1, 1);
-      b.vertex(new Vector3(x - dx, h, z - dz), n, 0, 1);
-      b.quad(s, s + 1, s + 2, s + 3);
-    }
-  }
   return b.build();
 }
 
@@ -360,17 +313,17 @@ transformed.y *= ${tall};
 if (${k} < 0.01) transformed.y = -0.3;
 `;
 
-const nearRice = () => /* glsl */ `
-${stage(0)}
+const nearRice = (lod: 0 | 1) => /* glsl */ `
+${stage(lod)}
 ${RICE}
 ${gather('cropHere * mix(0.55, 1.0, smoothstep(0.2, 0.7, cropTall))', 'cropTall * cropHere')}
-if (color.b > 0.5) transformed.y = mix(-0.05, transformed.y, heads);
+if (color.b > 0.5) transformed.y = mix(-0.05, transformed.y, heads * (1.0 - smoothstep(${HEADS_OUT[0].toFixed(1)}, ${HEADS_OUT[1].toFixed(1)}, cropD)));
 vColor.rgb = mix(leafC, headC, color.b) * vColor.g;
 cropTall *= cropHere;
 ${sway(0.1)}
 `;
 
-const farRice = (lod: 1 | 2, headShare: number) => /* glsl */ `
+const farRice = (lod: 2, headShare: number) => /* glsl */ `
 ${stage(lod)}
 ${RICE}
 transformed.y *= cropTall * cropHere;
@@ -393,18 +346,8 @@ const SCATTER = /* glsl */ `
 }
 `;
 
-const farHeads = () => /* glsl */ `
-${stage(1)}
-${RICE}
-transformed.y *= cropTall * cropHere;
-if (cropHere * heads < 0.02) transformed.y = -0.3;
-vColor.rgb = headC * vColor.g;
-cropTall *= cropHere;
-${sway(0.1)}
-`;
-
-const nearMustard = () => /* glsl */ `
-${stage(0)}
+const nearMustard = (lod: 0 | 1) => /* glsl */ `
+${stage(lod)}
 ${MUSTARD}
 ${gather('cropHere', 'cropHere')}
 ${SCATTER}
@@ -412,7 +355,7 @@ cropTall *= cropHere;
 ${sway(0.14)}
 `;
 
-const farMustard = (lod: 1 | 2) => /* glsl */ `
+const farMustard = (lod: 2) => /* glsl */ `
 ${stage(lod)}
 ${MUSTARD}
 transformed.y *= cropHere;
@@ -460,7 +403,10 @@ interface Want {
 /** The crops round the camera, rebuilt chunk by chunk as the view moves. */
 export class Crops {
   readonly group = new Group();
-  private readonly layers: [Layer, Layer, Layer];
+  /** Two sets of meshes (see `holdView`); `cur` is the one built for the camera. */
+  private readonly sets: [[Layer, Layer, Layer], [Layer, Layer, Layer]];
+  private readonly views: [Group, Group] = [new Group(), new Group()];
+  private cur = 0;
   private readonly cache = new Map<string, ChunkData>();
   private wanted: Want[] = [];
   private centre = '';
@@ -469,28 +415,34 @@ export class Crops {
 
   constructor() {
     this.group.name = 'crops';
-    const riceRow = riceRowTexture(13);
     const riceCanopy = riceCanopyTexture(14);
     const mustardCanopy = mustardCanopyTexture(17);
     // the near rice's hills and panicles, read through its second uv set
     const hill = riceHillTexture(19);
     hill.channel = 1;
-    const riceHeads = riceHeadsTexture(20);
     // the near mustard's racemes: read through its second uv set
     const racemes = mustardRacemeTexture(18);
     racemes.channel = 1;
     const riceTop = canopy(0.84);
+    const nearRiceShape = ricePatch(11);
+    const headlessRiceShape = ricePatch(11, false);
+    const mustardShape = mustardPatch(12);
     const mustardTop = canopy(0.92);
-    const make = (lod: 0 | 1 | 2, parts: { geometry: BufferGeometry; key: string; code: string; map?: Texture; mustard: boolean }[]): Layer => {
+    type Part = { geometry: BufferGeometry; key: string; code: string; map?: Texture; mustard: boolean };
+    const materials = new Map<string, MeshStandardMaterial>();
+    const make = (view: Group, lod: 0 | 1 | 2, parts: Part[]): Layer => {
       const capacity = CAPACITY[lod];
       const matrices = new InstancedBufferAttribute(new Float32Array(capacity * 16), 16);
       const colors = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
       const born = new InstancedBufferAttribute(new Float32Array(capacity), 1);
       const meshes = parts.map((p) => {
-        // each level of detail its own copy: the birth times are per layer
+        // each level of detail (and each set) its own copy: the birth times are per layer
         const geometry = p.geometry.clone();
         geometry.setAttribute('aBorn', born);
-        const mesh = new InstancedMesh(geometry, cropMaterial(`${p.key}-${lod}`, p.code, p.map), capacity);
+        const key = `${p.key}-${lod}`;
+        let material = materials.get(key);
+        if (!material) materials.set(key, (material = cropMaterial(key, p.code, p.map)));
+        const mesh = new InstancedMesh(geometry, material, capacity);
         // every part of a patch shares its place and tint
         mesh.instanceMatrix = matrices;
         mesh.instanceColor = colors;
@@ -500,29 +452,52 @@ export class Crops {
         // inland, out of the river's mirror
         mesh.layers.set(LAYER_NO_REFLECT);
         mesh.frustumCulled = false;
-        this.group.add(mesh);
+        view.add(mesh);
         return mesh;
       });
       return { meshes, matrices, colors, born, capacity, mustard: meshes.filter((_, i) => parts[i].mustard) };
     };
-    this.layers = [
-      make(0, [
-        { geometry: ricePatch(11), key: 'crop-rice-near', code: nearRice(), map: hill, mustard: false },
-        { geometry: mustardPatch(12), key: 'crop-mustard-near', code: nearMustard(), map: racemes, mustard: true },
+    const set = (view: Group): [Layer, Layer, Layer] => [
+      make(view, 0, [
+        { geometry: nearRiceShape, key: 'crop-rice-near', code: nearRice(0), map: hill, mustard: false },
+        { geometry: mustardShape, key: 'crop-mustard-near', code: nearMustard(0), map: racemes, mustard: true },
       ]),
-      make(1, [
-        { geometry: riceRows(), key: 'crop-rice-rows', code: farRice(1, 0.3), map: riceRow, mustard: false },
-        { geometry: riceHeadRows(), key: 'crop-rice-heads', code: farHeads(), map: riceHeads, mustard: false },
-        { geometry: riceTop, key: 'crop-rice-top', code: farRice(1, 0.7), map: riceCanopy, mustard: false },
-        { geometry: mustardCards(15), key: 'crop-mustard-cards', code: farMustard(1), map: mustardTexture(16), mustard: true },
-        { geometry: mustardTop, key: 'crop-mustard-top', code: farMustard(1), map: mustardCanopy, mustard: true },
+      make(view, 1, [
+        { geometry: headlessRiceShape, key: 'crop-rice-hills', code: nearRice(1), map: hill, mustard: false },
+        { geometry: mustardShape, key: 'crop-mustard-near', code: nearMustard(1), map: racemes, mustard: true },
       ]),
-      make(2, [
+      make(view, 2, [
         { geometry: riceTop, key: 'crop-rice-top', code: farRice(2, 0.7), map: riceCanopy, mustard: false },
         { geometry: mustardTop, key: 'crop-mustard-top', code: farMustard(2), map: mustardCanopy, mustard: true },
       ]),
     ];
+    this.sets = [set(this.views[0]), set(this.views[1])];
+    this.views[1].visible = false;
+    this.group.add(...this.views);
   }
+
+  // ---- two views: the film's dissolves draw the shot being left (its crops as they stood) beneath the one coming in ----
+
+  /** Keeps the crops as they stand for the shot being left, and builds the next one's into the other set. */
+  holdView(): void {
+    this.cur ^= 1;
+    this.views[this.cur].visible = true;
+    this.centre = '';
+    this.dirty = true;
+  }
+
+  /** Shows the held set alone (`held`), or the current one alone. */
+  showHeld(held: boolean): void {
+    this.views[this.cur].visible = !held;
+    this.views[this.cur ^ 1].visible = held;
+  }
+
+  /** The dissolve is over: only the current set is drawn. */
+  releaseView(): void {
+    this.views[this.cur].visible = true;
+    this.views[this.cur ^ 1].visible = false;
+  }
+
 
   /**
    * The chunks a view at `view` wants, nearest first, each keyed with every level of detail whose band reaches
@@ -532,19 +507,26 @@ export class Crops {
     const cx = Math.floor(view.x / CHUNK);
     const cz = Math.floor(view.z / CHUNK);
     const lift = Math.max(0, view.y - terrainHeight(view.x, view.z) - 3) * CROP_REACH.lift;
-    const R = Math.ceil((CROP_REACH.edge + CHUNK_REACH) / CHUNK);
+    const R = Math.ceil((CROP_REACH.canopy[1] + CHUNK_REACH) / CHUNK);
     const list: Want[] = [];
     for (let dz = -R; dz <= R; dz++) {
       for (let dx = -R; dx <= R; dx++) {
         const x = (cx + dx + 0.5) * CHUNK;
         const z = (cz + dz + 0.5) * CHUNK;
         const d = Math.hypot(x - view.x, z - view.z, lift);
-        BANDS.forEach((b, lod) => {
-          if (d > b.in[0] - CHUNK_REACH && d < b.out[1] + CHUNK_REACH) list.push({ key: `${cx + dx},${cz + dz},${lod}`, x, z, d });
-        });
+        // the plants, with their heads near and without beyond SWITCH (one or the other, never both)
+        if (d < BANDS[1].out[1] + CHUNK_REACH) list.push({ key: `${cx + dx},${cz + dz},${d < SWITCH ? 0 : 1}`, x, z, d });
+        if (d > BANDS[2].in[0] - CHUNK_REACH && d < BANDS[2].out[1] + CHUNK_REACH) list.push({ key: `${cx + dx},${cz + dz},2`, x, z, d });
       }
     }
     return list.sort((a, b) => a.d - b.d);
+  }
+
+  /** The same chunk at the other plant level (0 ↔ 1), or null for the canopy. */
+  private static twin(key: string): string | null {
+    if (key.endsWith(',0')) return `${key.slice(0, -1)}1`;
+    if (key.endsWith(',1')) return `${key.slice(0, -1)}0`;
+    return null;
   }
 
   /** Builds the chunks a view at `view` will want, until `until` (performance.now()), without showing them: the film readies its next shot. True once all are built. */
@@ -570,7 +552,7 @@ export class Crops {
     this.frame++;
     // mustard is drawn only while some plot holds it
     const mustard = G.uCrops.value.w > 0.002;
-    for (const layer of this.layers) for (const mesh of layer.mustard) mesh.visible = mustard;
+    for (const layer of this.sets[this.cur]) for (const mesh of layer.mustard) mesh.visible = mustard;
     const lift = Math.max(0, view.y - terrainHeight(view.x, view.z) - 3);
     const centre = `${Math.floor(view.x / CHUNK)},${Math.floor(view.z / CHUNK)},${Math.round(lift / 3)}`;
     if (centre !== this.centre) {
@@ -585,7 +567,9 @@ export class Crops {
         if (!all && performance.now() - start > BUILD_MS) break;
         // first those ahead of the camera (or right by it), then the rest
         if (ahead && forward && w.d > 12 && (w.x - view.x) * forward.x + (w.z - view.z) * forward.z < 0) continue;
-        this.cache.set(w.key, this.build(w.key, all));
+        // a chunk only changing between the plant levels stands at once: its hills are the same
+        const twin = Crops.twin(w.key);
+        this.cache.set(w.key, this.build(w.key, all || (twin !== null && this.cache.has(twin))));
         this.dirty = true;
       }
     }
@@ -596,11 +580,13 @@ export class Crops {
     this.dirty = false;
     const at = [0, 0, 0];
     for (const w of this.wanted) {
-      const chunk = this.cache.get(w.key);
+      // not built yet at this plant level: the other one stands in (the same hills), so no gap shows
+      const twin = Crops.twin(w.key);
+      const chunk = this.cache.get(w.key) ?? (twin !== null ? this.cache.get(twin) : undefined);
       if (!chunk) continue;
       chunk.used = this.frame;
-      const lod = Number(w.key.split(',')[2]);
-      const layer = this.layers[lod];
+      const lod = Number(chunk.key.split(',')[2]);
+      const layer = this.sets[this.cur][lod];
       const n = Math.min(chunk.n, layer.capacity - at[lod]);
       if (n <= 0) continue;
       (layer.matrices.array as Float32Array).set(chunk.m.subarray(0, n * 16), at[lod] * 16);
@@ -608,7 +594,7 @@ export class Crops {
       (layer.born.array as Float32Array).fill(chunk.born, at[lod], at[lod] + n);
       at[lod] += n;
     }
-    this.layers.forEach((layer, lod) => {
+    this.sets[this.cur].forEach((layer, lod) => {
       layer.matrices.needsUpdate = true;
       layer.colors.needsUpdate = true;
       layer.born.needsUpdate = true;

@@ -132,8 +132,11 @@ export class FallingLeaves {
     return (i + 4096) * 8192 + (j + 4096);
   }
 
-  /** Sheds, carries and lays the leaves round `eye` for `dt` seconds (`t`: the shader clock). */
-  update(dt: number, t: number, eye: Vector3): void {
+  /**
+   * Sheds, carries and lays the leaves round `eye` for `dt` seconds (`t`: the shader clock). `keepFar`: those far
+   * from `eye` are not let go yet (the film is still showing the shot they fall in, as it dissolves away).
+   */
+  update(dt: number, t: number, eye: Vector3, keepFar = false): void {
     if (dt <= 0) return;
     this.shed(dt, eye);
     const m = new Matrix4();
@@ -145,7 +148,7 @@ export class FallingLeaves {
     let n = 0;
     for (let i = 0; i < this.leaves.length; i++) {
       const l = this.leaves[i];
-      if (!this.step(l, dt, t, gust) || Math.hypot(l.p.x - eye.x, l.p.z - eye.z) > LOSE) continue;
+      if (!this.step(l, dt, t, gust) || (!keepFar && Math.hypot(l.p.x - eye.x, l.p.z - eye.z) > LOSE)) continue;
       this.leaves[n] = l;
       // falling it tumbles; lying it rests flat, turned its own way, withering away at the last
       if (Number.isNaN(l.lying)) q.setFromAxisAngle(l.axis, l.angle);

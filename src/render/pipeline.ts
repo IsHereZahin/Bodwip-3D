@@ -166,9 +166,12 @@ export interface FrameParams {
   night: number;
   /** 0..1: letterbox bars closing in. */
   letterbox: number;
-  /** Keep this frame (as it is shown) for a dissolve into whatever comes next. */
-  hold?: boolean;
-  /** 0..1: how much of the held frame still shows over this one. */
+  /**
+   * Draw this frame into the held target only, not to the screen: the shot a dissolve leaves, drawn live each
+   * frame (still moving) just before the shot it gives way to.
+   */
+  toHeld?: boolean;
+  /** 0..1: how much of the held frame (the shot being left) still shows over this one. */
   dissolve?: number;
 }
 
@@ -183,7 +186,7 @@ export class Pipeline {
   private readonly down: WebGLRenderTarget[] = [];
   private readonly up: WebGLRenderTarget[] = [];
   private readonly rays: WebGLRenderTarget;
-  /** The last frame of a shot, held for a dissolve. */
+  /** The shot a dissolve leaves, drawn this frame. */
   private readonly held: WebGLRenderTarget;
   private readonly quad: Mesh;
   private readonly quadScene = new Scene();
@@ -335,12 +338,13 @@ export class Pipeline {
     const aspect = this.width / this.height;
     this.bar = aspect > 1 ? Math.max(0, (1 - aspect / 2.35) / 2) : 0.06;
     u.uLetter.value = params.letterbox * this.bar;
-    if (params.hold) {
-      // keep this frame as it is shown, for the dissolve to come (the held texture unbound meanwhile: a
-      // pass may not read the target it writes)
+    if (params.toHeld) {
+      // the shot being left, as it is shown, for the one after it to dissolve from (the held texture unbound
+      // meanwhile: a pass may not read the target it writes)
       u.tHeld.value = null;
       u.uDissolve.value = 0;
       this.run(this.mComposite, renderer, this.held);
+      return;
     }
     u.tHeld.value = this.held.texture;
     u.uDissolve.value = params.dissolve ?? 0;

@@ -1,10 +1,10 @@
 /**
- * How far round the camera the crops stand in 3D (world/crops.ts): full height out to `fade`, gone by `edge`
- * (m), measured by `groundReach` (the camera's height above them counting double, so seen from the air the
- * fields are the terrain's painted plots). Beyond, the terrain paints the plots with the crop's colour;
- * within, it paints the ground under them.
+ * How far round the camera the crops stand in 3D (world/crops.ts), measured by `groundReach` (the camera's
+ * height above them counting double, so seen from the air the fields are the terrain's painted plots): the
+ * plants themselves, full out to `fade` and gone by `edge` (within it the terrain paints the ground under them;
+ * beyond, the plot in its crop's colour), and the canopy cards over the plots on out to `canopy`.
  */
-export const CROP_REACH = { fade: 64, edge: 80, lift: 2 } as const;
+export const CROP_REACH = { fade: 30, edge: 37, canopy: [80, 100], lift: 2 } as const;
 
 /**
  * Shared uniforms, noise and aerial perspective. Included exactly once in every scene shader

@@ -24,41 +24,41 @@ import type { Ghat, HutPlan } from './village';
 // Grass you can walk through: dense blade clumps, wild flowers and pebbles, built only round the viewer,
 // chunk by chunk as the view moves. Seen from the boat the banks are 100 m off and this costs nothing;
 // in the free camera or the film's bank-side shots the ground is thick with it.
-// Nothing pops: the full clumps give way to the lighter ones over a band of distance (both stand there, one
-// shrinking as the other grows), the lighter ones shrink away at the far edge, from higher up the grass
-// reaches less far (`groundReach`), and a chunk built late grows up out of the ground. Chunks in front of the
+// One kind of clump all the way out (the user saw a sparser, lighter kind farther off as a second step and asked
+// for it gone): full clumps out past both banks of the river from the boat, thinning away at the far edge, each
+// clump at its own distance, so there is no line where the grass ends; from higher up the grass reaches less far
+// (`groundReach`), and a chunk built late grows up out of the ground. Chunks in front of the
 // camera are built first, within a few milliseconds a frame; the film builds its next shot's ahead (`warm`).
 
 const CHUNK = 8;
 /** A chunk's half-diagonal: how far its clumps stand from its middle at most. */
 const CHUNK_REACH = CHUNK * 0.71;
 /**
- * Each level of detail's band (m, as `groundReach` measures, before the quality tier's share): fading in over
- * `in`, out over `out`. The full blade clumps (and the flowers), then the lighter clumps.
+ * The grass's band (m, as `groundReach` measures, before the quality tier's share): fading in over `in`, out over
+ * `out` (each clump a few metres sooner or later than the next, by `THIN`).
  */
-const BANDS = [
-  { in: [-2, -1], out: [20, 26] },
-  { in: [20, 26], out: [46, 56] },
-] as const;
+const BANDS = [{ in: [-2, -1], out: [78, 100] }] as const;
+/** How far each clump's own distance for thinning away wanders (m). */
+const THIN = 14;
 /** Milliseconds a frame may spend building chunks. */
 const BUILD_MS = 2;
 /** Seconds a chunk built late takes to grow up out of the ground. */
 const GROW = 0.9;
 /** Chunks kept built: those in view, and the film's next shot's, made ahead of it. */
-const CACHE = 1000;
-/** Candidate spacing in metres for the near and far clumps. */
-const STEP = [0.4, 0.9] as const;
+const CACHE = 2600;
+/** Candidate spacing for the clumps (m). */
+const STEP = 0.4;
 /** Lattice spacing for the cheap height and cover lookups inside a chunk. */
 const LATTICE = 1.6;
 
 /** The quality tier's share of the grass's reach, for the shaders' bands. */
 const REACH = { value: 1 };
 
-/** Shrinks a clump to its foot by its level of detail's band at its distance, and while its chunk grows in. */
-const fade = (lod: 0 | 1) => /* glsl */ `
+/** Shrinks a clump to its foot by its band at its distance (each its own), and while its chunk grows in. */
+const fade = (lod: 0) => /* glsl */ `
 {
   vec3 root = instanceMatrix[3].xyz;
-  float d = groundReach(root) / uMeadowReach;
+  float d = groundReach(root) / uMeadowReach + (hash12(root.xz * 1.7) - 0.5) * ${THIN.toFixed(1)};
   transformed *= smoothstep(${BANDS[lod].in[0].toFixed(1)}, ${BANDS[lod].in[1].toFixed(1)}, d) * (1.0 - smoothstep(${BANDS[lod].out[0].toFixed(1)}, ${BANDS[lod].out[1].toFixed(1)}, d))
     * smoothstep(aBorn, aBorn + ${GROW.toFixed(2)}, uTime);
 }`;
@@ -195,13 +195,16 @@ interface Want {
   d: number;
 }
 
-const LAYERS = ['grassNear', 'grassFar', 'white', 'yellow', 'lilac'] as const;
+const LAYERS = ['grassNear', 'white', 'yellow', 'lilac'] as const;
 type LayerName = (typeof LAYERS)[number];
 
 /** Dense grass and wild flowers round the viewer, rebuilt chunk by chunk as the view moves. */
 export class Meadow {
   readonly group = new Group();
-  private readonly layers: Record<LayerName, Layer>;
+  /** Two sets of meshes (see `holdView`); `cur` is the one built for the camera. */
+  private readonly sets: [Record<LayerName, Layer>, Record<LayerName, Layer>];
+  private readonly views: [Group, Group] = [new Group(), new Group()];
+  private cur = 0;
   private readonly cache = new Map<string, ChunkData>();
   private readonly huts: readonly HutPlan[];
   private readonly ghats: readonly Ghat[];
@@ -215,7 +218,7 @@ export class Meadow {
     this.group.name = 'meadow';
     this.huts = huts;
     this.ghats = ghats;
-    const grassMat = (lod: 0 | 1) =>
+    const grassMat = (lod: 0) =>
       patchMaterial(new MeshStandardMaterial({ vertexColors: true, side: DoubleSide, roughness: 0.78 }), {
         seasonal: 'leaf',
         wind: 0.12,
@@ -231,7 +234,9 @@ export class Meadow {
       foliage: true,
       vertex: { key: 'meadow-flower', pars: FADE_PARS, code: fade(0), uniforms: { uMeadowReach: REACH } },
     });
-    const make = (geometry: BufferGeometry, material: Material, capacity: number): Layer => {
+    const make = (view: Group, shape: BufferGeometry, material: Material, capacity: number): Layer => {
+      // each set its own copy: the birth times are per set
+      const geometry = shape.clone();
       const born = new InstancedBufferAttribute(new Float32Array(capacity), 1);
       geometry.setAttribute('aBorn', born);
       const mesh = new InstancedMesh(geometry, material, capacity);
@@ -241,18 +246,49 @@ export class Meadow {
       mesh.layers.set(LAYER_NO_REFLECT);
       const colors = new InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
       mesh.instanceColor = colors;
-      this.group.add(mesh);
+      view.add(mesh);
       return { mesh, colors, born, capacity };
     };
-    const near = grassMat(0);
-    this.layers = {
-      grassNear: make(grassClump(1, 10, 3, 0.03), near, 20000),
-      grassFar: make(grassClump(2, 4, 2, 0.055), grassMat(1), 16000),
-      white: make(flowerClump(3, 'white'), flowerMat, 1500),
-      yellow: make(flowerClump(4, 'yellow'), flowerMat, 1200),
-      lilac: make(flowerClump(5, 'lilac'), flowerMat, 1200),
+    const shapes = {
+      grassNear: grassClump(1, 10, 3, 0.03),
+      white: flowerClump(3, 'white'),
+      yellow: flowerClump(4, 'yellow'),
+      lilac: flowerClump(5, 'lilac'),
     };
+    const near = grassMat(0);
+    const set = (view: Group): Record<LayerName, Layer> => ({
+      grassNear: make(view, shapes.grassNear, near, 32000),
+      white: make(view, shapes.white, flowerMat, 1500),
+      yellow: make(view, shapes.yellow, flowerMat, 1200),
+      lilac: make(view, shapes.lilac, flowerMat, 1200),
+    });
+    this.sets = [set(this.views[0]), set(this.views[1])];
+    this.views[1].visible = false;
+    this.group.add(...this.views);
   }
+
+  // ---- two views: the film's dissolves draw the shot being left (its grass as it stood) beneath the one coming in ----
+
+  /** Keeps the grass as it stands for the shot being left, and builds the next one's into the other set. */
+  holdView(): void {
+    this.cur ^= 1;
+    this.views[this.cur].visible = true;
+    this.centre = '';
+    this.dirty = true;
+  }
+
+  /** Shows the held set alone (`held`), or the current one alone. */
+  showHeld(held: boolean): void {
+    this.views[this.cur].visible = !held;
+    this.views[this.cur ^ 1].visible = held;
+  }
+
+  /** The dissolve is over: only the current set is drawn. */
+  releaseView(): void {
+    this.views[this.cur].visible = true;
+    this.views[this.cur ^ 1].visible = false;
+  }
+
 
   /** How far the grass reaches, as a share of its bands (the lower quality tier keeps it closer). */
   setReach(k: number): void {
@@ -261,15 +297,13 @@ export class Meadow {
     this.centre = '';
   }
 
-  /**
-   * The chunks a view at `view` wants, nearest first, each keyed with every level of detail whose band reaches
-   * any of its clumps (in a band's fade both stand). Seen from higher up they reach less far.
-   */
+  /** The chunks a view at `view` wants, nearest first. Seen from higher up they reach less far. */
   private wantedAt(view: Vector3): Want[] {
     const cx = Math.floor(view.x / CHUNK);
     const cz = Math.floor(view.z / CHUNK);
     const lift = Math.max(0, view.y - terrainHeight(view.x, view.z) - 3) * CROP_REACH.lift;
-    const far = BANDS[1].out[1] * this.reach;
+    // out to the band's end and the farthest a clump's own thinning may carry it
+    const far = (BANDS[0].out[1] + THIN / 2) * this.reach;
     const R = Math.ceil((far + CHUNK_REACH) / CHUNK);
     const list: Want[] = [];
     for (let dz = -R; dz <= R; dz++) {
@@ -277,9 +311,7 @@ export class Meadow {
         const x = (cx + dx + 0.5) * CHUNK;
         const z = (cz + dz + 0.5) * CHUNK;
         const d = Math.hypot(x - view.x, z - view.z, lift);
-        BANDS.forEach((b, lod) => {
-          if (d > b.in[0] * this.reach - CHUNK_REACH && d < b.out[1] * this.reach + CHUNK_REACH) list.push({ key: `${cx + dx},${cz + dz},${lod}`, x, z, d });
-        });
+        if (d < far + CHUNK_REACH) list.push({ key: `${cx + dx},${cz + dz},0`, x, z, d });
       }
     }
     return list.sort((a, b) => a.d - b.d);
@@ -337,7 +369,7 @@ export class Meadow {
       chunk.used = this.frame;
       LAYERS.forEach((name, i) => {
         const part = chunk.parts[i];
-        const layer = this.layers[name];
+        const layer = this.sets[this.cur][name];
         const at = offsets[name];
         const n = Math.min(part.n, layer.capacity - at);
         if (n <= 0) return;
@@ -348,7 +380,7 @@ export class Meadow {
       });
     }
     for (const name of LAYERS) {
-      const { mesh, colors, born } = this.layers[name];
+      const { mesh, colors, born } = this.sets[this.cur][name];
       mesh.count = offsets[name];
       mesh.instanceMatrix.needsUpdate = true;
       colors.needsUpdate = true;
@@ -384,7 +416,7 @@ export class Meadow {
       out[layer].list.push(...m.elements);
       out[layer].col.push(color[0], color[1], color[2]);
     };
-    const step = STEP[lod];
+    const step = STEP;
     const n = Math.round(CHUNK / step);
     for (let j = 0; j < n; j++) {
       for (let i = 0; i < n; i++) {
@@ -410,9 +442,9 @@ export class Meadow {
         const tint = mixRgb(scaleRgb([1, 1, 1], rng.range(0.82, 1.12)), [1.25, 1.05, 0.7], dry * rng.range(0.4, 1));
         push(lod, x, g.h - 0.02, z, rng.range(0.75, 1.25), rng.range(0.8, 1.15) * (0.75 + lush * 0.9), tint);
         // wild flowers: kolmi near the water, ghashphul and yellow weeds elsewhere
-        if (lod === 0 && rng.next() < 0.07 * drift) {
+        if (rng.next() < 0.07 * drift) {
           const wet = g.h < WATER_LEVEL + 0.9;
-          const kind = wet && rng.next() < 0.6 ? 4 : rng.next() < 0.65 ? 2 : 3;
+          const kind = wet && rng.next() < 0.6 ? 3 : rng.next() < 0.65 ? 1 : 2;
           push(kind, x + rng.range(-0.15, 0.15), g.h - 0.02, z + rng.range(-0.15, 0.15), rng.range(0.8, 1.2), 1, [1, 1, 1], 0.2);
         }
       }

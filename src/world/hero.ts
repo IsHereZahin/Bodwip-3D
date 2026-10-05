@@ -314,7 +314,8 @@ export class HeroBoat {
   /** The eddy the blade left where it last came out: world x, z, seconds since, strength. */
   readonly swirl = new Vector4(0, 0, 99, 0);
 
-  private readonly glass: MeshStandardMaterial;
+  /** The lantern's glass, glowing as the light in it does (the film keeps a shot's glow while it dissolves away). */
+  readonly glass: MeshStandardMaterial;
   private readonly paddle = new Group();
   readonly man: Boatman;
   private readonly lanternPivot = new Group();

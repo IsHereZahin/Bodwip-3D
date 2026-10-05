@@ -1,4 +1,4 @@
-import { Color, PCFShadowMap, PerspectiveCamera, SRGBColorSpace, Scene, Vector3, WebGLRenderer } from 'three';
+import { Color, PCFShadowMap, PerspectiveCamera, Quaternion, SRGBColorSpace, Scene, Vector3, WebGLRenderer, type RenderTarget } from 'three';
 import type { InstancedMesh, Mesh } from 'three';
 import { Soundscape } from './audio/soundscape';
 import { G, LAYER_NO_REFLECT, LAYER_WATER } from './core/globals';
@@ -13,7 +13,8 @@ import { Wind } from './env/wind';
 import { Pipeline } from './render/pipeline';
 import { loadSurfaces } from './render/surfaces';
 import { setMaxAnisotropy } from './render/textures';
-import { Director, type Stage } from './rig/director';
+import { Director, type Leaving, type Stage } from './rig/director';
+import { WorldLook, type Captured } from './render/snapshot';
 import { tourScenes } from './rig/tour';
 import { Rig, VIEWS } from './rig/rig';
 import type { ViewName } from './rig/rig';
@@ -255,6 +256,9 @@ async function main(hud: Hud): Promise<void> {
     get boatPos() {
       return rig.boat.pos;
     },
+    get boatVel() {
+      return rig.boat.vel;
+    },
     get boatCourse() {
       return rig.boat.course;
     },
@@ -267,12 +271,13 @@ async function main(hud: Hud): Promise<void> {
       return env.moonDir;
     },
     prepare: (points) => {
-      for (let i = points.length - 1; i >= 0; i--) {
-        terrain.update(points[i], true);
-        meadow.update(points[i], true);
-        crops.update(points[i], true);
+      // only what is missing, and nothing uploaded: the camera's own update shows it (the film is moving)
+      for (const p of points) {
+        terrain.warm(p, Infinity);
+        meadow.warm(p, Infinity);
+        crops.warm(p, Infinity);
       }
-      water.update(points[0].x, points[0].z, true);
+      water.update(points[0].x, points[0].z);
     },
     warm: (points) => {
       const until = performance.now() + WARM_MS;
@@ -280,8 +285,104 @@ async function main(hud: Hud): Promise<void> {
       for (const p of points) done = terrain.warm(p, until) && meadow.warm(p, until) && crops.warm(p, until) && done;
       return done;
     },
+    leave() {
+      worldLook.capture(lookLeft);
+      // the shadow map it was drawn with stays with it; the shot coming in draws its own into the spare
+      leftShadow = env.key.shadow.map;
+      if (spareShadow && spareShadow.width !== env.key.shadow.mapSize.x) {
+        spareShadow.dispose();
+        spareShadow = null;
+      }
+      env.key.shadow.map = spareShadow;
+      spareShadow = null;
+      renderer.shadowMap.needsUpdate = true;
+      leftBoat.pos.copy(hero.group.position);
+      leftBoat.quat.copy(hero.group.quaternion);
+      meadow.holdView();
+      crops.holdView();
+    },
+    left() {
+      if (leftShadow) spareShadow = leftShadow;
+      leftShadow = null;
+      meadow.releaseView();
+      crops.releaseView();
+    },
   };
   const director = new Director(tourScenes(ghats), stage);
+
+  // ---- the shot the film is leaving, drawn each frame of a dissolve beneath the one coming in, in its own
+  // world: the shared uniforms (the light, the fog, the season, the weather, the water), the lights, the sky,
+  // the water's colours, the rain, the lantern, the shadow map, its grass and crops, and the boat where it had
+  // her. The clock (uTime) and the gust fronts run on in it, so its water, trees and grass go on moving ----
+  const worldLook = new WorldLook()
+    .trackUniforms(G as unknown as Record<string, { value: unknown }>, ['uTime', 'uCamPos', 'uReflPass', 'uGust'])
+    .track(env, 'exposure')
+    .track(env, 'night')
+    .track(env, 'lamp')
+    .track(env.key, 'color')
+    .track(env.key, 'intensity')
+    .track(env.key, 'position')
+    .track(env.key.target, 'position')
+    .track(env.key.shadow, 'matrix')
+    .track(env.hemi, 'color')
+    .track(env.hemi, 'groundColor')
+    .track(env.hemi, 'intensity')
+    .track(sky, 'zenith')
+    .track(sky, 'horizon')
+    .track(sky, 'moonDir')
+    .track(sky.moonGlow, 'value')
+    .track(sky.cloud, 'value')
+    .track(sky, 'shift')
+    .track(water, 'color')
+    .track(water, 'ambient')
+    .track(water, 'boat')
+    .track(water, 'oar')
+    .track(water, 'swirl')
+    .track(rain, 'visible')
+    .track(hero.lantern, 'intensity')
+    .track(hero.glass, 'emissiveIntensity');
+  const lookLeft: Captured = [];
+  const lookLive: Captured = [];
+  let leftShadow: RenderTarget | null = null;
+  let spareShadow: RenderTarget | null = null;
+  const leftBoat = { pos: new Vector3(), quat: new Quaternion() };
+  const heroKeep = { pos: new Vector3(), quat: new Quaternion() };
+  /** Draws the shot being left into the pipeline's held frame, then puts the world back as the shot coming in has it. */
+  const drawLeaving = (leaving: Leaving) => {
+    const cam = leaving.camera;
+    worldLook.capture(lookLive);
+    worldLook.apply(lookLeft);
+    const liveShadow = env.key.shadow.map;
+    const redraw = renderer.shadowMap.needsUpdate;
+    env.key.shadow.map = leftShadow;
+    renderer.shadowMap.needsUpdate = false;
+    if (leaving.boat) {
+      heroKeep.pos.copy(hero.group.position);
+      heroKeep.quat.copy(hero.group.quaternion);
+      hero.group.position.set(leaving.boat.x, leftBoat.pos.y, leaving.boat.z);
+      hero.group.quaternion.copy(leftBoat.quat);
+      water.boat.x = leaving.boat.x;
+      water.boat.y = leaving.boat.z;
+    }
+    terrain.update(cam.position);
+    meadow.showHeld(true);
+    crops.showHeld(true);
+    sky.mesh.position.copy(cam.position);
+    updateCulling(cam.position);
+    pipeline.render(renderer, scene, cam, { exposure: env.exposure, fade: 0, fadeColor: BLACK, night: env.night, letterbox: director.letterbox, toHeld: true });
+    // back to the shot coming in
+    worldLook.apply(lookLive);
+    env.key.shadow.map = liveShadow;
+    renderer.shadowMap.needsUpdate = redraw;
+    if (leaving.boat) {
+      hero.group.position.copy(heroKeep.pos);
+      hero.group.quaternion.copy(heroKeep.quat);
+    }
+    terrain.update(camera.position);
+    meadow.showHeld(false);
+    crops.showHeld(false);
+    sky.mesh.position.copy(camera.position);
+  };
   const sound = new Soundscape();
   hero.onStroke = (power) => sound.splash(power);
   hud.progress(0.85);
@@ -346,7 +447,7 @@ async function main(hud: Hud): Promise<void> {
     lastInput = performance.now();
   };
   const setFilm = (on: boolean) => {
-    if (on) director.start();
+    if (on) director.start(camera);
     else director.stop();
     if (on) hud.quiet();
   };
@@ -642,7 +743,8 @@ async function main(hud: Hud): Promise<void> {
     const simStart = performance.now();
     // the hyacinth meets the hero's hull and blade
     drift.update(dt, t, camera.position, b, hero.blade);
-    leaves.update(dt, t, camera.position);
+    // while a shot dissolves away its falling leaves fall on, though the camera has left them
+    leaves.update(dt, t, camera.position, director.leaving !== null);
     songbirds.update(dt, t, camera.position, env.night > 0.5 || weather.rain > 0.5);
     fish.update(dt, t, camera.position, b.pos);
     // the bil's lilies give way to her hull and blade and are drawn back by their stems
@@ -691,22 +793,25 @@ async function main(hud: Hud): Promise<void> {
     const cut = clamp(1 - (now - readyAt) / 2600, 0, 1);
     // the journey's mist fade belongs to the boat; a free camera elsewhere doesn't see the boat loop
     const loop = rig.mode === 'follow' || director.active ? rig.fade : 0;
+    // a dissolve: the shot being left, still moving in its own world, drawn first for this one to melt over
+    const leaving = director.leaving;
+    if (leaving) drawLeaving(leaving);
     updateCulling(camera.position);
     pipeline.render(renderer, scene, camera, {
-      exposure: env.exposure * director.exposure,
+      exposure: env.exposure,
       fade: Math.max(cut, loop),
       fadeColor: loop > cut ? MIST : BLACK,
       night: env.night,
       letterbox: director.letterbox,
-      hold: director.hold,
-      dissolve: director.dissolve,
+      dissolve: leaving ? director.dissolve : 0,
     });
     hud.setCaption(director.caption, director.captionAlpha, pipeline.bar);
     controls.update(clock, director.active ? 'film' : rig.mode, soundOn);
 
     // adaptive resolution: hold ~45–60 fps by trading pixels, never below 60% scale
     perf.frames++;
-    if (perf.frames > 90 && !perf.locked && !document.hidden) {
+    // (not through a dissolve, which draws two shots a frame for a moment)
+    if (perf.frames > 90 && !perf.locked && !document.hidden && !leaving) {
       perf.acc += raw;
       if (++perf.n >= 60) {
         const avg = perf.acc / perf.n;
@@ -935,7 +1040,7 @@ async function main(hud: Hud): Promise<void> {
         },
         info() {
           const cam = camera.position.toArray().map((v) => Math.round(v * 10) / 10);
-          return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, scale: perf.scale, ms: Math.round(perf.ms * 10) / 10, programs: renderer.info.programs?.length, camera: cam, mode: director.active ? 'film' : rig.mode, quality, time: Math.round(G.uTime.value * 100) / 100, hour: Math.round(clock.hour * 100) / 100, driftMs: Math.round(perf.driftMs * 100) / 100, rain: Math.round(G.uRain.value * 100) / 100, rainShown: rain.visible, wind: Math.round(G.uWind.value.z * 100) / 100, seaWind: Math.round(sea.wind * 10) / 10, waveHeight: Math.round(sea.height * 100) / 100, wavePeak: Math.round(sea.peak * 10) / 10, chop: Math.round(sea.chop * 100) / 100 };
+          return { calls: renderer.info.render.calls, triangles: renderer.info.render.triangles, scale: perf.scale, ms: Math.round(perf.ms * 10) / 10, programs: renderer.info.programs?.length, camera: cam, mode: director.active ? 'film' : rig.mode, dissolve: Math.round(director.dissolve * 100) / 100, leavingAt: director.leaving?.camera.position.toArray().map((v) => Math.round(v * 100) / 100) ?? null, quality, time: Math.round(G.uTime.value * 100) / 100, hour: Math.round(clock.hour * 100) / 100, driftMs: Math.round(perf.driftMs * 100) / 100, rain: Math.round(G.uRain.value * 100) / 100, rainShown: rain.visible, wind: Math.round(G.uWind.value.z * 100) / 100, seaWind: Math.round(sea.wind * 10) / 10, waveHeight: Math.round(sea.height * 100) / 100, wavePeak: Math.round(sea.peak * 10) / 10, chop: Math.round(sea.chop * 100) / 100 };
         },
       },
     });
