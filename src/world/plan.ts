@@ -222,7 +222,7 @@ export const TEA_STALL = { x: -97, z: 106, face: E + 0.5 } as const;
 export const ZAMINDAR = { x: -440, z: 240, face: S + 0.35, w: 72, d: 54, pond: { x: -530, z: 262, yaw: 0.35, halfW: 20, halfD: 13 } as PondSpec } as const;
 
 /** The mosque: its middle and the way its door looks (east: it faces the qibla, west, across its prayer hall); its pond before it. */
-export const MOSQUE = { x: 152, z: 212, face: E, w: 26, d: 24, pond: { x: 100, z: 206, yaw: 0, halfW: 17, halfD: 12, ghat: [116, 206] } as PondSpec } as const;
+export const MOSQUE = { x: 152, z: 212, face: E, w: 40, d: 34, pond: { x: 100, z: 206, yaw: 0, halfW: 17, halfD: 12, ghat: [116, 206] } as PondSpec } as const;
 
 /**
  * The wooded hills (টিলা) that rise from the plain in a few places: one over the river's south bank down from the
@@ -284,7 +284,8 @@ export const ROADS: readonly RoadSpec[] = [
   // over the old bridge and on west past the mosque
   {
     kind: 'brick',
-    width: 3.2,
+    // as wide as the old bridge's deck between its parapets, so the road runs onto it without a step
+    width: 3.4,
     points: [
       [-1900, 250],
       [-1300, 246],
@@ -314,8 +315,9 @@ export const ROADS: readonly RoadSpec[] = [
       [1900, 360],
     ],
   },
-  // the hub's paving: from the road's bend under the banyan's crown down to the village's ghat
-  { kind: 'brick', width: 2.6, flat: true, points: [[-84, 122], [-74, 98], [-66, 74], [-62, 54]] },
+  // the hub's paving: from the road's bend, round under the banyan's crown clear of its platform, and down
+  // the ghat's own line onto its landing
+  { kind: 'brick', width: 2.6, flat: true, points: [[-84, 122], [-74, 100], [-66, 80], [-58, 62], [-55.5, 55], [-57.6, 49.5]] },
   // the riverside path from the banyan's ghat to the zamindar house, along the bank's top past the homesteads' fronts
   { kind: 'earth', width: 1.5, along: { way: 'river', from: [-70, 60], to: [-395, 205], offset: 7.5 } },
   // down the river past the confluence, a path along each bank's top joining the homesteads there
@@ -329,8 +331,10 @@ export const ROADS: readonly RoadSpec[] = [
   { kind: 'earth', width: 1.3, points: [[-520, 302], [-548, 350], [-558, 384]] },
   // the khal's east bank: from the road north past the homesteads toward the bil
   { kind: 'earth', width: 1.3, points: [[-46, 246], [-60, 300], [-62, 360], [-56, 430], [-30, 500], [8, 548], [30, 562]] },
-  // west of the khal: to the mosque past its pond, and to the homesteads off the road
-  { kind: 'earth', width: 1.5, points: [[126, 40], [124, 100], [124, 160], [130, 214], [136, 262]] },
+  // west of the khal: the way to the mosque from the river path and from the road, past the mosque's front
+  // between it and its pond, and a brick walk from its door to the pond's ghat (for the ablutions)
+  { kind: 'earth', width: 1.8, points: [[126, 40], [124, 100], [124, 160], [129, 212], [136, 262]] },
+  { kind: 'brick', width: 2, flat: true, points: [[139, 212], [130, 210], [122, 207]] },
   { kind: 'earth', width: 1.3, points: [[266, 166], [262, 220], [262, 276]] },
   { kind: 'earth', width: 1.3, points: [[282, 346], [278, 312], [276, 286]] },
   // the field path north over the side khal by the bamboo sanko, to the homestead by the bil
@@ -338,4 +342,6 @@ export const ROADS: readonly RoadSpec[] = [
   // the south bank's field path between its homesteads
   { kind: 'earth', width: 1.3, points: [[-760, 30], [-700, 18], [-640, 14], [-560, 54], [-460, 70], [-360, 72], [-268, 56], [-180, 0], [-110, -34]] },
   { kind: 'earth', width: 1.2, points: [[-640, 14], [-652, 60]] },
+  // out across the char through its kash to the river's edge, where the boats put in to cut it and graze the cattle
+  { kind: 'earth', width: 1.2, points: [[-460, 70], [-458, 100], [-454, 126], [-450, 151]] },
 ];

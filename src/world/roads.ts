@@ -27,7 +27,9 @@ const LIFT = 0.05;
 /** Spacing of a way's points along it (m). */
 const STEP = 2.5;
 /** A way comes onto a crossing straight for this far (m). */
-const APPROACH = 7;
+const APPROACH = 14;
+/** How far up the bank from the water's edge a ghat's landing stands (m): village.ts brickGhat's reach and a step. */
+const LANDING = 9;
 
 /** One straight piece of a way: its ends, half-width, the raised road's crest at each end (NaN: it lies on the ground), surface, and distance along it at each end. */
 interface Reach {
@@ -213,6 +215,24 @@ function wet(x: number, z: number): boolean {
     // a little bent, as a path worn across the fields is
     const mid: Pt = [(start.x + best.x) / 2 + (best.z - start.z) * 0.08, (start.z + best.z) / 2 - (best.x - start.x) * 0.08];
     lay(curve([[start.x, start.z], mid, [best.x, best.z]]), 0.6, 'earth', false);
+  }
+}
+
+/**
+ * A homestead with a ghat on the water before it has a trodden way from its yard down to the ghat's landing
+ * (planGhats puts the ghat square below its front; the landing stands about nine metres up the bank from the
+ * water's edge).
+ */
+for (const m of HOMESTEAD_MOUNDS) {
+  if (!m.home?.ghat) continue;
+  const from = shapePoint(m, m.hu - 3, 0);
+  for (let d = m.hu; d < m.hu + 40; d += 0.5) {
+    const p = shapePoint(m, d, 0);
+    const w = waterwayAt(p.x, p.z);
+    if (w && w.d < w.half + LANDING) {
+      lay(curve([[from.x, from.z], [p.x, p.z]]), 0.5, 'earth', false);
+      break;
+    }
   }
 }
 

@@ -364,6 +364,40 @@ function tuft(rng: Rng, count: [number, number], height: [number, number], width
   return b.build();
 }
 
+/**
+ * A kash clump: its long leaves round the root (the texture's right half, in crossed cards) and above them its
+ * flowering stems (the left half), each a slim card leaning its own way, so the plumes stand apart over the leaves.
+ */
+function kashTuft(rng: Rng): BufferGeometry {
+  const b = new MeshBuilder();
+  const card = (base: Vector3, h: number, halfW: number, yaw: number, lean: Vector3, u0: number, shade: number, widen: number) => {
+    const right = new Vector3(Math.cos(yaw), 0, Math.sin(yaw)).multiplyScalar(halfW);
+    const top = base.clone().add(new Vector3(0, h, 0)).add(lean);
+    const nrm = new Vector3(-Math.sin(yaw) * 0.5, 1, Math.cos(yaw) * 0.5).normalize();
+    const c = scaleRgb(WHITE, shade);
+    const s = b.vertexCount;
+    b.vertex(base.clone().sub(right), nrm, u0, 0, c);
+    b.vertex(base.clone().add(right), nrm, u0 + 0.5, 0, c);
+    b.vertex(top.clone().addScaledVector(right, widen), nrm, u0 + 0.5, 1, c);
+    b.vertex(top.clone().addScaledVector(right, -widen), nrm, u0, 1, c);
+    b.quad(s, s + 1, s + 2, s + 3);
+  };
+  const leaves = rng.int(4, 6);
+  for (let i = 0; i < leaves; i++) {
+    const base = new Vector3(rng.range(-0.25, 0.25), 0, rng.range(-0.25, 0.25));
+    card(base, rng.range(1.1, 1.7), 0.42, (i / leaves) * Math.PI + rng.range(-0.3, 0.3), new Vector3(), 0.5, rng.range(0.8, 1.05), 1.5);
+  }
+  const stems = rng.int(9, 15);
+  for (let i = 0; i < stems; i++) {
+    const base = new Vector3(rng.range(-0.3, 0.3), 0, rng.range(-0.3, 0.3));
+    const h = rng.range(1.9, 2.7);
+    const la = rng.range(0, Math.PI * 2);
+    const lean = new Vector3(Math.cos(la), 0, Math.sin(la)).multiplyScalar(rng.range(0.05, 0.3) * h * 0.25);
+    card(base, h, 0.22, rng.range(0, Math.PI), lean, 0, rng.range(0.82, 1), 1);
+  }
+  return b.build();
+}
+
 // ---------- placement ----------
 
 /** Kash stands only this far above the water (m): where the bank stays dry. */
@@ -546,7 +580,7 @@ export function buildVegetation(
   const dateFar = variants(1, (r) => palm(r, 'date', true));
   const bananas = variants(1, banana);
   const bamboos = variants(1, bamboo);
-  const kash = variants(3, (r) => tuft(r, [8, 13], [1.5, 2.5], 0.17, 1.6));
+  const kash = variants(3, kashTuft);
   const grass = variants(3, (r) => tuft(r, [7, 10], [0.4, 0.8], 0.24, 1.2));
 
   type Bucket = { parts: TreeParts[]; wood: MeshStandardMaterial; leaves: MeshStandardMaterial; items: Placement[][] };
@@ -827,11 +861,16 @@ export function buildVegetation(
     if (h < WATER_LEVEL + (charShare(x, z) > 0.5 ? 0.12 : KASH_ABOVE) || !onDryLand(x, z, 0) || !occ.free(x, z, 0.5)) return;
     kashItems[rng.int(0, kash.length - 1)].push({ x, y: h - 0.05, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.75, 1.1) });
   };
-  for (let k = 0; k < 9000; k++) {
+  // on the char a kashbon: drifts of it standing thick, with open sand and grass between
+  const charGrass: { x: number; z: number }[] = [];
+  for (let k = 0; k < 26000; k++) {
     const x = rng.range(-640, -270);
     const z = rng.range(60, 190);
     const c = charShare(x, z);
-    if (c > 0.15 && rng.next() < c * (0.55 + 0.45 * fbm(x * 0.03, z * 0.03, 2, 63))) tuftAt(x, z);
+    if (c < 0.15) continue;
+    const drift = smoothstep(0.36, 0.6, fbm(x * 0.025, z * 0.025, 2, 63));
+    if (rng.next() < c * (0.12 + 0.88 * drift)) tuftAt(x, z);
+    else if (rng.next() < 0.35 * c) charGrass.push({ x, z });
   }
   for (const way of [KHAL, SIDE_KHAL]) {
     for (const side of [-1, 1] as const) {
@@ -869,6 +908,10 @@ export function buildVegetation(
         }
       }
     }
+  }
+  // and the char's own between its kash, clear of the water's edge
+  for (const { x, z } of charGrass) {
+    if (terrainHeight(x, z) > WATER_LEVEL + 0.2) grassItems[rng.int(0, grass.length - 1)].push(at(x, z, rng, rng.range(0.7, 1.2), 0.05));
   }
   grass.forEach(
     (g, i) => grassItems[i].length && group.add(instanced(g, mats.grass, grassItems[i], { layer: LAYER_NO_REFLECT, receive: true })),

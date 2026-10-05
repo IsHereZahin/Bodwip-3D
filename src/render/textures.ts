@@ -249,40 +249,91 @@ export function bananaLeafTexture(seed: number): DataTexture {
   return toTexture(ctx, { bleed: true });
 }
 
-/** Kash (Saccharum spontaneum): a thin stem and a feathery white plume. v along the stem. */
+/**
+ * Kash (Saccharum spontaneum), two cards in one texture. The left half (u 0..0.5) is a flowering stem: a thin
+ * cane with a leaf or two, and at its top (the upper quarter) a slender silky plume nodding to one side, its
+ * fibres silver-white with a lilac flush at their base. The right half (u 0.5..1) is the clump's long narrow
+ * grey-green leaves, arching out from the root. v along the stem. Only the plume is bright (the season hides it
+ * by its brightness: render/patch.ts).
+ */
 export function kashTexture(seed: number): DataTexture {
-  const W = 64;
-  const H = 256;
+  const W = 256;
+  const H = 512;
+  const half = W / 2;
   const rng = new Rng(seed);
   const ctx = paint(W, H, (c) => {
-    c.strokeStyle = '#8a8456';
-    c.lineWidth = 3;
+    // ---- the flowering stem ----
+    // the cane a little left of the half's middle, so the plume nodding right stays inside it
+    const cx = half * 0.4;
+    const top = H * 0.27;
+    c.strokeStyle = '#6f7240';
+    c.lineWidth = 2.4;
     c.beginPath();
-    c.moveTo(W / 2, H);
-    c.quadraticCurveTo(W / 2, H * 0.6, W / 2 + 4, H * 0.45);
+    c.moveTo(cx, H);
+    c.quadraticCurveTo(cx - 2, H * 0.6, cx + 3, top);
     c.stroke();
-    // the plume droops to one side; a thin dense core keeps its coverage through the mipmaps,
-    // and long fine fibres fray its edge
-    const rx = (t: number) => W / 2 + 4 + t * t * 16;
-    const ry = (t: number) => H * 0.5 - t * H * 0.47 + t * t * t * 16;
-    for (let k = 0; k < 30; k++) {
-      const t = k / 29;
-      c.fillStyle = `rgba(${238 - rng.int(0, 10)},${233 - rng.int(0, 10)},${220 - rng.int(0, 16)},0.9)`;
+    // a sheathing leaf or two up the cane
+    for (const [y0, side] of [
+      [H * 0.78, 1],
+      [H * 0.58, -1],
+    ] as const) {
+      c.fillStyle = side > 0 ? '#5c6a36' : '#66733c';
       c.beginPath();
-      c.ellipse(rx(t), ry(t), 1.2 + 3.2 * Math.sin(Math.PI * Math.min(1, t * 1.1)), 6, 0.3 * t, 0, Math.PI * 2);
+      c.moveTo(cx, y0);
+      c.quadraticCurveTo(cx + side * 22, y0 - 60, cx + side * 50, y0 - 40);
+      c.quadraticCurveTo(cx + side * 20, y0 - 50, cx + 1, y0 - 16);
       c.fill();
     }
-    for (let k = 0; k < 420; k++) {
-      const t = rng.next();
-      const y = ry(t);
+    // the plume: a rachis nodding over to one side, a thin dense core along it (it keeps its coverage
+    // through the mipmaps), and silky fibres fanning up and out from it
+    const rx = (t: number) => cx + 3 + t * t * 20;
+    const ry = (t: number) => top - t * (H * 0.21) + t * t * t * 26;
+    c.strokeStyle = 'rgba(214, 206, 204, 0.95)';
+    c.lineWidth = 2.2;
+    c.beginPath();
+    for (let k = 0; k <= 20; k++) {
+      const t = k / 20;
+      if (k === 0) c.moveTo(rx(t), ry(t));
+      else c.lineTo(rx(t), ry(t));
+    }
+    c.stroke();
+    for (let k = 0; k < 700; k++) {
+      const t = Math.pow(rng.next(), 0.8);
       const x = rx(t);
-      const spread = (4 + 15 * Math.sin(Math.PI * Math.min(1, t * 1.1))) * rng.range(0.35, 1);
-      c.strokeStyle = `rgba(${245 - rng.int(0, 12)},${240 - rng.int(0, 14)},${228 - rng.int(0, 20)},${rng.range(0.55, 0.95)})`;
-      c.lineWidth = rng.range(0.6, 1.3);
+      const y = ry(t);
+      // fullest a third of the way up, tapering to a fine tip
+      const full = Math.sin(Math.PI * Math.min(1, 0.15 + t * 0.95));
+      const len = (5 + 15 * full) * rng.range(0.4, 1);
+      const a = rng.sign() * rng.range(0.15, 1.1) - 0.25;
+      const base = rng.next() < 0.3;
+      c.strokeStyle = base
+        ? `rgba(${208 + rng.int(0, 14)},${190 + rng.int(0, 12)},${206 + rng.int(0, 12)},${rng.range(0.5, 0.85)})`
+        : `rgba(${236 + rng.int(0, 14)},${233 + rng.int(0, 14)},${226 + rng.int(0, 16)},${rng.range(0.35, 0.85)})`;
+      c.lineWidth = rng.range(0.5, 1.1);
       c.beginPath();
       c.moveTo(x, y);
-      c.lineTo(x + rng.sign() * spread, y - rng.range(4, 14));
+      c.quadraticCurveTo(x + Math.sin(a) * len * 0.5, y - len * 0.6, x + Math.sin(a) * len, y - Math.cos(a) * len * 0.7 + len * 0.15);
       c.stroke();
+    }
+    // ---- the leaves: long, narrow, arching out and drooping, each with a paler midrib ----
+    for (let i = 0; i < 26; i++) {
+      const bx = half + half / 2 + rng.range(-8, 8);
+      const side = rng.sign();
+      const reach = rng.range(10, 58) * side;
+      const tipY = rng.range(H * 0.12, H * 0.62);
+      const w = rng.range(2.2, 4);
+      const g = c.createLinearGradient(0, H, 0, tipY);
+      g.addColorStop(0, '#2c3a17');
+      g.addColorStop(0.5, rng.pick(['#4d5f2b', '#566830', '#5a6b33', '#617236']));
+      g.addColorStop(1, rng.pick(['#7f8a52', '#8a9258', '#96985e']));
+      c.fillStyle = g;
+      const mx = bx + reach * 0.35;
+      const my = (H + tipY) / 2 - 30;
+      c.beginPath();
+      c.moveTo(bx - w, H);
+      c.quadraticCurveTo(mx - w, my, bx + reach, tipY);
+      c.quadraticCurveTo(mx + w, my, bx + w, H);
+      c.fill();
     }
   });
   return toTexture(ctx, { bleed: true });
