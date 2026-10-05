@@ -323,7 +323,7 @@ export class Meadow {
         // grass where the ground is grassy, in drifts, thinning on trodden earth and in the paddy
         const drift = smoothstep(0.28, 0.62, fbm(x * 0.07, z * 0.07, 2, 91));
         // none in the paddy plots (zone > 0)
-        const density = (g.grass * (0.45 + 0.55 * drift) + g.dirt * 0.12 * drift) * (1 - Math.abs(g.zone));
+        const density = (g.grass * (0.45 + 0.55 * drift) + g.dirt * 0.12 * drift) * (1 - Math.abs(g.zone)) * (1 - g.bare);
         if (rng.next() > density) continue;
         const lush = fbm(x * 0.03 + 7, z * 0.03, 2, 92);
         const dry = Math.min(1, g.dirt * 1.4 + smoothstep(0.62, 0.8, lush) * 0.5);

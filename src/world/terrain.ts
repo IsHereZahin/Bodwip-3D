@@ -42,6 +42,8 @@ export interface Cover {
   dirt: number;
   sand: number;
   pebbles: number;
+  /** How much of it is ground kept bare: a swept yard, a way's trodden earth (0..1); no grass grows there. */
+  bare: number;
 }
 
 /** Each kind of ground's own colour, zone and layer weights before the local touches. */
@@ -51,19 +53,21 @@ interface ClassLook {
   grass: number;
   dirt: number;
   sand: number;
+  /** Kept bare (swept, trodden): no grass. */
+  bare: number;
 }
 
 const LOOK: Record<'field' | 'yard' | 'mound' | 'verge' | 'sand' | 'marsh', ClassLook> = {
-  field: { color: COLORS.grassA, zone: 1, grass: 0.75, dirt: 0.15, sand: 0 },
-  // the yard is smooth clay: little of the grass or the gravelly dirt layers, the smooth mud for the rest
-  yard: { color: COLORS.yard, zone: 0, grass: 0.04, dirt: 0.22, sand: 0.12 },
-  mound: { color: COLORS.grove, zone: 0, grass: 0.55, dirt: 0.3, sand: 0 },
-  verge: { color: COLORS.grassB, zone: 0, grass: 0.9, dirt: 0.05, sand: 0 },
-  sand: { color: COLORS.sand, zone: 0, grass: 0, dirt: 0, sand: 1 },
-  marsh: { color: COLORS.marsh, zone: 0, grass: 0.85, dirt: 0, sand: 0 },
+  field: { color: COLORS.grassA, zone: 1, grass: 0.75, dirt: 0.15, sand: 0, bare: 0 },
+  // the yard is clay swept smooth: the fine sand layer's grain under its colour, little of the gravelly dirt or the cracked mud
+  yard: { color: COLORS.yard, zone: 0, grass: 0.02, dirt: 0.08, sand: 0.6, bare: 1 },
+  mound: { color: COLORS.grove, zone: 0, grass: 0.55, dirt: 0.3, sand: 0, bare: 0 },
+  verge: { color: COLORS.grassB, zone: 0, grass: 0.9, dirt: 0.05, sand: 0, bare: 0 },
+  sand: { color: COLORS.sand, zone: 0, grass: 0, dirt: 0, sand: 1, bare: 0 },
+  marsh: { color: COLORS.marsh, zone: 0, grass: 0.85, dirt: 0, sand: 0, bare: 0 },
 };
 
-const blend: ClassLook = { color: [0, 0, 0], zone: 0, grass: 0, dirt: 0, sand: 0 };
+const blend: ClassLook = { color: [0, 0, 0], zone: 0, grass: 0, dirt: 0, sand: 0, bare: 0 };
 
 /** The kinds of ground at a point (geography.ts landUse), their looks blended by their shares. */
 function blendedLook(x: number, z: number): ClassLook {
@@ -86,6 +90,7 @@ function blendedLook(x: number, z: number): ClassLook {
   blend.grass = 0;
   blend.dirt = 0;
   blend.sand = 0;
+  blend.bare = 0;
   for (const [look, w0] of parts) {
     const w = w0 * k;
     r += look.color[0] * w;
@@ -95,6 +100,7 @@ function blendedLook(x: number, z: number): ClassLook {
     blend.grass += look.grass * w;
     blend.dirt += look.dirt * w;
     blend.sand += look.sand * w;
+    blend.bare += look.bare * w;
   }
   blend.color = [r, g, b];
   return blend;
@@ -108,7 +114,7 @@ function cover(x: number, z: number, h: number): Cover {
   const level = Number.isFinite(water) ? water : -1e4;
   if (h < level - 0.15) {
     const color = mixRgb(COLORS.bedDeep, COLORS.wetMud, smoothstep(-4, -0.15, h - level));
-    return { color, zone: 0, grass: 0, dirt: 0, sand: look.sand, pebbles: 0 };
+    return { color, zone: 0, grass: 0, dirt: 0, sand: look.sand, pebbles: 0, bare: 0 };
   }
   let ground = look.color;
   // some variety: greener and drier patches, and on the hills red earth showing through the forest
@@ -134,6 +140,7 @@ function cover(x: number, z: number, h: number): Cover {
     dirt: dirt * top * (1 - look.sand),
     sand: look.sand,
     pebbles: 0,
+    bare: Math.min(1, Math.max(look.bare, road)),
   };
 }
 
@@ -160,6 +167,7 @@ export function groundLattice(x0: number, z0: number, size: number, step: number
     dirt: a.dirt + (b.dirt - a.dirt) * t,
     sand: a.sand + (b.sand - a.sand) * t,
     pebbles: a.pebbles + (b.pebbles - a.pebbles) * t,
+    bare: a.bare + (b.bare - a.bare) * t,
   });
   return (x, z) => {
     const fx = Math.min(Math.max((x - x0) / step, 0), n - 1.001);

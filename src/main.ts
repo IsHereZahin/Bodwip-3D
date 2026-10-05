@@ -41,6 +41,7 @@ import { Terrain } from './world/terrain';
 import { buildVegetation } from './world/vegetation';
 import { buildVillages, planGhats, planHuts } from './world/village';
 import { buildSanko } from './world/sanko';
+import { buildYards } from './world/yard';
 import { buildWater } from './world/water';
 
 const BLACK = new Color(0, 0, 0);
@@ -119,6 +120,7 @@ async function main(hud: Hud): Promise<void> {
   const ghats = planGhats();
   const villages = buildVillages(huts, ghats);
   scene.add(villages);
+  scene.add(buildYards(huts));
   // everything standing, for the trees and the grass to keep clear of
   const standing = huts;
   hud.progress(0.52);

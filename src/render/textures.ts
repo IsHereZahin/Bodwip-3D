@@ -352,25 +352,25 @@ export function strawTexture(seed: number): DataTexture {
   return toTexture(ctx, { repeat: true });
 }
 
-/** Corrugated tin with rust: ridges run down the slope (v). Tiles. */
+/** Corrugated tin with rust: ridges run down the slope (v), 32 to a repeat (2.4 m of sheet). Tiles. */
 export function tinTexture(seed: number): DataTexture {
-  const S = 256;
+  const S = 512;
   const rng = new Rng(seed);
   const ctx = paint(S, S, (c) => {
     for (let x = 0; x < S; x++) {
-      const k = 0.5 + 0.5 * Math.sin((x / S) * Math.PI * 2 * 16);
+      const k = 0.5 + 0.5 * Math.sin((x / S) * Math.PI * 2 * 32);
       const v = Math.round(110 + 60 * k);
       c.fillStyle = `rgb(${v},${v},${v - 6})`;
       c.fillRect(x, 0, 1, S);
     }
-    for (let i = 0; i < 26; i++) {
+    for (let i = 0; i < 14; i++) {
       const x = rng.range(0, S);
       const y = rng.range(0, S);
-      const r = rng.range(10, 46);
+      const r = rng.range(14, 90);
       for (const ox of [-S, 0, S]) {
         for (const oy of [-S, 0, S]) {
           const g = c.createRadialGradient(x + ox, y + oy, 0, x + ox, y + oy, r);
-          g.addColorStop(0, `rgba(${120 + rng.int(0, 30)},${58 + rng.int(0, 20)},28,0.75)`);
+          g.addColorStop(0, `rgba(${120 + rng.int(0, 30)},${58 + rng.int(0, 20)},28,0.45)`);
           g.addColorStop(1, 'rgba(110,60,30,0)');
           c.fillStyle = g;
           c.fillRect(x + ox - r, y + oy - r, r * 2, r * 2);
@@ -379,7 +379,7 @@ export function tinTexture(seed: number): DataTexture {
     }
     // rust streaks run down from the nail lines
     c.fillStyle = 'rgba(95,48,22,0.35)';
-    for (let i = 0; i < 40; i++) c.fillRect(rng.range(0, S), rng.range(0, S), rng.range(1, 3), rng.range(20, 70));
+    for (let i = 0; i < 80; i++) c.fillRect(rng.range(0, S), rng.range(0, S), rng.range(1, 4), rng.range(30, 140));
   });
   return toTexture(ctx, { repeat: true });
 }

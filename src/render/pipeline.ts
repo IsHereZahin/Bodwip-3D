@@ -137,14 +137,16 @@ void main() {
   col = mix(col, col * vec3(0.9, 1.0, 1.08), 1.0 - smoothstep(0.0, 0.14, lum));
   col = mix(col, vec3(lum) * vec3(0.72, 0.88, 1.22), uNight * 0.5 * (1.0 - smoothstep(0.03, 0.4, lum)));
   vec3 m = aces(col);
-  // painterly grade: teal in the shadows, amber in the highlights, a firm S-curve
+  // painterly grade: teal in the shadows, amber in the highlights, a gentle S-curve; the deepest shadows
+  // lifted a little (a film's toe), so what stands in the shade under a veranda or a grove still reads
   float l = dot(m, vec3(0.299, 0.587, 0.114));
   m += vec3(0.0, 0.012, 0.022) * (1.0 - smoothstep(0.0, 0.35, l));
   m = mix(m, m * vec3(1.04, 0.99, 0.9), smoothstep(0.45, 1.0, l));
-  m = clamp(mix(vec3(l), m, 1.1), 0.0, 1.0);
-  m = mix(m, m * m * (3.0 - 2.0 * m), 0.32);
+  m = clamp(mix(vec3(l), m, 1.08), 0.0, 1.0);
+  m = mix(m, m * m * (3.0 - 2.0 * m), 0.2);
+  m += 0.009 * (1.0 - smoothstep(0.0, 0.22, m)) * (1.0 - uNight * 0.6);
   float vig = 1.0 - smoothstep(0.38, 1.05, length(cc * vec2(1.05, 1.25)));
-  m *= mix(0.7, 1.0, vig);
+  m *= mix(0.78, 1.0, vig);
   m = toSRGB(m);
   // film grain and dither against banding in the smooth sky
   float g = hash(gl_FragCoord.xy + fract(uFrame * 0.618) * 311.0) - 0.5;
