@@ -94,9 +94,11 @@ export class PaddleSplash {
   update(dt: number, blade: Vector3, wet: number, drive: number, back: Vector3, height: number): void {
     this.material.uniforms.uScale.value = height;
     const level = waterLevelAt(blade.x, blade.z);
+    // (over no water, nothing: a level of −∞ would put drops there, NaN on the GPU)
+    const onWater = Number.isFinite(level);
     // in: kicked up round where it enters; out: running off it
-    if (wet > 0.35 && this.wet <= 0.35) this.emit(this.tmp.set(blade.x, level + 0.02, blade.z), Math.round(ENTRY * Math.min(1.6, Math.max(0.5, drive))), 1.1 + 0.4 * drive, 1.6 + 0.6 * drive, 0.12, back);
-    if (wet < 0.25 && this.wet >= 0.25) this.emit(this.tmp.set(blade.x, level + 0.15, blade.z), EXIT, 0.25, 0.3, 0.18, back);
+    if (onWater && wet > 0.35 && this.wet <= 0.35) this.emit(this.tmp.set(blade.x, level + 0.02, blade.z), Math.round(ENTRY * Math.min(1.6, Math.max(0.5, drive))), 1.1 + 0.4 * drive, 1.6 + 0.6 * drive, 0.12, back);
+    if (onWater && wet < 0.25 && this.wet >= 0.25) this.emit(this.tmp.set(blade.x, level + 0.15, blade.z), EXIT, 0.25, 0.3, 0.18, back);
     this.wet = wet;
     for (let i = 0; i < POOL; i++) {
       if (this.age[i] >= LIFE) {

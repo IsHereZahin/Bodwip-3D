@@ -61,7 +61,7 @@ export interface BindBone {
 
 export interface HumanData {
   height: number;
-  /** One per bone of `HUMAN_BONES`, then the character's own (its braid). */
+  /** One per bone of `HUMAN_BONES`. */
   bones: BindBone[];
   parents: number[];
   names: string[];
@@ -90,7 +90,6 @@ interface Raw {
     {
       height: number;
       bones: BindBone[];
-      extra: { braid: (BindBone & { parent: number })[] } | null;
       crown: [number, number, number];
       sections: HumanData['sections'];
       parts: Record<string, PartRefs>;
@@ -147,13 +146,12 @@ async function load(): Promise<Record<HumanName, HumanData>> {
         ...(p.lock ? { lock: view(p.lock) as Uint8Array } : {}),
       };
     }
-    const braid = c.extra?.braid ?? [];
     const entries = await Promise.all(Object.entries(c.textures).map(async ([k, f]) => [k, await texture(f)] as const));
     out[name] = {
       height: c.height,
-      bones: [...c.bones, ...braid.map(({ head, tail }) => ({ head, tail }))],
-      parents: [...raw.parents, ...braid.map((b) => b.parent)],
-      names: [...raw.bones, ...braid.map((_, i) => `braid${i}`)],
+      bones: c.bones,
+      parents: raw.parents,
+      names: raw.bones,
       crown: c.crown,
       sections: c.sections,
       parts,

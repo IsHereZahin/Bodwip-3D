@@ -21,16 +21,21 @@ export type Captured = unknown[];
 export class WorldLook {
   private readonly fields: { holder: Holder; key: string }[] = [];
 
-  /** Tracks `holder[key]`: a number, a boolean, or a vector, colour or matrix copied in place. */
-  track(holder: object, key: string): this {
+  /**
+   * Tracks `holder[key]`: a number, a boolean, or a vector, colour or matrix copied in place. Anything else is an
+   * error (a mistyped key would otherwise drop silently out of what a dissolving shot keeps), unless `loose`.
+   */
+  track(holder: object, key: string, loose = false): this {
     const v = (holder as Holder)[key];
     if (typeof v === 'number' || typeof v === 'boolean' || copyable(v)) this.fields.push({ holder: holder as Holder, key });
+    else if (!loose) throw new Error(`WorldLook: cannot keep "${key}" (${v === null ? 'null' : typeof v})`);
     return this;
   }
 
   /** Tracks the `value` of every uniform in `uniforms` that holds a number, vector or colour, but those named in `skip`. */
   trackUniforms(uniforms: Record<string, { value: unknown }>, skip: readonly string[]): this {
-    for (const [name, u] of Object.entries(uniforms)) if (!skip.includes(name)) this.track(u, 'value');
+    // (a uniform holding a texture is not part of a shot's look: left out)
+    for (const [name, u] of Object.entries(uniforms)) if (!skip.includes(name)) this.track(u, 'value', true);
     return this;
   }
 

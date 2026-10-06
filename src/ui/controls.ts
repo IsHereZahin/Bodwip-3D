@@ -126,14 +126,28 @@ export class Controls {
         h.view(this.views.value as ViewName);
         // the list is a menu of jumps: it always reads "দৃশ্য", so the same view can be picked again
         this.views.selectedIndex = 0;
+        this.views.blur();
       }),
     );
     MOON_PHASES.forEach((p, i) => this.moon.add(new Option(p.name, String(i))));
-    this.moon.addEventListener('change', use(() => h.moon(MOON_PHASES[Number(this.moon.value)].age)));
+    // (once picked, a menu gives the keyboard back: else the arrows go on changing it and the shortcuts wait)
+    this.moon.addEventListener(
+      'change',
+      use(() => {
+        h.moon(MOON_PHASES[Number(this.moon.value)].age);
+        this.moon.blur();
+      }),
+    );
     // the season shows itself; the menu jumps to the middle of another, or back to today's date
     SEASON_NAMES.forEach((name, i) => this.season.add(new Option(name, String(i))));
     this.season.add(new Option('আজকের তারিখ', 'today'));
-    this.season.addEventListener('change', use(() => h.season(this.season.value === 'today' ? 'today' : Number(this.season.value))));
+    this.season.addEventListener(
+      'change',
+      use(() => {
+        h.season(this.season.value === 'today' ? 'today' : Number(this.season.value));
+        this.season.blur();
+      }),
+    );
 
     // the timeline: drag or click to set the time; the arrow keys step ten minutes, an hour with Shift
     this.paintDay();

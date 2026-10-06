@@ -392,17 +392,23 @@ export class Drift {
     }
   }
 
-  /** Neighbours keep apart (they may overlap a little, as leaves interleave), found through a spatial hash. */
+  /**
+   * Neighbours keep apart (they may overlap a little, as leaves interleave), found through a spatial hash. Those
+   * waiting for water (NaN) are left out: they would all hash to one cell, and every one of them be measured
+   * against every other each frame.
+   */
   private collide(): void {
     const { px, pz, head, next, radius } = this;
     const cell = (cx: number, cz: number) => ((Math.imul(cx, 73856093) ^ Math.imul(cz, 19349663)) >>> 0) & (TABLE - 1);
     head.fill(-1);
     for (let i = 0; i < N; i++) {
+      if (Number.isNaN(pz[i])) continue;
       const c = cell(Math.floor(px[i] / CELL), Math.floor(pz[i] / CELL));
       next[i] = head[c];
       head[c] = i;
     }
     for (let i = 0; i < N; i++) {
+      if (Number.isNaN(pz[i])) continue;
       const cx = Math.floor(px[i] / CELL);
       const cz = Math.floor(pz[i] / CELL);
       for (let dz = -1; dz <= 1; dz++) {
@@ -426,16 +432,20 @@ export class Drift {
     }
   }
 
-  /** Sets down afresh the mats and leaves that have left the round about the viewer (or none have water). */
+  /**
+   * Sets down afresh the mats and leaves that have left the round about the viewer. Those that found no water
+   * look again every RETRY frames, each on its own frame of them (where there is little water most of them wait,
+   * and all of them looking in the same frame stalled it).
+   */
   private recycle(vx: number, vz: number, jumped: boolean): void {
     const gone = (i: number) => Number.isNaN(this.pz[i]) || Math.hypot(this.px[i] - vx, this.pz[i] - vz) > REACH + 20;
-    const due = this.frame % RETRY === 0;
-    for (const mat of this.mats) {
+    const due = (k: number) => (this.frame + k) % RETRY === 0;
+    this.mats.forEach((mat, k) => {
       const parked = Number.isNaN(this.pz[mat.members[0]]);
-      if (jumped || (mat.members.every(gone) && (!parked || due))) this.spawnMat(mat, vx, vz);
-    }
+      if (jumped || (mat.members.every(gone) && (!parked || due(k)))) this.spawnMat(mat, vx, vz);
+    });
     for (let i = PLANTS; i < N; i++) {
-      if (!jumped && (!gone(i) || (Number.isNaN(this.pz[i]) && !due))) continue;
+      if (!jumped && (!gone(i) || (Number.isNaN(this.pz[i]) && !due(i)))) continue;
       const at = this.spot(vx, vz);
       this.px[i] = at ? at[0] : Number.NaN;
       this.pz[i] = at ? at[1] : Number.NaN;

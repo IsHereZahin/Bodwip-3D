@@ -100,7 +100,7 @@ const MAX_POWER = 2.2;
 /** The most the wind and waves heel her (rad): past a point he throws his weight to windward and her flare bites. */
 const MAX_HEEL = 0.24;
 
-/** Where in the stroke he rests the paddle when not rowing: near the end of the recovery, blade forward and clear. */
+/** Where in the stroke he rests the paddle when not rowing: near the end of the recovery, blade forward, its tip trailing in the water. */
 export const REST_PHASE = 0.93;
 /** A mooring line: how hard it pulls her back to her place (N/m), and its damping (N·s/m). */
 const MOOR = { k: 140, c: 420 };
@@ -176,7 +176,10 @@ export class BoatBody {
 
   private substep(dt: number, t: number, target: { x: number; z: number }, crew: Crew): void {
     // his stroke clock runs while he rows, or until he has brought the paddle up to rest
-    if (this.rowing || Math.abs(strokePhase(this.strokeTime) - REST_PHASE) > 0.01) this.strokeTime += dt;
+    const atRest = Math.abs(strokePhase(this.strokeTime) - REST_PHASE) <= 0.01;
+    if (this.rowing || !atRest) this.strokeTime += dt;
+    // (the paddle held still at rest drives nothing and needs no turning against: she runs on and the helm holds her)
+    const resting = !this.rowing && atRest;
     // at each catch he settles how hard to pull this stroke
     const n = Math.floor(this.strokeTime / STROKE_SECONDS);
     if (n !== this.strokeIndex) {
@@ -184,6 +187,7 @@ export class BoatBody {
       this.power = strokePower(n, this.meanSpeed);
     }
     paddleForce(strokePhase(this.strokeTime), stroke, this.power);
+    if (resting) stroke.thrust = stroke.side = 0;
     const fx = Math.sin(this.heading);
     const fz = Math.cos(this.heading);
     const sx = Math.cos(this.heading);
@@ -228,7 +232,7 @@ export class BoatBody {
     this.pos.z += this.vel.z * dt;
     // pulled on one side, the blade swings her bow away from it with each stroke; the twist he gives it
     // at the end of the stroke takes that out on average (so she wags a little), and the helm does the rest
-    const turn = stroke.z * stroke.side - stroke.x * stroke.thrust - PADDLE_MOMENT * this.power + helm;
+    const turn = stroke.z * stroke.side - stroke.x * stroke.thrust - (resting ? 0 : PADDLE_MOMENT * this.power) + helm;
     this.yawRate += ((turn - YAW_DAMP * this.yawRate) / YAW_INERTIA) * dt;
     this.heading += this.yawRate * dt;
 

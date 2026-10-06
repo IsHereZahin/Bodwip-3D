@@ -30,6 +30,9 @@ const DRIP_NEAR = 35;
 interface Tap {
   tip: Vector3;
   mouth: Vector3;
+  /** The pot's foot and its axis (tipped toward the trunk), for the sap's level in it. */
+  foot: Vector3;
+  axis: Vector3;
   floor: number;
   out: Vector3;
   sap: Mesh;
@@ -172,11 +175,13 @@ export class Khejur {
     const trunkMat = patchMaterial(new MeshStandardMaterial({ map: bark.map, normalMap: bark.normal, normalScale: new Vector2(1.2, 1.2), vertexColors: true, roughness: 0.95 }), { grime: 0.25 });
     const leafMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.75, side: DoubleSide }), { wind: 0.05, windHeight: 2.2, translucency: 0.45, foliage: true, seasonal: 'leaf' });
     const cutMat = patchMaterial(new MeshStandardMaterial({ map: khejurCutTexture(), alphaTest: 0.5, roughness: 0.6, side: DoubleSide }), {});
-    const clay = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), { grime: 0.3 });
+    // (the pot is one shell: drawn from both sides, so its inside shows dark through the mouth, not the trunk beyond)
+    const clay = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85, side: DoubleSide }), { grime: 0.3 });
     const cane = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.6 }), {});
     const sapMat = patchMaterial(new MeshStandardMaterial({ color: '#cdb478', roughness: 0.12, metalness: 0, transparent: true, opacity: 0.88 }), {});
-    const dropMat = new MeshStandardMaterial({ color: '#e8d9a8', roughness: 0.05, transparent: true, opacity: 0.85 });
-    const ringMat = new MeshStandardMaterial({ color: '#f2e6c4', roughness: 0.1, transparent: true, opacity: 0.6 });
+    const dropMat = patchMaterial(new MeshStandardMaterial({ color: '#e8d9a8', roughness: 0.05, transparent: true, opacity: 0.85 }), {});
+    // each pot's ring fades on its own (a clone would lose the patch: made afresh for each)
+    const ringMat = () => patchMaterial(new MeshStandardMaterial({ color: '#f2e6c4', roughness: 0.1, transparent: true, opacity: 0.6 }), {});
 
     const trunks = new MeshBuilder();
     const tapB = new MeshBuilder();
@@ -261,9 +266,11 @@ export class Khejur {
         new Matrix4().compose(spoutFoot, new Quaternion().setFromUnitVectors(UP, spoutDir), new Vector3(1, 1, 1)),
         rgb('#b49a62'),
       );
-      // the pot, tipped toward the trunk so its mouth is under the spout, smoked dark about its neck
-      const potFoot = tip.clone().addScaledVector(UP, -0.05 - POT.height).addScaledVector(outW, -0.03);
+      // the pot, tipped toward the trunk with its mouth's middle right under the spout (the drops fall into the
+      // middle of it), smoked dark about its neck
       const tilt = new Quaternion().setFromAxisAngle(across, -0.18);
+      const axis = UP.clone().applyQuaternion(tilt);
+      const potFoot = tip.clone().addScaledVector(UP, -0.05).addScaledVector(axis, -POT.height);
       // terracotta, smoked dark from the shoulder up (the pots are smoked so the sap keeps)
       const lathe = new LatheGeometry(potProfile(), 18);
       const pos = lathe.getAttribute('position');
@@ -281,24 +288,24 @@ export class Khejur {
       const ringY = potFoot.y + POT.height * 0.9;
       const trunkAt = new Vector3(top.x, ringY, top.z);
       tapB.add(new TorusGeometry(radiusTop + 0.012, 0.006, 4, 16).rotateX(Math.PI / 2), new Matrix4().makeTranslation(trunkAt.x, trunkAt.y, trunkAt.z), rgb('#9a8456'));
-      const neck = potFoot.clone().addScaledVector(UP, POT.height * 0.9);
+      const neck = potFoot.clone().addScaledVector(axis, POT.height * 0.9);
       const rope = new Vector3().subVectors(neck, trunkAt.clone().addScaledVector(outW, radiusTop));
       tapB.add(
         new CylinderGeometry(0.005, 0.005, rope.length(), 4).translate(0, rope.length() / 2, 0),
         new Matrix4().compose(trunkAt.clone().addScaledVector(outW, radiusTop), new Quaternion().setFromUnitVectors(UP, rope.clone().normalize()), new Vector3(1, 1, 1)),
         rgb('#9a8456'),
       );
-      // the sap in it, its drop and its ring (moved each frame)
-      const mouth = potFoot.clone().addScaledVector(UP, POT.height);
+      // the sap in it, its drop and its ring (moved each frame; each ring fades on its own)
+      const mouth = potFoot.clone().addScaledVector(axis, POT.height);
       const sap = new Mesh(new CircleGeometry(1, 20).rotateX(-Math.PI / 2), sapMat);
       const drop = new Mesh(new SphereGeometry(0.0065, 8, 6), dropMat);
-      const ring = new Mesh(new TorusGeometry(1, 0.06, 4, 20).rotateX(Math.PI / 2), ringMat);
+      const ring = new Mesh(new TorusGeometry(1, 0.06, 4, 20).rotateX(Math.PI / 2), ringMat());
       for (const m of [sap, drop, ring]) {
         m.visible = false;
         this.pots.add(m);
       }
       sap.position.copy(potFoot);
-      this.taps.push({ tip, mouth, floor: potFoot.y, out: outW, sap, drop, ring, dropAt: 0, dropFor: 1.5, fallAt: -1, ringAt: -10 });
+      this.taps.push({ tip, mouth, foot: potFoot, axis, floor: potFoot.y, out: outW, sap, drop, ring, dropAt: 0, dropFor: 1.5, fallAt: -1, ringAt: -10 });
       if (k === 3) {
         this.hero.foot.set(x, y, z);
         this.hero.cut.copy(cutMid);
@@ -337,11 +344,12 @@ export class Khejur {
     const watched = this.watchFrom >= 0 ? Math.min(0.08, (t - this.watchFrom) * 0.005) : 0;
     const fill = Math.min(0.82, 0.12 + 0.62 * night + watched);
     for (const tap of this.taps) {
-      // the sap: its top as full as the night has made it
+      // the sap: its top as full as the night has made it, level in the tipped pot (a little inside its wall,
+      // which the level plane cuts aslant)
       const h = POT.height * fill;
-      const r = potInner(h);
+      const r = potInner(h) * 0.94;
       tap.sap.visible = true;
-      tap.sap.position.set(tap.mouth.x, tap.floor + h, tap.mouth.z);
+      tap.sap.position.copy(tap.foot).addScaledVector(tap.axis, h / tap.axis.y);
       tap.sap.scale.set(r, 1, r);
       const near = this.tmp.subVectors(tap.tip, eye).length() < DRIP_NEAR;
       tap.drop.visible = near;

@@ -1,6 +1,6 @@
 # Known issues, limits and open work
 
-These entries are current as of commit 7181995 (2026-10-06). Remove an entry when it is fixed, and add new ones here, not in a new file.
+These entries are current as of the review of 2026-10-06, made after commit 7181995. Remove an entry when it is fixed, and add new ones here, not in a new file.
 
 ## Open bugs and risks
 
@@ -20,6 +20,11 @@ These entries are current as of commit 7181995 (2026-10-06). Remove an entry whe
 - **Recent headless numbers** (2026-10-06 film run): render-only frames ≈22–30 ms, ≈60 ms with screenshots.
 - **The mirror pass** redraws layer 0 (trees, kash) at half resolution. Adaptive resolution saves pixels, not vertices.
 - **Hyacinth is never frustum-culled.**
+- **A cut's own frame** still costs ≈130–160 ms in headless Chrome on the production build; the frames round it are 20–40 ms.
+  - The cost is two shots drawn, and the new grass and crop buffers uploaded.
+  - The cut's building is capped at `PREPARE_MS`, and the water's next field is uploaded ahead.
+  - One shadow-depth program is still first compiled as the film starts.
+  - Not measured on a real GPU.
 - **Never measured:** phones, laptop integrated GPUs, weak GPUs.
 
 ## Accepted simplifications
@@ -35,6 +40,7 @@ These entries are current as of commit 7181995 (2026-10-06). Remove an entry whe
   - the train and the working people.
 - **Grass and floating plants** are not in the mirror, and grass casts no shadow.
 - **Only the hero boat sits deeper in the water** (`HERO_SINK`). Hyacinth meets her hull at its rest waterline.
+- **The girl's umbrella out of the rains:** a shower catches her without it while she is in sight. She has it the next time the camera comes back (see architecture.md).
 - **Cloth** is springs round the body, not a full simulation: folds are painted, and it moves only a few cm in big jolts.
   - The girl's ওড়না is one row of particles, so it looks a little stiff from the front.
   - Her blouse pokes slightly through at the shoulder.
@@ -54,8 +60,9 @@ These entries are current as of commit 7181995 (2026-10-06). Remove an entry whe
 
 ## Never verified
 
-- Phones and weak or integrated GPUs; real touch and pinch; Firefox and Safari.
-- Sound, live (headless is muted: thunder, rain).
+- Real phones and weak or integrated GPUs; Firefox and Safari.
+  - Touch, pinch and the sound's states were tested in headless Chrome with emulated touch on a phone-sized page.
+- Sound by ear (headless only shows the audio context's state).
 - The paddle splash close up, live, and the date-palm drops (too small to judge in stills).
 
 ## Backlog (proposed, not yet asked for)

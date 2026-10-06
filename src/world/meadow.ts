@@ -17,7 +17,7 @@ import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
 import { CORRIDOR, CROP_REACH } from '../render/glsl';
 import { patchMaterial } from '../render/patch';
-import { WATER_LEVEL, corridorDistance, onBridge, onLandmark, onRoad, terrainHeight } from './geography';
+import { WATER_LEVEL, corridorDistance, onBridge, onLandmark, onRoad, roadNear, terrainHeight } from './geography';
 import { nearStone } from './stones';
 import { groundLattice } from './terrain';
 import type { Ghat, HutPlan } from './village';
@@ -32,6 +32,8 @@ import type { Ghat, HutPlan } from './village';
 // camera are built first, within a few milliseconds a frame; the film builds its next shot's ahead (`warm`).
 
 const CHUNK = 8;
+/** How many views' wanted lists `warm` keeps (the film readies a shot by five points; the map jump by one). */
+const WARM_VIEWS = 16;
 /** A chunk's half-diagonal: how far its clumps stand from its middle at most. */
 const CHUNK_REACH = CHUNK * 0.71;
 /**
@@ -210,6 +212,8 @@ export class Meadow {
   private readonly huts: readonly HutPlan[];
   private readonly ghats: readonly Ghat[];
   private wanted: Want[] = [];
+  /** The wanted lists of views being readied ahead (`warm`), by where they are. */
+  private readonly warmWants = new Map<string, Want[]>();
   private centre = '';
   private reach = 1;
   private dirty = false;
@@ -321,7 +325,15 @@ export class Meadow {
 
   /** Builds the chunks a view at `view` will want, until `until` (performance.now()), without showing them: the film readies its next shot. True once all are built. */
   warm(view: Vector3, until: number): boolean {
-    for (const w of this.wantedAt(view)) {
+    if (performance.now() > until) return false;
+    // the film asks after the same few points frame after frame: their lists are worked out once
+    const key = `${Math.round(view.x)},${Math.round(view.y)},${Math.round(view.z)},${this.reach}`;
+    let wants = this.warmWants.get(key);
+    if (!wants) {
+      if (this.warmWants.size >= WARM_VIEWS) this.warmWants.clear();
+      this.warmWants.set(key, (wants = this.wantedAt(view)));
+    }
+    for (const w of wants) {
       const chunk = this.cache.get(w.key);
       if (chunk) {
         chunk.used = this.frame;
@@ -411,15 +423,18 @@ export class Meadow {
     const pos = new Vector3();
     const scl = new Vector3();
     const tilt = new Vector3();
+    const spin = new Quaternion();
     const push = (layer: number, x: number, y: number, z: number, s: number, sy: number, color: RGB, lean = 0.12) => {
       q.setFromAxisAngle(tilt.set(rng.range(-1, 1), 0, rng.range(-1, 1)).normalize(), rng.range(0, lean));
-      q.multiply(new Quaternion().setFromAxisAngle(UP, rng.range(0, Math.PI * 2)));
+      q.multiply(spin.setFromAxisAngle(UP, rng.range(0, Math.PI * 2)));
       m.compose(pos.set(x, y, z), q, scl.set(s, s * sy, s));
       out[layer].list.push(...m.elements);
       out[layer].col.push(color[0], color[1], color[2]);
     };
     const step = STEP;
     const n = Math.round(CHUNK / step);
+    // a chunk no way comes near asks nothing of each clump (the ways' index is the dearest question here)
+    const nearWay = roadNear(x0 + CHUNK / 2, z0 + CHUNK / 2, CHUNK_REACH + 0.25);
     for (let j = 0; j < n; j++) {
       for (let i = 0; i < n; i++) {
         const x = x0 + (i + rng.next()) * step;
@@ -431,7 +446,7 @@ export class Meadow {
         if (onBridge(x, z) || onLandmark(x, z) || nearStone(x, z, 0.05)) continue;
         // nothing grows on a road, a footpath or the bridge's worn way: they stay trodden and clear (the
         // lattice is too coarse to see a footpath's metre, so each is asked here)
-        if (onRoad(x, z, 0.25)) continue;
+        if (nearWay && onRoad(x, z, 0.25)) continue;
         // the ghats' steps and the trodden way down to them
         if (ghats.some((gh) => Math.hypot(gh.x - x, gh.z - z) < 9)) continue;
         // grass where the ground is grassy, in drifts, thinning on trodden earth and in the paddy

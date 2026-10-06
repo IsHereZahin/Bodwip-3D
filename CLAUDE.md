@@ -69,6 +69,9 @@ There are no audio files and no map data.
 ## Invariants and gotchas (each one cost a bug)
 
 - Never toggle `visible` on a light. Changing the light count recompiles every material (a 60 ms+ hitch at sunset). Set the intensity to 0 instead.
+- three's `compile` passes over hidden objects. For the load-time `compileAsync`, main.ts shows everything hidden for a moment (never a light) and hides it again. Otherwise a material first seen mid-film (out of season, out of reach) is compiled in a cut's frame.
+- A transparent `DoubleSide` material is drawn in two passes, and each pass is its own program. A thin veil (the cast net) takes `forceSinglePass`. Its second program used to be compiled when the net first came into view.
+- `Material.clone()` drops `patchMaterial`'s patch: make each copy through `patchMaterial` (the date palms' rings).
 - Shadow maps use `renderer.shadowMap.autoUpdate = false`. Redraw only when `Environment.aimShadow()` returns true; it checks whether the focus moved or the key light turned.
 - Post passes sanitize NaN/Inf with comparisons, not `isnan()`. ANGLE/D3D may optimise `isnan()` away. A single bad pixel otherwise smears into black squares through the bloom chain. Birds once produced such a pixel, and the root cause is still unknown (`docs/ai-helper/known-issues.md`).
 - The pipeline's held frame (`toHeld`) must not be bound as a texture while it is being drawn into. If it is, WebGL drops the draw ("Feedback loop formed between Framebuffer and active Texture") and the dissolve dies.
@@ -88,19 +91,21 @@ There are no audio files and no map data.
 - The IK must use the body's own lengths (`body.dims`). Things laid on a person are bind points carried by a bone (`onChest`, `onHead`, a child of `bone(name)`).
 - A fitted garment is a shell over the skin, built in `scripts/humans/build.mjs` (its edge comes from a smooth field and is cut by `alphaTest`). Loose cloth is sized from the `sections` the build measures. `ClothTube.update` lays each ring's depth on once, as given.
 - The paddle stroke lives only in `paddle.ts`: change it there and everything stays in step. `MEAN_THRUST` must match the drag at `CRUISE`.
+- The hero boat's frame is `HERO_SINK` (8 cm) below the water. Measure a height over the water from there: the paddle's `wet`, the recovery's lift, the blade tip's clearance. Measured from the frame's zero, the blade's tip dragged through the whole recovery. While he rests the paddle (`!rowing` at `REST_PHASE`), it drives nothing and needs no turning against (`boatPhysics.ts`).
 - The stroke's cross-grip must stay at chest height in front of the right shoulder for the young majhi's 1.71 m (the user saw his hand come up to his face). After any change, look at the whole stroke frame by frame (`__river.stroke(phase)` at ten phases, side and front).
 - The young majhi's mathal follows the weather by itself (hero.ts `hatWeather`). A scene that wants him bareheaded at its start says so after its world is set (`Stage.bareheaded`). `settleHat` clears the jump check (a scene's own placing of the boat is no jump); otherwise the next frame's jump check settles the hat back.
 - Stills cannot show what time does. The girl is put on one side of the deck by where the boat is, the hat by the weather, and the drops and the splash need frames. Judge the bridge's crossing, the hat's change, the umbrella's opening, the sap's drops and the sweeps live (from a film recording).
 - The journey is its own line (`journeyAt(s)`, with `s` in metres along it), not a waterway's middle. The boat steers along it, and the film and the stills place her by a share of `JOURNEY.length`. What stands by the water is placed from the waterways (`Waterway.beside`, `bankAt`), never from the journey.
 - A waterway's bank must be out of the water within a step of its edge (`wayGround`'s profile from `EDGE_DEPTH`). Ground below the water's level beyond the marked water stood as dark, undrained hollows (the char's beach did, with hyacinth in them).
 - Placements (houses, haystacks, trees, kash) must check `nearBackwater` (through `onDryLand` in vegetation), `onRoad` and `onLandmark`. Water shows only where `levelTexture` (water.ts) puts it: a new carved water must answer `inlandWaterAt`/`waterLevelAt` (or be painted through `eachWaterwayPoint`).
-- Grass, flowers and crop patches ask `onRoad` for each plant, because the ground lattice is too coarse to see a 1.2 m footpath. The terrain's plots keep off the ways and the banks' strip (`bankStrip`); the meadow keeps off the ghats.
+- Grass, flowers and crop patches ask `onRoad` for each plant, because the ground lattice is too coarse to see a 1.2 m footpath. A chunk that no way comes near skips those checks (`roadNear`); before that they were most of a crop chunk's cost. The terrain's plots keep off the ways and the banks' strip (`bankStrip`); the meadow keeps off the ghats.
 - The paddy plots have a CPU twin of their shader layout (`glsl.ts` `plotWarp`/`plotFrame`/`PLOT_SIZE`/`PLOT_ANGLE` ↔ `crops.ts` `toPlots`/`fromPlots`/`PLOT`): change both together.
   - A plot's crop comes from `plotRank`, in GLSL only (the terrain and the crops' vertex shader both read it).
   - A per-plot random rank turned the fields into a checkerboard, and the old bands of turned grids drew seams across them.
 - What a shader decides per tree or per plot that the CPU must also know (which trees flower, which crop a plot holds) has a CPU twin built from `glslHash12`/`glslNoise` (core/noise.ts): `bloomRank` (leaves.ts), `plotCropAt` (crops.ts). Change the shader and its twin together. The salt field's layout has its twin in `saltworks.ts` (`bundLines`, `saltStage`).
 - A season's share of 0 must give none. The blossom's ramp starts at the share; it used to leave ≈5% of the trees red all year.
 - Floating plants keep to the slack water along the banks (`EDGE` in `drift.ts`), and the bil's lilies keep off the boat's way (`routeGap`).
+  - A floater with no water to go to waits as NaN. Keep waiting ones out of any spatial hash or neighbour loop: they all hashed to one cell, `collide` went quadratic, and the cut into the kash took ≈1 s. They look for water again on staggered frames (`RETRY`), never all in the same frame.
 - Seen from above the water, the haze ends at its surface (`applyAtmosphere` cuts the ray there).
 - Past the world's edges the land fades into the haze (`EDGE_HAZE`, from `uLevelMap`). The free camera stays `EDGE` m inside them and below `CEILING`.
 - Wave slopes evaluated per pixel must fade by the pixel's footprint (`waveSlopeLod`, with the footprint from `dFdx`/`dFdy`).
@@ -113,14 +118,17 @@ There are no audio files and no map data.
 - Waves that move things must come from `waves.ts` (`waveHeight`/`waveSlope`, `hullWaves` for hulls, and the GLSL twins in shaders), so floating things ride what the eye sees.
 - The water mesh is laid round the camera in its vertex shader. Anything that floats on it must use `waves.ts` (and `wake.ts` near the hero) with the same shelter.
 - The shot being left is posed every frame by its own `pose` through the ghost stage. Whatever a pose reads must be the left shot's own: its boat, course, sun and moon are kept in `Outgoing` (a night shot posed by the incoming dawn's moon jumped to the boat's other side). A scene that moves the boat in `begin` is caught by `enter` comparing where she was; otherwise the left shot loses her and shows her hole in the water.
+- Give a scene's boat place as its `journey`, worked out when the scenes are built (`tourScenes`: the kash's from the vegetation, the sunset's from astro's `sunDirectionOn`), never in `begin`. The warm-ahead poses the next shot before its `begin` runs, so a place set there was never built ahead, and its cut stalled (≈0.9 s). Keep no state across frames in tour.ts's shared scratch vectors.
+- The people of a shot being left go on working through its dissolve: whatever is posed only near the camera also takes the leaving shot's camera (`director.leaving`). Before that, the salt rakers stopped mid-stroke.
 - A cut in the film is a dissolve between two moving shots, each drawn every frame in its own world (main.ts `drawLeaving`).
   - Never hold a frame or let a shot come to rest: the user asked for one continuous film, "like a video". Never fly the camera between scenes or recompose the shots: the user rejected that.
   - Anything a shot's look depends on that a scene changes must be tracked in `worldLook` (main.ts), or the shot being left takes on the new one's (a light, the sky, the boat's place). The meadow and the crops keep two sets of meshes for it (`holdView`/`showHeld`/`releaseView`).
   - Through a dissolve each frame draws two shots, so the adaptive resolution leaves those frames out of its average.
+  - `WorldLook.track` throws on a field it cannot keep: a mistyped key would otherwise drop silently out of what the left shot keeps.
 - Anything streamed round the camera fades in (a band of distance, or growing from `aBorn`): a chunk that appears at once is the pop-in the user saw. Measure reach with `groundReach`, so it also gives way when the camera is high.
 - Vegetation's cost is draw calls (species shapes × slabs × mirror) and alpha-tested overdraw as much as triangles. Before adding a species, shape or density, check `__river.stats('vegetation')` and the frame time.
 - Debug-only code stays behind `?debug`. `shot()` freezes the frame loop: call `resume()` before holding keys. A probe's `import('/src/…')` gets its own module instances. Their functions are right (the ground, the water and the waterways can be sampled that way), but `G` there is not the page's.
-- All the water is inland: the river, the khals and the bil at `WATER_LEVEL`, the ponds at `POND_LEVEL` (`waterLevelAt`, −∞ on dry ground; `waterSurface(xz)` in a shader). Never compare a height with `uWaterLevel` alone.
+- All the water is inland: the river, the khals and the bil at `WATER_LEVEL`, the ponds at `POND_LEVEL` (`waterLevelAt`, −∞ on dry ground; `waterSurface(xz)` in a shader). Never compare a height with `uWaterLevel` alone. Check `Number.isFinite` before putting anything at a water's level: −∞ reaches the GPU as NaN (the fish and the paddle's splash could do this).
 - Those levels are means, and the season moves them (`waterRise()`, `G.uWaterRise`).
   - Anything that floats or stands at the water must follow the rise now (`waterLevelAt`, `risenLevel`, or `uWaterRise` in its shader), never a constant `WATER_LEVEL`.
   - Anything baked once (the level map, the terrain's colours, placements) reads `meanWaterLevelAt`.
@@ -131,7 +139,7 @@ There are no audio files and no map data.
   - A stem keeps its length as it bends, so what is carried over comes down.
   - A big plant answers the gusts late (`uGust.y`, how far the fronts roll in a second: the past at a point is the present downwind).
   - The wood and the leaves of one plant must share `wind` and `windHeight`, or the crown parts from its trunk (the tal's fans and the banana's stem did).
-- Things that move must not cast shadows, because the shadow map is not redrawn every frame (the hero boat, the girl, the train).
+- Things that move must not cast shadows, because the shadow map is not redrawn every frame (the hero boat, the girl, the train). This includes the moored boats: their vertex shader lifts them onto the water, and the shadow pass would draw them unlifted.
 - Camera-facing quads built in a vertex shader (the rain, the lightning) must be `DoubleSide`.
 - Anything that reads `Cover.zone` must allow for its sign (paddy > 0, salt < 0): the meadow uses `1 − |zone|`.
 - The water is see-through: every material that can sit below the water must go through `patchMaterial`, or it will show through the water untinted.

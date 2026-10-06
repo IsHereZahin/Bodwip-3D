@@ -131,6 +131,8 @@ const FIREFLY_WINDOW = 360;
 /** Birds crossing the river, dust in the sunbeams, fireflies along the banks after dark. */
 export class Life {
   readonly group = new Group();
+  /** Scratch for each frame's posing (nothing is made there). */
+  private readonly scratch = { m: new Matrix4(), q: new Quaternion(), one: new Vector3(1, 1, 1), p: new Vector3(), up: new Vector3(0, 1, 0) };
   private readonly rng = new Rng(91);
   private readonly flocks: Flock[] = [];
   private readonly ffBase: Float32Array;
@@ -252,11 +254,7 @@ export class Life {
 
   /** `rain`: how hard it is raining (birds stay down in a downpour). */
   update(dt: number, t: number, hero: Vector3, heading: number, night: number, rain = 0): void {
-    const m = new Matrix4();
-    const q = new Quaternion();
-    const one = new Vector3(1, 1, 1);
-    const p = new Vector3();
-    const up = new Vector3(0, 1, 0);
+    const { m, q, one, p, up } = this.scratch;
     for (const f of this.flocks) {
       if (f.wait > 0) {
         f.wait -= dt;

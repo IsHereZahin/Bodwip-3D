@@ -81,6 +81,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - Every homestead that no designed way passes gets its own footpath to the nearest way, unless it would cross water. Every homestead with a ghat gets a trodden way from its yard to the ghat's landing (`LANDING` m up from the water). A path crosses the char through its kash.
   - `buildRoads(ground)` draws the raised road on its crest and the paths laid over the terrain, from one texture atlas (`roadAtlas`), one mesh per 1300 m cell.
   - `core/segmentIndex.ts`: `SegmentIndex` files segments in square cells, to find the nearest one measured against its half-width.
+  - `core/mathx.ts`: the shared small maths (`clamp`, `lerp`, `smoothstep`, `damp`, `angleDelta`, `tableAt` for a body's measured sections). Use these rather than local copies.
 
 ## Built things
 
@@ -181,7 +182,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - His mathal follows the weather: `wantHat` (main.ts `hatWanted`: rain, or a high clear sun outside mid-winter).
   - After `HAT_REACT` s he finishes the stroke and rests the paddle (`BoatBody.rowing` false, `REST_PHASE`). He reaches back for the hat on the stern's deck (`HAT_DOWN`) and puts it on, or takes it off (`hatHand`, `placeHat`). He never changes it again within `HAT_HOLD` s. `settleHat` runs at a new scene or a jump.
   - The boat casts no shadow; a soft spot under the boatman stands in for it.
-- `world/paddle.ts`: the one stroke everything reads (`STROKE_SECONDS` 2.2, `CRUISE` 1.2 m/s, `MEAN_THRUST`). The shaft leans out by `LEAN_OUT`, so his top hand works at his chest; the blade is carried back low (`RECOVERY_LIFT`).
+- `world/paddle.ts`: the one stroke everything reads (`STROKE_SECONDS` 2.2, `CRUISE` 1.2 m/s, `MEAN_THRUST`). The shaft leans out by `LEAN_OUT`, so his top hand works at his chest. The blade is carried back low, its tip just clear of the water (`RECOVERY_LIFT`), with the shaft leaning further out as it swings (`RECOVERY_LEAN`), which lifts the blade and not his hand.
 - `world/boatman.ts`: `Boatman` on a `Human` (`who`).
   - Loose hair moves in the wind, less under the mathal (`hairFree`).
   - The red ফিতা (`Outfit.band`, `tieBand`).
@@ -195,6 +196,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
 - `world/girl.ts`: the girl on the bridge, a `Human` (`meye`, about seventeen).
   - She wears a red lehenga (a `ClothTube` with `lehengaTexture`), a deeper-red blouse shell, a cream ওড়না over her left shoulder (`ClothRibbon`), and bangles.
   - Her red Chinese paper umbrella (`paperUmbrella`, `paperUmbrellaTexture`, rib fold shader `FLAP_CODE`) goes with the rains (`brollyWeather`, `RAIN`). It is absent in the dry seasons, carried closed in the rains' season, and opened as the rain comes.
+  - Whether she has brought it (`brought`) is settled only while no camera is within `GIRL_SEEN` (main.ts), or at a jump. So it never appears or vanishes in view: a shower out of the rains catches her without it while she is watched, and afterwards she carries it closed until nobody is looking.
   - She watches the majhi's head, choreographed from where he is (`WATCH`). She steps to the parapet, turns as his bow goes under the arch, crosses the deck (`CROSS`, `stepFeet`) and watches him go. A jump puts her where she would be.
   - She casts no shadow; a soft foot shadow (`footShadow`) stands in for it.
 - `world/splash.ts`: `PaddleSplash`, drops as the blade goes in and comes out.
@@ -217,6 +219,8 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - `mesh` is the sea's and is hidden here; `inland` is every water at its own level.
   - `levelTexture` covers `WORLD` in `LEVEL_CELL` (6 m) cells. Its r channel is the water's level, carried `LEVEL_SPREAD` cells out over ground no lower than `SPREAD_BELOW` under it; its b channel is where water is.
   - The field textures (bed and current, from `waterwayAt`) come in a fine one following the camera and a wide one over the world.
+    - The fine one (`FineField`) is refilled round the camera once it strays `FINE.drift` m, `FINE.ms` a frame. The wide one stands in meanwhile.
+    - The film readies the next shot's fine field ahead (`warm`) and uploads it to a spare texture (the two take turns as `tField`), so the cut only switches to it.
   - Water at another level than the mirror's reflects the hazy sky. Its sea and ship parts are inert.
 - `world/sky.ts`: clouds, stars and the moon (`MOON_R`; the phase lit by the sun's real angle).
   - The sun's disc reddens as it sinks.
@@ -269,23 +273,38 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - `free` is the free camera (`flycam.ts`: `SPEED`, `EDGE`, `CEILING`).
 - `rig/director.ts`: the film's engine.
   - Each scene has its own camera move at an even pace. The shot being left goes on moving (`CARRY`) while the next dissolves in over it for `DISSOLVE` s (2.2). The tour starts and ends the same way, from and to the viewer's view (`leaveView`, `leaveScene`).
-  - The next shot's places are built a few ms a frame from `WARM_AHEAD` s before its cut (`Stage.warm`), and the rest when it begins (`Stage.prepare`).
+  - The next shot's places are built a few ms a frame (`WARM_MS`) from `WARM_AHEAD` s (9) before its cut (`Stage.warm`). At the cut, `Stage.prepare` builds the rest of the ground, and the grass and crops within `PREPARE_MS`; their own updates finish them, growing in under the dissolve.
+  - A scene's boat place is its `journey` (set when the scenes are built), so the warm-ahead knows it.
   - A `Scene` with `shot` is a further shot of the one before, cut with `SHOT_DISSOLVE` (0.7 s).
   - A scene's `sweep` drives its own clock (`sweepAt`: a monotone cubic through `[u, hours]` keys); `pace` slows the sky's clock.
   - `Director.skip(±1)` steps to the previous or next scene.
+    - "Previous" restarts the scene once it has run `RESTART` s (3).
+    - A skip asked for during a dissolve waits until it ends (`queued`).
+    - A skipped scene's caption fades out before the next one's comes up.
+    - Stopping the film always takes a full `DISSOLVE`.
 - `rig/tour.ts`: `tourScenes(ghats)`, the film: 22 scenes (28 shots) in five movements.
   - The movements: a winter morning; spring's blossom and the nor'wester; the rains (with `লাল ছাতা`, seven shots on the bridge); autumn and the harvest; the evening and the night.
   - Places are found from the village as built: `cropField(crop, day)` (cached, and shared with the reapers), `overField`, `blossomTree()`, `stormHome()`, `talRoad()`/`alongRoad`, `ghats[0]`, `FISHER_SITE`, `gherStand()`, `rakerStations()`, `kashStand()`, `onWay`, `rel`, `facing`, `overOpenWater`.
   - Heights over the water are measured from the season's surface (`surface()`).
   - Scenes cue what moves in them through the `Stage`: the train, the casts, lightning, `bareheaded`, `sap`. They read `girlHead`/`girlYaw`/`sapTree` to frame those.
 - `ui/`:
-  - `controls.ts` (+ `controls.css`): the dock, the timeline, the views and the help. `#film-nav` shows the previous/next scene while the film plays.
+  - `controls.ts` (+ `controls.css`): the dock, the timeline, the views and the help. `#film-nav` shows the previous/next scene while the film plays (`visibility: hidden` once it fades, so the keyboard can't reach it). A dropdown gives the keyboard back once a choice is made.
   - `bangla.ts`: Bangla time, tithi and dates.
   - `hud.ts`: the loader, the title, notices and captions.
-  - `mapPanel.ts` (+ `map.css`): the map (L). The village is painted from above a few rows a frame. The places (`places()`) can be flown to (`MapActions.fly`) or sailed to (`sail`), and a click on the land goes there.
+  - `mapPanel.ts` (+ `map.css`): the map (L). The village is painted from above a few rows a frame. The places (`places()`) can be flown to (`MapActions.fly`) or sailed to (`sail`), and a click on the land goes there (measured inside the canvas's `object-fit: contain` box). The chosen place is marked in the list (`.chosen`).
+  - Input in the film (main.ts):
+    - A tap or click only wakes the controls.
+    - A drag past `DRAG_PX`, a second finger, the wheel, Esc, or a steering key takes the camera (`takeOver`).
+    - The world's own controls leave the film first (`ownWorld`): time, speed, season, moon, the timeline's marks, N, Y, `[` `]` and Space. The viewer's world is put back before the change applies to it.
+    - The film doesn't start by itself while the help or the map is open, or while the pointer moves.
   - Credits are static in `index.html` (`#sources`).
-- `audio/soundscape.ts`: Web Audio only: water, wind, rain, paddle, birds, crickets, thunder.
+- `audio/soundscape.ts`: Web Audio only.
+  - The sounds: water (louder the nearer the listener is to it), wind (with its gusts), rain, the paddle's splash (by its distance), birds (silent in rain or a hard wind), crickets, thunder.
+  - Thunder still on its way is hushed when a scene changes (`hushThunder`).
+  - It fades in on the first touch or key, is muted with M or the speaker (remembered as `nodi.muted`), and sleeps while the page is hidden.
 - `main.ts`: the bootstrap; adaptive resolution and the quality tier (`setQuality`); the film's stage; `worldLook`/`drawLeaving` for dissolves; the jump under a moment of dark (`jumpAt`, `readyAround`); every keyboard shortcut; the `?debug` hooks.
+  - At load every material is compiled, the hidden ones too.
+  - Shader logs are checked only in development (`renderer.debug.checkShaderErrors`): checking one on a program's first use waits for the driver.
 
 ## Legacy tooling
 
@@ -309,7 +328,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
 | Waves | `world/waves.ts` → `FETCH`, `heightFor`, `peakFor`, `SHAPES`, `QUARTERS`, `STEEPEST`, `BUILD`, `FADE`, `SHELTERED` |
 | Water's clarity | `render/glsl.ts` → `underwater()` |
 | Boat mass, drag, steering, heel | `world/boatPhysics.ts` → `MASS`, `STEER`, `strokePower`, `MAX_POWER`, `MAX_HEEL` |
-| The stroke and the body's drive | `world/paddle.ts` → `STROKE_SECONDS`, `CATCH_Z`, `EXIT_Z`, `BLADE_X`, `LEAN_OUT`, `RECOVERY_LIFT`, `MEAN_THRUST`, `bodyDrive` |
+| The stroke and the body's drive | `world/paddle.ts` → `STROKE_SECONDS`, `CATCH_Z`, `EXIT_Z`, `BLADE_X`, `LEAN_OUT`, `RECOVERY_LIFT`, `RECOVERY_LEAN`, `MEAN_THRUST`, `bodyDrive` |
 | Where the majhi stands, his grip | `world/hero.ts` → `STANCE`, `CROSS_HOLD`, `LOWER_HOLD` |
 | Bracing, leaning | `world/boatman.ts` → `BRACE`, `LEAN_MAX` |
 | Cloth looseness and wind | `world/cloth.ts` → `DRAG`, `STIFF`, `LOOSE`, `ZETA` |

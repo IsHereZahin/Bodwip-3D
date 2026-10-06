@@ -30,11 +30,8 @@ export const PACK_FOLDERS = [
   'eyebrows/eyebrow001/',
   'eyebrows/eyebrow010/',
   'eyelashes/eyelashes01/',
-  'eyelashes/eyelashes02/',
   'eyelashes/eyelashes04/',
   'hair/short04/',
-  'hair/short02/',
-  'hair/braid01/',
   'hair/long01/',
   'hair/short03/',
 ];

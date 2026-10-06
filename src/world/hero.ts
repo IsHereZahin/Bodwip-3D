@@ -423,7 +423,8 @@ export class HeroBoat {
     g.add(new Mesh(bambooGeometry(cz0, cz1), bamboo));
 
     this.addCargo(cz0);
-    this.glass = new MeshStandardMaterial({ color: '#ffe2b0', emissive: new Color('#ffb257'), emissiveIntensity: 0, roughness: 0.15 });
+    // (through patchMaterial, as everything is: seen from across the water it takes the haze)
+    this.glass = patchMaterial(new MeshStandardMaterial({ color: '#ffe2b0', emissive: new Color('#ffb257'), emissiveIntensity: 0, roughness: 0.15 }), {});
     this.lantern = this.addLantern(cz1, this.glass);
 
     // the boatman's shadow on his platform: the boat does not cast into the shadow map, so a soft spot
@@ -646,7 +647,7 @@ export class HeroBoat {
     const { sheer } = hullStation(HERO_HULL, sAt(cz1));
     const R = hullHalfWidthAt(HERO_HULL, sAt(cz1), sheer - 0.02) * 0.98;
     this.lanternPivot.position.set(0, sheer + R * 0.95 - 0.03, cz1 + 0.12);
-    const metal = new MeshStandardMaterial({ color: '#3a3630', roughness: 0.5, metalness: 0.6 });
+    const metal = patchMaterial(new MeshStandardMaterial({ color: '#3a3630', roughness: 0.5, metalness: 0.6 }), {});
     const hang = 0.3;
     const wire = new Mesh(new CylinderGeometry(0.004, 0.004, hang - 0.18, 4), metal);
     wire.position.y = -(hang - 0.18) / 2;

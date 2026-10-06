@@ -1,5 +1,6 @@
 import { Vector3 } from 'three';
 import { smoothstep } from '../core/mathx';
+import { HERO_SINK } from './hull';
 
 // The boatman's বৈঠা: a long paddle worked over the boat's +x side from the stern platform. One stroke is
 // a pull and a recovery. The blade goes in well ahead of him and is drawn back past his hip as he unwinds
@@ -23,12 +24,15 @@ const EXIT_Z = -3.2;
 const BLADE_X = 1.08;
 const DEPTH = 0.3;
 /**
- * How far the shaft leans out over the side from the vertical (rad), and how high the blade is carried back
- * over the water (m): leaning out so, his top hand works at his chest in front of his right shoulder through the
- * whole stroke and never comes up to his face, and the blade goes back low, just clear of the water.
+ * How far the shaft leans out over the side from the vertical (rad), how high the blade's middle is carried back
+ * (m, boat frame, whose zero is HERO_SINK under the water), and how much further the shaft leans out as it swings
+ * forward (rad): leaning out so, his top hand works at his chest in front of his right shoulder through the whole
+ * stroke and never comes up to his face, and the blade goes back low, its tip just clear of the water through
+ * the middle of the swing (the lean lifts the blade, not his hand). It goes in again just before the catch.
  */
 const LEAN_OUT = 0.5;
-const RECOVERY_LIFT = 0.14;
+const RECOVERY_LIFT = 0.32;
+const RECOVERY_LEAN = 0.16;
 /** The mean drive (N) that holds her at cruising speed against the water's drag; it comes in pulses. */
 export const MEAN_THRUST = 89;
 /** Her speed through the water (m/s) at his steady stroke. */
@@ -82,7 +86,7 @@ export function paddlePose(phase: number, out: PaddlePose, power = 1): PaddlePos
     const arc = Math.sin(Math.PI * v);
     out.blade.set(BLADE_X + 0.08 * (1 - smoothstep(0.5, 1, v)) + 0.4 * arc, RECOVERY_LIFT * Math.pow(arc, 0.6), EXIT_Z + (CATCH_Z - EXIT_Z) * e);
     theta = -0.3 + 0.65 * e;
-    psi = LEAN_OUT + 0.07 + 0.22 * arc - 0.07 * smoothstep(0.5, 1, v);
+    psi = LEAN_OUT + 0.07 + (0.22 + RECOVERY_LEAN) * arc - 0.07 * smoothstep(0.5, 1, v);
     feather = 0.6 + (Math.PI / 2 - 0.6) * smoothstep(0, 0.25, v) - (Math.PI / 2) * smoothstep(0.7, 1, v);
   }
   // down the shaft: out over the side by psi, the blade ahead of the grip by theta
@@ -92,7 +96,8 @@ export function paddlePose(phase: number, out: PaddlePose, power = 1): PaddlePos
   const w0 = tmpA.set(0, 0, 1).cross(s).normalize();
   const w1 = tmpB.crossVectors(s, w0);
   out.across.copy(w0).multiplyScalar(Math.cos(feather)).addScaledVector(w1, Math.sin(feather));
-  out.wet = smoothstep(0.2, -0.2, out.blade.y);
+  // (measured from the water's surface, HERO_SINK above the boat frame's zero)
+  out.wet = smoothstep(HERO_SINK + 0.2, HERO_SINK - 0.2, out.blade.y);
   return out;
 }
 

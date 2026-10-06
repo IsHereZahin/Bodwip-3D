@@ -1,5 +1,6 @@
 import { Vector3 } from 'three';
 import { angleDelta, lerp, smoothstep } from '../core/mathx';
+import { sunDirectionOn } from '../env/astro';
 import { makeSeasonState, seasonAt } from '../env/season';
 import { plotCropAt } from '../world/crops';
 import { FISHER_SITE } from '../world/fisher';
@@ -28,6 +29,19 @@ import type { Scene, SceneWorld, Stage } from './director';
 // Each scene sets its own season, hour and weather (director.ts); the sunrise, the sunset and the moonrise sweep
 // their own time through them. The waters are narrow and their banks are wooded, so the low shots look along
 // them, from the water; the sun and the moon are framed by placing the boat where her way runs toward them.
+
+/** The sun's direction on `day`, `offset` hours from its setting (worked out ahead, before the scene sets that day). */
+function sunFromSetting(day: number, offset: number): Vector3 {
+  const dir = new Vector3();
+  let up = 12;
+  let down = 23.5;
+  for (let i = 0; i < 30; i++) {
+    const m = (up + down) / 2;
+    if (sunDirectionOn(day, m, dir).y > 0) up = m;
+    else down = m;
+  }
+  return sunDirectionOn(day, (up + down) / 2 + offset, dir);
+}
 
 /** The journey's fraction at `s` m along the boat's way (for placing the boat). */
 const fractionAt = (s: number) => s / JOURNEY.length;
@@ -240,6 +254,8 @@ function stormHome(): { s: number; side: 1 | -1; corner: Vector3 } {
   for (const m of HOMESTEAD_MOUNDS) {
     const f = journeyFrame(m.x, m.z);
     if (!f || f.s < JOURNEY.opening + 80 || f.s > JOURNEY.bridge - 60 || f.d >= best.d) continue;
+    // (journeyFrame's answer is reused: what is wanted of it is kept before it is asked again)
+    const d = f.d;
     const s = f.s;
     const side = f.side as 1 | -1;
     // its front corner on the way's upstream side, where the palms stand
@@ -248,7 +264,7 @@ function stormHome(): { s: number; side: 1 | -1; corner: Vector3 } {
     const sa = journeyFrame(a.x, a.z)?.s ?? s;
     const sb = journeyFrame(b.x, b.z)?.s ?? s;
     const c = sa < sb ? a : b;
-    best = { d: f.d, s, side, corner: new Vector3(c.x, terrainHeight(c.x, c.z), c.z) };
+    best = { d, s, side, corner: new Vector3(c.x, terrainHeight(c.x, c.z), c.z) };
   }
   return best;
 }
@@ -316,6 +332,14 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
   const blossom = blossomTree();
   const storm = stormHome();
   const road = talRoad();
+  // the kash where it stands thickest on the bank, and the boat 40 m short of it coming up the khal
+  const kashSpot = kashStand() ?? journeyAt(JOURNEY.opening + 100);
+  const kash = new Vector3(kashSpot.x, terrainHeight(kashSpot.x, kashSpot.z), kashSpot.z);
+  const kashBoat = fractionAt(Math.max(0, (journeyFrame(kash.x, kash.z)?.s ?? JOURNEY.opening + 100) - 40));
+  // the sunset's boat: where her way runs toward the low sun, as it stands as the scene opens
+  const SUNSET_DAY = 300;
+  const SUNSET_FROM = -0.55;
+  const sunsetBoat = fractionAt(facing(sunFromSetting(SUNSET_DAY, SUNSET_FROM), 0.3));
   // the village's ghat below the banyan: where it meets the water, the way up its steps, and where the boat passes it
   const hub = ghats[0];
   const hubS = hub ? (journeyFrame(hub.x, hub.z)?.s ?? JOURNEY.turn) : JOURNEY.turn;
@@ -506,7 +530,8 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       world: { day: 128, hour: 16.0, weather: 'storm', wind: 2.6 },
       // across the khal from a homestead in the squall: its palms and bamboo thrashing, the rain driving over the
       // water, lightning forking down beyond the trees
-      begin: (s) => s.lightning([2.2, 6.6, 11.4]),
+      // (the last early enough that its thunder, a few seconds behind it, is heard before the cut)
+      begin: (s) => s.lightning([2.2, 6.4, 9.4]),
       pose: (u, _s, pos, look) => {
         onWay(storm.s + lerp(-26, -14, u), -storm.side * journeyHalfWidth(storm.s) * 0.55, 2.5, pos);
         look.copy(storm.corner).setY(storm.corner.y + lerp(3.6, 3, u));
@@ -679,13 +704,10 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       seconds: 12,
       world: { day: 262, hour: 16.4, weather: 'clear', wind: 0.9 },
       // up through the kash where it stands thickest on the bank, its plumes tossing, to the boat coming up the khal
-      begin: (s) => {
-        const k = kashStand() ?? journeyAt(JOURNEY.opening + 100);
-        a.set(k.x, terrainHeight(k.x, k.z), k.z);
-        s.placeBoat(fractionAt(Math.max(0, (journeyFrame(k.x, k.z)?.s ?? JOURNEY.opening + 100) - 40)));
-      },
+      // (her place known ahead, so the shot's places are built before its cut)
+      journey: kashBoat,
       pose: (u, s, pos, look) => {
-        pos.copy(a);
+        pos.copy(kash);
         pos.y += lerp(1.5, 2.7, ease(u));
         rel(s, 0, 0, 1.0, look);
       },
@@ -724,12 +746,10 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       seconds: 18,
       // the sunset seen whole: the afternoon's gold, the sun sinking to the trees at the khal's end and reddening,
       // touching, gone; the sky deepening to crimson after it and the dusk coming on
-      world: { day: 300, hour: { at: 'sunset', offset: -0.55 }, weather: 'clear', wind: 0.15, sweep: [[0, 0], [0.35, 0.36], [0.6, 0.55], [0.8, 0.66], [1, 0.84]] },
+      world: { day: SUNSET_DAY, hour: { at: 'sunset', offset: SUNSET_FROM }, weather: 'clear', wind: 0.15, sweep: [[0, 0], [0.35, 0.36], [0.6, 0.55], [0.8, 0.66], [1, 0.84]] },
       // behind the boat paddling up the khal toward the low sun, off to one side of her, drawing in slowly
-      begin: (s) => {
-        s.placeBoat(fractionAt(facing(s.sunDir, 0.3)));
-        s.birds(s.boatPos, s.boatCourse);
-      },
+      journey: sunsetBoat,
+      begin: (s) => s.birds(s.boatPos, s.boatCourse),
       pose: (u, s, pos, look) => {
         onWay(alongOf(s.boatPos) - lerp(21, 14, ease(u)), 0, lerp(1.2, 0.95, u), pos);
         rel(s, 0, 0, lerp(1.4, 1.1, u), look);

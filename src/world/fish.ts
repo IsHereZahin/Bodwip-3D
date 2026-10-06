@@ -113,6 +113,14 @@ export class Fish {
   private readonly ringList: Ring[] = [];
   private readonly rng = new Rng(77);
   private nextLeap = 4;
+  // scratch for posing each frame
+  private readonly m = new Matrix4();
+  private readonly q = new Quaternion();
+  private readonly qPitch = new Quaternion();
+  private readonly p = new Vector3();
+  private readonly scale = new Vector3();
+  private static readonly UP = new Vector3(0, 1, 0);
+  private static readonly ACROSS = new Vector3(1, 0, 0);
 
   constructor() {
     this.group.name = 'fish';
@@ -166,11 +174,8 @@ export class Fish {
 
   update(dt: number, t: number, eye: Vector3, boat: Vector3): void {
     if (dt <= 0) return;
-    const m = new Matrix4();
-    const q = new Quaternion();
-    const p = new Vector3();
-    const scale = new Vector3();
-    const up = new Vector3(0, 1, 0);
+    const { m, q, p, scale } = this;
+    const up = Fish.UP;
     let n = 0;
     for (const s of this.schools) {
       if (Number.isNaN(s.c.x) || Math.hypot(s.c.x - eye.x, s.c.z - eye.z) > REACH) {
@@ -190,7 +195,14 @@ export class Fish {
       if (this.depthAt(ax, az) < DEEP) s.heading += Math.PI * (0.6 + 0.4 * this.rng.next());
       s.c.x += Math.sin(s.heading) * s.speed * dt;
       s.c.z += Math.cos(s.heading) * s.speed * dt;
-      s.c.y = waterLevelAt(s.c.x, s.c.z);
+      const level = waterLevelAt(s.c.x, s.c.z);
+      // stranded (the season's water drawn back from under it): the school is found again in water next frame
+      // (a height of −∞ would reach the GPU as NaN)
+      if (!Number.isFinite(level)) {
+        s.c.x = NaN;
+        continue;
+      }
+      s.c.y = level;
       const cos = Math.cos(s.heading);
       const sin = Math.sin(s.heading);
       s.offsets.forEach((o, k) => {
@@ -222,7 +234,7 @@ export class Fish {
       p.set(l.from.x + Math.sin(l.dir) * l.length * f, y, l.from.z + Math.cos(l.dir) * l.length * f);
       // nose up as it rises, down as it falls
       const pitch = Math.atan2(4 * l.height * (1 - 2 * f), l.length);
-      q.setFromAxisAngle(up, l.dir).multiply(new Quaternion().setFromAxisAngle(new Vector3(1, 0, 0), -pitch));
+      q.setFromAxisAngle(up, l.dir).multiply(this.qPitch.setFromAxisAngle(Fish.ACROSS, -pitch));
       m.compose(p, q, scale.setScalar(0.17));
       if (n < this.fish.instanceMatrix.count) this.fish.setMatrixAt(n++, m);
       if (f >= 1) {

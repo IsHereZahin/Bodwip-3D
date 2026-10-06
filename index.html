@@ -32,6 +32,8 @@
         inset: 0;
         width: 100vw;
         height: 100vh;
+        /* the visible height on phones, as innerHeight is (the picture is drawn for it) */
+        height: 100dvh;
         display: block;
         touch-action: none;
         outline: none;
@@ -162,6 +164,17 @@
       #hint.show {
         opacity: 1;
       }
+      #hint .by-touch {
+        display: none;
+      }
+      @media (pointer: coarse) {
+        #hint .by-mouse {
+          display: none;
+        }
+        #hint .by-touch {
+          display: inline;
+        }
+      }
       #hint kbd {
         font-family: inherit;
         border: 1px solid rgba(236, 211, 168, 0.35);
@@ -183,7 +196,8 @@
         text-shadow: 0 1px 14px rgba(0, 0, 0, 0.7);
         opacity: 0;
         pointer-events: none;
-        z-index: 2;
+        /* above the dock, which may wake over it */
+        z-index: 3;
         white-space: nowrap;
       }
       #err {
@@ -238,7 +252,8 @@
     </div>
 
     <p id="hint">
-      টেনে চারপাশ দেখুন · স্ক্রল করে কাছে-দূরে · নিচের বারে সময় আর ক্যামেরা · <kbd>?</kbd> সব নিয়ন্ত্রণ
+      <span class="by-mouse">টেনে চারপাশ দেখুন · স্ক্রল করে কাছে-দূরে · নিচের বারে সময় আর ক্যামেরা · <kbd>?</kbd> সব নিয়ন্ত্রণ</span>
+      <span class="by-touch">টেনে চারপাশ দেখুন · দুই আঙুলে কাছে-দূরে · ছুঁলে নিচে সময় আর ক্যামেরা</span>
     </p>
 
     <p id="caption" aria-live="polite"></p>
@@ -276,7 +291,7 @@
           <div id="tl-moon" class="tl-row tl-moon"></div>
         </div>
         <div class="readout">
-          <output id="clock" for="tl">বিকেল ৫:৩০</output>
+          <output id="clock" for="tl" aria-live="off">বিকেল ৫:৩০</output>
           <span id="tithi"></span>
           <span id="bdate"></span>
         </div>
@@ -352,8 +367,8 @@
           <dl>
             <dt>টেনে · <kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></dt><dd>নৌকার চারপাশে ঘোরা</dd>
             <dt>স্ক্রল · পিঞ্চ · <kbd>+</kbd> <kbd>−</kbd></dt><dd>কাছে-দূরে</dd>
-            <dt><kbd>V</kbd></dt><dd>পরের দৃশ্য: পেছন, মাঝির পাশ, সামনে, উঁচু</dd>
-            <dt><kbd>R</kbd></dt><dd>শুরুর দৃশ্যে ফেরা</dd>
+            <dt><kbd>V</kbd></dt><dd>ক্যামেরার কোণ: পেছন, মাঝির পাশ, সামনে, উঁচু</dd>
+            <dt><kbd>R</kbd></dt><dd>শুরুর কোণে ফেরা</dd>
           </dl>
         </section>
         <section>
@@ -382,7 +397,8 @@
           <dl>
             <dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>নৌকা, মুক্ত, চলচ্চিত্র</dd>
             <dt><kbd>C</kbd></dt><dd>চলচ্চিত্র চালু বা বন্ধ</dd>
-            <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>চলচ্চিত্রে আগের বা পরের দৃশ্য (ওপরের বোতামেও)</dd>
+            <dt><kbd>←</kbd> <kbd>→</kbd> · <kbd>PgUp</kbd> <kbd>PgDn</kbd></dt><dd>চলচ্চিত্রে আগের বা পরের দৃশ্য (ওপরের বোতামেও; একটু চলার পর ← সেই দৃশ্যের শুরুতে)</dd>
+            <dt><kbd>Esc</kbd> · টেনে</dt><dd>চলচ্চিত্র থেকে বেরিয়ে নিজে দেখা</dd>
             <dt><kbd>L</kbd></dt><dd>মানচিত্র: কোথায় যাবেন</dd>
             <dt><kbd>M</kbd></dt><dd>শব্দ</dd>
             <dt><kbd>F</kbd></dt><dd>পূর্ণ পর্দা</dd>

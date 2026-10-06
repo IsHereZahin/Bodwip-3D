@@ -76,6 +76,10 @@ node scripts/headless/shoot.mjs <outDir> --base http://localhost:5173/ --shots '
 - **Stills:** `shot({ film: [i, u] })` at the start, the middle and u ≈ 0.95 of each shot. At u = 1 the next scene is already dissolving in.
 - **Live:** stills can't show what time does. The girl's crossing, the hat's change, the umbrella opening, the sap's drops, the paddle's splash, the sweeps and the dissolves must be judged live, from a recording of the film playing.
 - **For each scene ask:** does the frame show what the caption says? Are pop-in, clipping, freezes, black artefacts or murky darkness anywhere?
+- **A cut's cost:**
+  - Start just before the cut: `shot({ film: [i, 0.3] })`, then `resume()`.
+  - Record every frame's interval with `requestAnimationFrame`, alongside `info().scene`.
+  - A CPU profile across the cut (CDP `Profiler`) shows what the cut's frame builds: what the warm-ahead didn't reach, or something new.
 - **The 28 shots** (`film` index), in order:
 
 | i | Shot | i | Shot |
@@ -102,6 +106,12 @@ node scripts/headless/shoot.mjs <outDir> --base http://localhost:5173/ --shots '
 - **Git Bash heredocs turn `\\` into `\`.** Write scripts that contain backslashes to a scratch file first.
 - **Python output:** Python here prints with cp1252. Set `PYTHONIOENCODING=utf-8` to print Bangla.
 - **Finding the cost:** use `stats()` and `hide()`/`show()` A/B with `info().ms`. Vegetation's cost is draw calls and alpha-tested overdraw as much as triangles.
+- **Drive input with CDP:** use `Input.dispatchMouseEvent`/`dispatchKeyEvent` for clicks, drags and keys. A synthetic `PointerEvent` throws in the rig's `setPointerCapture`.
+- **Touch:** emulate a phone with `Emulation.setDeviceMetricsOverride` (`mobile: true`) and `Emulation.setTouchEmulationEnabled`, then send `Input.dispatchTouchEvent` (two points for a pinch).
+- **Sound:** to read the audio context's state, wrap `AudioContext` in a script added before load (`Page.enable`, then `Page.addScriptToEvaluateOnNewDocument`).
+- **Measure frame costs on the production build** (`npm run build`, then `npm run preview` on port 4173). Shader logs are checked only in development, so the dev server's first use of a program is slower.
+- **Programs compiled after load:** set `window.__THREE_DEVTOOLS__` (an `EventTarget`) before load. The renderer announces itself on it, and then `renderer.info.programs` gives each program's `cacheKey`.
+- **Timing in headless:** a frame's step is capped at 0.05 s, so the film runs slower than the wall clock when frames are slow. Wait on `info()` (its `scene`, `dissolve`, `mode`) rather than on fixed delays.
 
 ## Sharing a build temporarily
 

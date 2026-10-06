@@ -164,6 +164,15 @@ export class Fisher {
     this.boat.rotation.set(0, place.yaw, 0, 'YXZ');
     this.man = new Boatman(this.stance, [0.014, 0.014], place.outfit ?? OUTFIT, place.who ?? 'tarun');
     this.boat.add(this.man.group);
+    // bareheaded at his net, his mathal set down: in the dinghy flat on the boards abaft the thwart, on the
+    // middle line where she is wide enough for it (clear of the basket and the catch); on a bund on the ground at
+    // his right, clear of his basket
+    const hat = this.man.hat;
+    if (hat) {
+      if (!this.afloat) hat.position.set(this.stance.x - 0.75, this.stance.y + 0.02, this.stance.z + 0.25);
+      else hat.position.set(0, this.stance.y + 0.03, -1.0);
+      hat.rotation.set(0.04, 0.6, 0);
+    }
     // his soft shadow on the boards or the bund
     const shadow = new Mesh(
       new PlaneGeometry(0.8, 0.6).rotateX(-Math.PI / 2),
@@ -205,7 +214,9 @@ export class Fisher {
     this.net = new Mesh(
       netGeo,
       patchMaterial(
-        new MeshStandardMaterial({ map: castNetTexture(), color: '#c4bba4', vertexColors: true, transparent: true, depthWrite: false, side: DoubleSide, roughness: 0.8 }),
+        // (one pass for both its faces: a veil of twine needs no back-to-front pair, whose second program was first
+        // compiled when the net first came into view)
+        new MeshStandardMaterial({ map: castNetTexture(), color: '#c4bba4', vertexColors: true, transparent: true, depthWrite: false, side: DoubleSide, forceSinglePass: true, roughness: 0.8 }),
         { translucency: 1.1 },
       ),
     );
@@ -299,9 +310,13 @@ export class Fisher {
     this.splashed = this.time > T.land;
   }
 
-  /** `eye`: the camera; `t` the clock (s). Posed only while the camera is near enough to see it. */
-  update(dt: number, t: number, eye: Vector3): void {
-    if (Math.hypot(eye.x - this.site.x, eye.z - this.site.z) > 420) return;
+  /**
+   * `eye`: the camera (and `also`, a shot's still dissolving away, or null); `t` the clock (s). Posed only while a
+   * camera is near enough to see it.
+   */
+  update(dt: number, t: number, eye: Vector3, also: Vector3 | null = null): void {
+    const far = (p: Vector3) => Math.hypot(p.x - this.site.x, p.z - this.site.z) > 420;
+    if (far(eye) && (!also || far(also))) return;
     this.time += dt;
     if (this.time >= T.cycle) {
       this.time -= T.cycle;
@@ -542,7 +557,10 @@ export class Fisher {
         this.v.add(this.crown);
         // never through the bed, nor (sunk or in the bag over the bow) far into the boat
         if (sunk) this.v.y = Math.max(this.v.y, this.bed + 0.04);
-        pos.set([this.v.x, this.v.y, this.v.z], (i * NET.spokes + j) * 3);
+        const at = (i * NET.spokes + j) * 3;
+        pos[at] = this.v.x;
+        pos[at + 1] = this.v.y;
+        pos[at + 2] = this.v.z;
       }
     }
     const geo = this.net.geometry;

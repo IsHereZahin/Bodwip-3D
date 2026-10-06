@@ -3,6 +3,8 @@
 #mapdlg {
   width: min(1100px, calc(100vw - 32px));
   height: calc(100vh - 48px);
+  /* (the visible height on phones, whose bars come and go) */
+  height: calc(100dvh - 48px);
   box-sizing: border-box;
   padding: 18px 22px 20px;
   border-radius: 18px;

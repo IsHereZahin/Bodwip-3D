@@ -153,6 +153,8 @@ export class MapPanel {
         b.className = 'chip';
         b.textContent = label;
         b.title = title;
+        // (named with its place: read out alone, every row's "ওপর থেকে" would sound the same)
+        b.setAttribute('aria-label', `${place.name}: ${title}`);
         b.addEventListener('click', () => {
           this.close();
           act();
@@ -163,15 +165,19 @@ export class MapPanel {
       const s = place.boat;
       if (s !== null) button('নৌকায়', 'নৌকা নিয়ে সেখানে যান', () => this.actions.sail(s));
       const index = this.places.length;
-      item.addEventListener('pointerenter', () => (this.chosen = index));
+      item.addEventListener('pointerenter', () => this.choose(index));
+      item.addEventListener('focusin', () => this.choose(index));
       list.appendChild(item);
       this.places.push({ place, item });
     }
     // a click on the map: a place's dot picks it; elsewhere on the village's land, go there
     this.view.addEventListener('click', (e) => {
+      // the picture is fitted into its box whole (object-fit: contain), centred, so it may not fill it
       const rect = this.view.getBoundingClientRect();
-      const px = ((e.clientX - rect.left) / rect.width) * this.view.width;
-      const py = ((e.clientY - rect.top) / rect.height) * this.view.height;
+      const scale = Math.min(rect.width / this.view.width, rect.height / this.view.height);
+      const px = (e.clientX - rect.left - (rect.width - this.view.width * scale) / 2) / scale;
+      const py = (e.clientY - rect.top - (rect.height - this.view.height * scale) / 2) / scale;
+      if (px < 0 || py < 0 || px > this.view.width || py > this.view.height) return;
       const x = WORLD.x1 - px * M;
       const z = WORLD.z1 - py * M;
       let best = -1;
@@ -181,7 +187,7 @@ export class MapPanel {
         if (d2 < bestD) (bestD = d2), (best = i);
       });
       if (best >= 0) {
-        this.chosen = best;
+        this.choose(best);
         this.places[best].item.scrollIntoView({ block: 'nearest' });
         this.places[best].item.querySelector<HTMLButtonElement>('.chip')?.focus();
         return;
@@ -194,6 +200,14 @@ export class MapPanel {
 
   get isOpen(): boolean {
     return this.dialog.open;
+  }
+
+  /** Picks out a place: its row in the list, and its dot on the map. */
+  private choose(index: number): void {
+    if (index === this.chosen) return;
+    this.places[this.chosen]?.item.classList.remove('chosen');
+    this.chosen = index;
+    this.places[index]?.item.classList.add('chosen');
   }
 
   toggle(): void {

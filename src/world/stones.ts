@@ -248,11 +248,6 @@ void main() {
   gl_FragColor = vec4(applyAtmosphere(col, vWorld), alpha);
 }`;
 
-/** Every stone's place and size (for checking them). */
-export function stoneList(): readonly { x: number; z: number; r: number }[] {
-  return [...PLAN.cells.values()].flat();
-}
-
 /** Whether (x, z) is on a stone (within `margin` m of its edge): the grass and the bushes keep off. */
 export function nearStone(x: number, z: number, margin: number): boolean {
   const ci = Math.floor(x / 6);

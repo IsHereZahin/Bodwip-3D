@@ -1,4 +1,5 @@
 import { BufferGeometry, DoubleSide, Group, Mesh, MeshStandardMaterial, Vector2, Vector3 } from 'three';
+import { smoothstep } from '../core/mathx';
 import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, slab, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
@@ -42,14 +43,9 @@ function groundAt(bx: number, bz: number): number {
 
 /** How the years show at height y on the walls: moss at the water, damp to the flood line, the wash above. */
 function weather(y: number, base: RGB, rng: Rng): RGB {
-  let c = mixRgb(base, DAMP, 1 - smooth(0.2, 1.4, y));
-  c = mixRgb(c, MOSS, (1 - smooth(-0.3, 0.7, y)) * 0.7);
+  let c = mixRgb(base, DAMP, 1 - smoothstep(0.2, 1.4, y));
+  c = mixRgb(c, MOSS, (1 - smoothstep(-0.3, 0.7, y)) * 0.7);
   return scaleRgb(c, 0.92 + 0.12 * rng.next());
-}
-
-function smooth(a: number, b: number, x: number): number {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
 }
 
 /**
@@ -209,7 +205,7 @@ function deck(b: MeshBuilder): void {
     b,
     rows,
     (p) => [p.z / BRICK_TILE, p.x / BRICK_TILE],
-    (p) => mixRgb([0.95, 0.95, 0.95], earth, smooth(0.9, 0.2, Math.abs(p.z)) * 0.6),
+    (p) => mixRgb([0.95, 0.95, 0.95], earth, smoothstep(0.9, 0.2, Math.abs(p.z)) * 0.6),
     true,
   );
 }

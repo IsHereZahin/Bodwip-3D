@@ -442,16 +442,20 @@ export class SaltWorks {
     this.gherFisher.cue(at);
   }
 
-  /** `eye`: the camera; `salt`: the season's salt work (env/season.ts): salt made in the dry months, fish kept in the rains. */
-  update(dt: number, t: number, eye: Vector3, salt: number): void {
+  /**
+   * `eye`: the camera (and `also`, a shot's still dissolving away, or null); `salt`: the season's salt work
+   * (env/season.ts): salt made in the dry months, fish kept in the rains.
+   */
+  update(dt: number, t: number, eye: Vector3, salt: number, also: Vector3 | null = null): void {
     const working = salt > 0.5;
     const gher = salt < 0.25;
     this.people.visible = working;
     this.gherFisher.group.visible = gher;
     this.hut.visible = gher;
-    if (Math.hypot(eye.x - F.x, eye.z - F.z) > 320) return;
+    const far = (p: Vector3) => Math.hypot(p.x - F.x, p.z - F.z) > 320;
+    if (far(eye) && (!also || far(also))) return;
     if (working) for (const r of this.rakers) r.update(dt, t);
-    if (gher) this.gherFisher.update(dt, t, eye);
+    if (gher) this.gherFisher.update(dt, t, eye, also);
   }
 
   /**

@@ -1,5 +1,5 @@
 import { Color, PCFShadowMap, PerspectiveCamera, Quaternion, SRGBColorSpace, Scene, Vector3, WebGLRenderer, type RenderTarget } from 'three';
-import type { InstancedMesh, Mesh } from 'three';
+import type { InstancedMesh, Light, Mesh, Object3D } from 'three';
 import { Soundscape } from './audio/soundscape';
 import { G, LAYER_NO_REFLECT, LAYER_WATER } from './core/globals';
 import { clamp, smoothstep } from './core/mathx';
@@ -9,7 +9,7 @@ import { Environment } from './env/environment';
 import { YEAR, applySeason, dayOfYear, makeSeasonState, moonAgeOn, seasonAt, seasonIndex, seasonMiddle } from './env/season';
 import { setSunDay } from './env/astro';
 import { Weather, type WeatherChoice } from './env/weather';
-import { Wind } from './env/wind';
+import { Wind, gustAt } from './env/wind';
 import { Pipeline } from './render/pipeline';
 import { loadSurfaces } from './render/surfaces';
 import { setMaxAnisotropy } from './render/textures';
@@ -27,7 +27,7 @@ import { buildBackdrop } from './world/backdrop';
 import { buildHillMist } from './world/hillMist';
 import { buildCorridorMap } from './world/corridor';
 import { Bil } from './world/bil';
-import { JOURNEY, WATER_LEVEL, journeyAt, journeyFrame, setWaterRise, terrainHeight, waterLevelAt } from './world/geography';
+import { JOURNEY, WATER_LEVEL, journeyAt, journeyFrame, setWaterRise, terrainHeight, waterLevelAt, waterwayAt } from './world/geography';
 import { Drift } from './world/drift';
 import { sea, updateSea } from './world/waves';
 import { HeroBoat } from './world/hero';
@@ -65,6 +65,12 @@ import { buildWater } from './world/water';
 const BLACK = new Color(0, 0, 0);
 const MIST = new Color(0.8, 0.72, 0.6);
 const DEBUG = new URLSearchParams(location.search).has('debug');
+/** Within this of a camera (m) the girl on the bridge is in sight: what she carries changes only beyond it. */
+const GIRL_SEEN = 160;
+/** How far a press on the film must move (CSS pixels) to be a drag that takes the camera, not a tap. */
+const DRAG_PX = 8;
+/** Where the viewer's choice to mute the sound is remembered. */
+const MUTED_KEY = 'nodi.muted';
 /** The first evening: golden hour, on today's date (its season, and its moon); this many hours before that day's sunset (or at START_HOUR, if the sun does not set). */
 const START_HOUR = 17.5;
 const OPENING_BEFORE_SUNSET = 0.7;
@@ -82,6 +88,12 @@ const WATCH_IDLE_MS = 12000;
 const FILM_IDLE_MS = 30000;
 /** Milliseconds a frame may spend building the film's next shot ahead of it. */
 const WARM_MS = 3;
+/**
+ * Milliseconds the cut's own frame may spend on the grass and the crops the shot coming in still lacks: past it
+ * they are built by their own updates over the next frames (nearest and ahead first, growing in as the shot
+ * dissolves in) rather than stalling the cut.
+ */
+const PREPARE_MS = 30;
 
 /** Lets the loader repaint between build steps. */
 const nextTask = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -109,6 +121,9 @@ async function main(hud: Hud): Promise<void> {
   renderer.shadowMap.type = PCFShadowMap;
   renderer.shadowMap.autoUpdate = false;
   renderer.info.autoReset = false;
+  // checking a program's log on its first use waits for the driver to finish it: a stall the first time anything
+  // new is drawn (a film cut's frame). Checked while developing; three advises turning it off in production
+  renderer.debug.checkShaderErrors = import.meta.env.DEV;
   const aniso = renderer.capabilities.getMaxAnisotropy();
   setMaxAnisotropy(aniso);
   // the photo textures download while the first parts are built
@@ -137,7 +152,7 @@ async function main(hud: Hud): Promise<void> {
   scene.add(terrain.group);
   hud.progress(0.3);
   await nextTask();
-  const water = buildWater(pipeline.reflection.target.texture, pipeline.reflection.textureMatrix, Math.min(aniso, 8));
+  const water = buildWater(pipeline.reflection.target.texture, pipeline.reflection.textureMatrix, Math.min(aniso, 8), (t) => renderer.initTexture(t));
   scene.add(water.mesh, water.inland);
   hud.progress(0.42);
   await nextTask();
@@ -251,6 +266,9 @@ async function main(hud: Hud): Promise<void> {
     set(world) {
       yearTurn = null;
       moonTurn = null;
+      // the last scene's strikes still to come, and its thunder still on its way, are not this one's
+      lightning.schedule([]);
+      sound.hushThunder();
       clock.setDayOfYear(world.day);
       if (world.moon !== undefined) clock.setMoonAge(world.moon);
       const h = world.hour;
@@ -286,6 +304,8 @@ async function main(hud: Hud): Promise<void> {
       };
     },
     restore() {
+      lightning.schedule([]);
+      sound.hushThunder();
       if (!kept) return;
       clock.time = kept.time;
       clock.setDayOfYear(kept.day);
@@ -333,11 +353,13 @@ async function main(hud: Hud): Promise<void> {
       return env.moonDir;
     },
     prepare: (points) => {
-      // only what is missing, and nothing uploaded: the camera's own update shows it (the film is moving)
+      // only what is missing, and nothing uploaded: the camera's own update shows it (the film is moving). The
+      // ground all at once; the grass and the crops for a moment, from where the shot opens
+      for (const p of points) terrain.warm(p, Infinity);
+      const until = performance.now() + PREPARE_MS;
       for (const p of points) {
-        terrain.warm(p, Infinity);
-        meadow.warm(p, Infinity);
-        crops.warm(p, Infinity);
+        meadow.warm(p, until);
+        crops.warm(p, until);
       }
       water.update(points[0].x, points[0].z);
     },
@@ -345,7 +367,8 @@ async function main(hud: Hud): Promise<void> {
       const until = performance.now() + WARM_MS;
       let done = true;
       for (const p of points) done = terrain.warm(p, until) && meadow.warm(p, until) && crops.warm(p, until) && done;
-      return done;
+      // and the water's fine field where the shot opens, last (the wide one stands in till it is ready)
+      return water.warm(points[0].x, points[0].z, until) && done;
     },
     leave() {
       worldLook.capture(lookLeft);
@@ -446,7 +469,17 @@ async function main(hud: Hud): Promise<void> {
     sky.mesh.position.copy(camera.position);
   };
   const sound = new Soundscape();
-  hero.onStroke = (power) => sound.splash(power);
+  // the blade's splash, heard as near as it is (not at all from across the fields or the air above them)
+  hero.onStroke = (power) => sound.splash(power, smoothstep(90, 12, camera.position.distanceTo(hero.blade)));
+  /** How near the water the listener is: 1 on it or by it, fading high above it or away over the fields. */
+  const waterNear = () => {
+    const p = camera.position;
+    const level = waterLevelAt(p.x, p.z);
+    if (Number.isFinite(level)) return smoothstep(45, 4, p.y - level);
+    const w = waterwayAt(p.x, p.z);
+    const edge = w ? w.d - w.half : 80;
+    return smoothstep(70, 6, edge) * smoothstep(45, 6, p.y - terrainHeight(p.x, p.z));
+  };
   hud.progress(0.85);
   await nextTask();
 
@@ -485,20 +518,36 @@ async function main(hud: Hud): Promise<void> {
   resize();
   window.addEventListener('resize', resize);
 
-  // ---- sound: browsers allow it only after the first touch or key ----
+  // ---- sound: browsers allow it only after the first touch or key; muting is remembered ----
   let soundOn = false;
-  const startSound = () => {
+  try {
+    sound.muted = localStorage.getItem(MUTED_KEY) === '1';
+  } catch {
+    // storage blocked (a private window): sound starts on as usual
+  }
+  const startSound = (e: Event) => {
+    // the speaker button and M toggle it themselves (else this would start it and the toggle mute it at once)
+    if (e.target instanceof Element && e.target.closest('#sound')) return;
+    if (e instanceof KeyboardEvent && e.code === 'KeyM') return;
     if (!sound.muted) {
       sound.start();
       soundOn = true;
     }
   };
-  for (const type of ['pointerdown', 'keydown'] as const) window.addEventListener(type, startSound, { passive: true });
+  // (a touch's pointerdown does not count as a gesture for audio on every browser: its end does)
+  for (const type of ['pointerdown', 'pointerup', 'touchend', 'keydown'] as const) window.addEventListener(type, startSound, { passive: true });
   const toggleSound = () => {
     sound.setMuted(!sound.muted);
     if (!sound.muted) sound.start();
     soundOn = !sound.muted;
+    try {
+      localStorage.setItem(MUTED_KEY, sound.muted ? '1' : '0');
+    } catch {
+      // not remembered, no harm
+    }
   };
+  // nothing plays while the page is hidden
+  document.addEventListener('visibilitychange', () => sound.pause(document.hidden));
 
   // ---- camera: follow the boat, fly free, or watch the film tour ----
   let lastInput = performance.now();
@@ -519,11 +568,28 @@ async function main(hud: Hud): Promise<void> {
     watch.asked = false;
     if (director.active) setFilm(false);
   };
-  canvas.addEventListener('pointerdown', () => {
+  // in the film a tap (or a click) only wakes the controls; a drag past a few pixels, a second finger or the wheel
+  // takes the camera (a touch screen has no other way to see the film's buttons)
+  const pressed = new Map<number, { x: number; y: number }>();
+  canvas.addEventListener('pointerdown', (e) => {
     hud.dismissHint();
-    takeOver();
+    noteInput();
+    pressed.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (!director.active || pressed.size > 1) takeOver();
   });
+  canvas.addEventListener('pointermove', (e) => {
+    const p = pressed.get(e.pointerId);
+    if (p && director.active && Math.hypot(e.clientX - p.x, e.clientY - p.y) > DRAG_PX) takeOver();
+  });
+  for (const type of ['pointerup', 'pointercancel'] as const) canvas.addEventListener(type, (e) => pressed.delete(e.pointerId));
   canvas.addEventListener('wheel', takeOver, { passive: true });
+  // a pointer moving over the page is someone there: the film doesn't start by itself under it
+  window.addEventListener('pointermove', noteInput, { passive: true });
+  /** The viewer reaches for the world's own controls (the time, the season, the moon): the film gives the world back first. */
+  const ownWorld = () => {
+    noteInput();
+    if (director.active) setFilm(false);
+  };
 
   const chooseCamera = (choice: CameraChoice) => {
     noteInput();
@@ -561,6 +627,13 @@ async function main(hud: Hud): Promise<void> {
   };
   const jump = (ev: SkyEvent) => {
     noteInput();
+    if (director.active) {
+      // (leaving the film puts the viewer's own day back: the same event is found again on it)
+      setFilm(false);
+      const again = clock.today().find((e) => e.kind === ev.kind);
+      if (!again) return;
+      ev = again;
+    }
     clock.jumpTo(ev);
     look(ev);
     hud.toast(notice(ev), null);
@@ -600,6 +673,8 @@ async function main(hud: Hud): Promise<void> {
   let sessionUntil = 0;
   /** The day of the year the land and the sun show now: the clock's, or the turning year's. */
   const shownDay = () => (yearTurn ? wrap(yearTurn.from + yearTurn.by * smooth(Math.min(1, yearTurn.t / YEAR_TURN_SECONDS)), YEAR) : clock.dayOfYear);
+  /** The day the year is on, or turning to. */
+  const aimedDay = () => (yearTurn ? wrap(yearTurn.from + yearTurn.by, YEAR) : clock.dayOfYear);
   const shownMoon = () => (moonTurn ? wrap(moonTurn.from + moonTurn.by * smooth(Math.min(1, moonTurn.t / MOON_TURN_SECONDS)), SYNODIC) : clock.moonAge);
   /** Rolls the turning year and moon on; at the end the clock takes the new day and phase. */
   const turn = (dt: number) => {
@@ -650,18 +725,31 @@ async function main(hud: Hud): Promise<void> {
   };
   const controls = new Controls({
     togglePlay: () => {
+      ownWorld();
       clock.playing = !clock.playing;
     },
-    faster: () => stepSpeed(1, true),
-    seek: (hour) => clock.setHour(hour),
+    faster: () => {
+      ownWorld();
+      stepSpeed(1, true);
+    },
+    seek: (hour) => {
+      ownWorld();
+      clock.setHour(hour);
+    },
     scrub: (active) => {
       scrubbing = active;
     },
     jump,
     camera: chooseCamera,
     view: setView,
-    moon: (age) => chooseMoon(age),
-    season: chooseSeason,
+    moon: (age) => {
+      ownWorld();
+      chooseMoon(age);
+    },
+    season: (choice) => {
+      ownWorld();
+      chooseSeason(choice);
+    },
     sound: toggleSound,
     map: () => {
       noteInput();
@@ -745,7 +833,12 @@ async function main(hud: Hud): Promise<void> {
   // ---- keyboard: one place for every shortcut (the help sheet lists them) ----
   const held = new Set<string>();
   window.addEventListener('keydown', (e) => {
-    if (controls.helpOpen || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    // the help sheet keeps the keys while it is open (Escape closes it by itself); ? closes it as it opened it
+    if (controls.helpOpen) {
+      if (e.key === '?' && !e.repeat) controls.toggleHelp();
+      return;
+    }
     // the map takes its own key and Escape; the rest wait while it is open
     if (e.code === 'KeyL') {
       noteInput();
@@ -757,6 +850,10 @@ async function main(hud: Hud): Promise<void> {
     const target = e.target;
     if (target instanceof HTMLSelectElement || target instanceof HTMLTextAreaElement) return;
     if (target instanceof HTMLInputElement && /^(Arrow|Page|Home|End)/.test(e.code)) return;
+    if (e.code === 'Escape' && director.active) {
+      takeOver();
+      return;
+    }
     // in the film, the arrows (and the page keys) go back and on through its scenes
     if (director.active && /^(ArrowLeft|ArrowRight|PageUp|PageDown)$/.test(e.code)) {
       e.preventDefault();
@@ -776,18 +873,24 @@ async function main(hud: Hud): Promise<void> {
       case 'Space':
         if (target instanceof HTMLButtonElement) return;
         e.preventDefault();
+        ownWorld();
         clock.playing = !clock.playing;
         break;
       case 'KeyY':
-        chooseSeason((seasonIndex(clock.dayOfYear) + 1) % 6);
+        ownWorld();
+        // (on from the season the year is turning to, so a second press goes on to the one after)
+        chooseSeason((seasonIndex(aimedDay()) + 1) % 6);
         break;
       case 'BracketLeft':
+        ownWorld();
         stepSpeed(-1, false);
         break;
       case 'BracketRight':
+        ownWorld();
         stepSpeed(1, false);
         break;
       case 'KeyN': {
+        ownWorld();
         const ev = clock.next();
         if (ev) jump(ev);
         break;
@@ -872,7 +975,7 @@ async function main(hud: Hud): Promise<void> {
   const step = (dt: number) => {
     t += dt;
     G.uTime.value = t;
-    clock.boost = (held.has('KeyT') ? Math.max(1, 40 / clock.speed) : 1) * (director.active ? scenePace : 1);
+    clock.boost = director.active ? scenePace : held.has('KeyT') ? Math.max(1, 40 / clock.speed) : 1;
     if (!scrubbing) clock.advance(dt);
     turn(dt);
     updateSky(dt, false);
@@ -894,13 +997,16 @@ async function main(hud: Hud): Promise<void> {
     director.update(dt, t, camera);
     hero.update(dt, t, env.lamp, b);
     splash.update(dt, hero.blade, hero.bladeWet, b.power, splashBack.set(-Math.sin(b.heading), 0, -Math.cos(b.heading)), renderer.domElement.height);
+    // (the people of a shot being left go on working while it dissolves away, though the camera has left them)
+    const leftEye = director.leaving?.camera.position ?? null;
     // the girl on the bridge watches the majhi himself (his head, as he is posed this frame)
     hero.man.body.group.updateWorldMatrix(true, false);
-    girl.update(dt, t, hero.man.body.group.localToWorld(majhiHead.copy(hero.man.body.head)), weather.rain, season.rain > 0.25);
-    saltWorks.update(dt, t, camera.position, season.salt);
-    fisher.update(dt, t, camera.position);
-    harvest.update(dt, t, camera.position, season.crops[2]);
-    khejur.update(t, camera.position, clock.dayOfYear, clock.hour);
+    const seesGirl = (p: Vector3 | null) => p !== null && p.distanceTo(girl.group.position) < GIRL_SEEN;
+    girl.update(dt, t, hero.man.body.group.localToWorld(majhiHead.copy(hero.man.body.head)), weather.rain, season.rain > 0.25, seesGirl(camera.position) || seesGirl(leftEye));
+    saltWorks.update(dt, t, camera.position, season.salt, leftEye);
+    fisher.update(dt, t, camera.position, leftEye);
+    harvest.update(dt, t, camera.position, season.crops[2], leftEye);
+    khejur.update(t, camera.position, shownDay(), clock.hour);
     train.update(t, env.night);
     water.boat.set(b.pos.x, b.pos.z, b.heading, b.speed);
     water.oar.set(hero.bladeLocal.x, hero.bladeLocal.z, hero.bladeDrive, hero.bladeWet);
@@ -929,14 +1035,24 @@ async function main(hud: Hud): Promise<void> {
     else rig.focus(focus);
     focus.set(Math.round(focus.x / 12) * 12, 0, Math.round(focus.z / 12) * 12);
     if (env.aimShadow(focus, false)) renderer.shadowMap.needsUpdate = true;
-    sound.update(dt, env.night, G.uWind.value.z, weather.rain);
+    sound.update(dt, env.night, G.uWind.value.z * gustAt(camera.position.x, camera.position.z), weather.rain, waterNear());
   };
   updateSky(0, true);
   step(0);
   terrain.update(camera.position, true);
   water.update(camera.position.x, camera.position.z, true);
   renderer.setRenderTarget(pipeline.sceneTarget);
+  // every material compiled now, the hidden ones too (out of season, out of reach, waiting for their scene), so
+  // none is first compiled in the middle of the film (compile passes over what is hidden)
+  const unhidden: Object3D[] = [];
+  scene.traverse((o) => {
+    if (!o.visible && !(o as Light).isLight) {
+      o.visible = true;
+      unhidden.push(o);
+    }
+  });
   await renderer.compileAsync(scene, camera);
+  for (const o of unhidden) o.visible = false;
   renderer.setRenderTarget(null);
   hud.progress(1);
 
@@ -949,7 +1065,7 @@ async function main(hud: Hud): Promise<void> {
     last = now;
     perf.ms += (raw * 1000 - perf.ms) * 0.05;
     step(debug.freeze ? 0 : Math.min(raw, 0.05));
-    if (!director.active && !reducedMotion && !watch.event && now - lastInput > FILM_IDLE_MS) setFilm(true);
+    if (!director.active && !reducedMotion && !watch.event && !controls.helpOpen && !map.isOpen && now - lastInput > FILM_IDLE_MS) setFilm(true);
     if (sessionUntil && now > sessionUntil && !director.active) backToToday();
     const cut = Math.max(clamp(1 - (now - readyAt) / 2600, 0, 1), clamp(1 - (now - jumpAt) / 900, 0, 1));
     // the journey's mist fade belongs to the boat; a free camera elsewhere doesn't see the boat loop
@@ -1060,7 +1176,7 @@ async function main(hud: Hud): Promise<void> {
             rig.settle(o);
           }
           if (o.film) director.cue(o.film[0], o.film[1], camera);
-          else director.stop(true);
+          else director.stop(true, false);
           director.letterbox = o.film ? 1 : 0;
           perf.locked = true;
           readyAt = -1e9;
@@ -1129,7 +1245,8 @@ async function main(hud: Hud): Promise<void> {
             let top = o;
             while (top.parent && top.parent !== scene) top = top.parent;
             const g = m.geometry;
-            const tris = (g.index ? g.index.count : g.getAttribute('position').count) / 3;
+            // (a mesh may have nothing built yet: the lightning before its first strike)
+            const tris = (g.index ? g.index.count : (g.getAttribute('position')?.count ?? 0)) / 3;
             const n = (m as InstancedMesh).isInstancedMesh ? (m as InstancedMesh).count : 1;
             const key = group ? (top.name === group ? (m.parent?.name || g.uuid.slice(0, 8)) + ':' + tris : '') : top.name || '?';
             if (!key) return;

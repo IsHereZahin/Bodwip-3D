@@ -408,17 +408,23 @@
   z-index: 2;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.6s ease, transform 0.6s ease;
+  /* hidden for the keyboard too once it has faded (no focus on buttons nobody can see) */
+  visibility: hidden;
+  transition: opacity 0.6s ease, transform 0.6s ease, visibility 0s linear 0.6s;
 }
 #film-nav.show {
   opacity: 1;
   transform: translate(-50%, 0);
   pointer-events: auto;
+  visibility: visible;
+  transition-delay: 0s;
 }
 #film-nav.show.idle {
   opacity: 0;
   transform: translate(-50%, -10px);
   pointer-events: none;
+  visibility: hidden;
+  transition: opacity 0.6s ease, transform 0.6s ease, visibility 0s linear 0.6s;
 }
 #film-nav button {
   display: inline-flex;
@@ -486,6 +492,7 @@ body.ui-off #ui-restore:focus-visible {
 #help {
   width: min(760px, calc(100vw - 32px));
   max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
   box-sizing: border-box;
   padding: 22px 26px 24px;
   border-radius: 18px;

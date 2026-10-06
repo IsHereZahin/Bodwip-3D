@@ -1315,51 +1315,6 @@ export function hyacinthLeafTexture(seed: number): DataTexture {
 }
 
 /**
- * A row of transplanted rice seen side-on: ten hills of leaves along the card (2.4 m of row), rooted at the
- * bottom, in greys the crop's shader tints for its stage (seedling, green, ripe, stubble). Dense at the root,
- * so the row keeps its body in the mipmaps; a few panicles arch over the top.
- */
-export function riceRowTexture(seed: number): DataTexture {
-  const W = 512;
-  const H = 224;
-  const rng = new Rng(seed);
-  const ctx = paint(W, H, (c) => {
-    for (let k = 0; k < 10; k++) {
-      const x0 = ((k + 0.5) / 10) * W + rng.range(-4, 4);
-      for (let i = 0; i < 24; i++) {
-        const bx = x0 + rng.range(-5, 5);
-        const tx = bx + rng.range(-40, 40);
-        const ty = H * (1 - rng.range(0.55, 0.95));
-        const w = rng.range(2, 3.6);
-        const g = c.createLinearGradient(0, H, 0, ty);
-        g.addColorStop(0, '#383838');
-        g.addColorStop(0.5, css([1, 1, 1], rng.range(120, 160)));
-        g.addColorStop(1, css([1, 1, 1], rng.range(200, 235)));
-        c.fillStyle = g;
-        c.beginPath();
-        c.moveTo(bx - w, H);
-        c.quadraticCurveTo(bx + (tx - bx) * 0.25 - w * 0.5, (H + ty) / 2, tx, ty);
-        c.quadraticCurveTo(bx + (tx - bx) * 0.25 + w * 0.5, (H + ty) / 2, bx + w, H);
-        c.fill();
-      }
-      // panicles, nodding over to one side from the tallest stems
-      for (let i = 0; i < 2; i++) {
-        const sx = x0 + rng.range(-6, 6);
-        const top = H * 0.06 + rng.range(0, 10);
-        const dir = rng.sign();
-        c.strokeStyle = css([1, 1, 1], rng.range(215, 245));
-        c.lineWidth = rng.range(2.2, 3);
-        c.beginPath();
-        c.moveTo(sx, H * 0.3);
-        c.quadraticCurveTo(sx + dir * 4, top, sx + dir * rng.range(18, 28), top + rng.range(18, 30));
-        c.stroke();
-      }
-    }
-  });
-  return toTexture(ctx, { bleed: true });
-}
-
-/**
  * The near rice, two cards in one texture, in greys the crop's shader tints for its stage. The left half
  * (u 0..0.5) is one hill of transplanted rice side-on: some thirty long narrow leaves fanning up and out from
  * a narrow foot, the longer ones arching over at the tip, dark at the foot and pale toward the light. The right
@@ -1452,38 +1407,6 @@ export function riceHillTexture(seed: number): DataTexture {
   return toTexture(ctx, { bleed: true });
 }
 
-/**
- * A row of ripening heads seen side-on, for the middling-far rice (laid over its row cards' tops): panicles
- * nodding over all along the 2.4 m of row, in greys the shader tints green or gold.
- */
-export function riceHeadsTexture(seed: number): DataTexture {
-  const W = 512;
-  const H = 96;
-  const rng = new Rng(seed);
-  const ctx = paint(W, H, (c) => {
-    c.lineCap = 'round';
-    for (let i = 0; i < 46; i++) {
-      const sx = rng.range(6, W - 6);
-      const sy = rng.range(H * 0.15, H * 0.35);
-      const dir = rng.sign();
-      const len = rng.range(26, 40);
-      // an arch over and down, grains crowding it
-      const ex = sx + dir * len * 0.8;
-      const ey = sy + len * rng.range(0.55, 0.9);
-      for (let k = 0; k < 9; k++) {
-        const t = (k + 0.5) / 9;
-        const x = sx + (ex - sx) * t;
-        const y = sy - Math.sin(Math.PI * t * 0.7) * 10 + (ey - sy) * t * t;
-        c.fillStyle = css([1, 1, 1], rng.range(170, 235));
-        c.beginPath();
-        c.ellipse(x, y, 4.5, 3.2, rng.range(0, 3), 0, Math.PI * 2);
-        c.fill();
-      }
-    }
-  });
-  return toTexture(ctx, { bleed: true });
-}
-
 /** Rice seen from above: crowns of leaves splayed from each hill in rows, with the water or soil between them. */
 export function riceCanopyTexture(seed: number): DataTexture {
   const S = 256;
@@ -1505,75 +1428,6 @@ export function riceCanopyTexture(seed: number): DataTexture {
           c.quadraticCurveTo(cx + Math.cos(a) * len * 0.5, cy + Math.sin(a) * len * 0.5 - 2, cx + Math.cos(a) * len, cy + Math.sin(a) * len);
           c.stroke();
         }
-      }
-    }
-  });
-  return toTexture(ctx, { bleed: true });
-}
-
-/**
- * A mustard plant in flower, side-on (the card is about 0.9 m by 1.1 m): blue-green lobed leaves low down,
- * branching stems, and racemes of small yellow flowers crowded at the tips, green pods below them.
- */
-export function mustardTexture(seed: number): DataTexture {
-  const S = 256;
-  const rng = new Rng(seed);
-  const ctx = paint(S, S, (c) => {
-    c.lineCap = 'round';
-    // broad lobed leaves at the foot
-    for (let i = 0; i < 9; i++) {
-      const x = S / 2 + rng.range(-70, 70);
-      const y = S - rng.range(10, 70);
-      c.fillStyle = rng.pick(['#4b6b44', '#557a4c', '#5f8456', '#456140']);
-      c.beginPath();
-      c.ellipse(x, y, rng.range(12, 22), rng.range(28, 44), rng.range(-0.9, 0.9), 0, Math.PI * 2);
-      c.fill();
-    }
-    // stems branching toward the top, each ending in a raceme
-    const tips: [number, number][] = [];
-    for (let i = 0; i < 7; i++) {
-      const bx = S / 2 + rng.range(-22, 22);
-      const mx = bx + rng.range(-30, 30);
-      const my = S * rng.range(0.45, 0.6);
-      c.strokeStyle = rng.pick(['#5d7d3c', '#678a42', '#557236']);
-      c.lineWidth = rng.range(2, 3.4);
-      c.beginPath();
-      c.moveTo(bx, S);
-      c.quadraticCurveTo(bx, my + 30, mx, my);
-      c.stroke();
-      for (let j = 0; j < 3; j++) {
-        const tx = mx + rng.range(-46, 46);
-        const ty = rng.range(14, S * 0.4);
-        c.lineWidth = rng.range(1.2, 2.2);
-        c.beginPath();
-        c.moveTo(mx, my);
-        c.quadraticCurveTo(mx, (my + ty) / 2, tx, ty);
-        c.stroke();
-        tips.push([tx, ty]);
-        // pods along the stalk below the flowers
-        c.strokeStyle = '#7f9b48';
-        c.lineWidth = 1;
-        for (let p = 0; p < 6; p++) {
-          const t = rng.range(0.15, 0.6);
-          const px = tx + (mx - tx) * t;
-          const py = ty + (my - ty) * t;
-          c.beginPath();
-          c.moveTo(px, py);
-          c.lineTo(px + rng.range(-9, 9), py - rng.range(5, 11));
-          c.stroke();
-        }
-        c.strokeStyle = rng.pick(['#5d7d3c', '#678a42', '#557236']);
-      }
-    }
-    // the racemes: crowds of four-petalled yellow flowers, buds greener at the very top
-    for (const [tx, ty] of tips) {
-      for (let k = 0; k < 34; k++) {
-        const a = rng.range(0, Math.PI * 2);
-        const r = Math.sqrt(rng.next()) * rng.range(8, 14);
-        c.fillStyle = k < 4 ? '#c8cf52' : rng.pick(['#f4d12a', '#efc31f', '#f7dc45', '#e6b51a']);
-        c.beginPath();
-        c.arc(tx + Math.cos(a) * r, ty + Math.sin(a) * r * 1.3 + 4, rng.range(2, 3.4), 0, Math.PI * 2);
-        c.fill();
       }
     }
   });

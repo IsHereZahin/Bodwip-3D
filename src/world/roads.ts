@@ -236,12 +236,14 @@ for (const m of HOMESTEAD_MOUNDS) {
   }
 }
 
+/** How far beyond its half-width a way is filed, so asked after (m). */
+const ALL_MARGIN = 8;
 /** Every way's pieces, and the brick road's alone (its embankment and its verges). */
 const ALL = new SegmentIndex(32);
 const BRICK = new SegmentIndex(32);
 const BRICK_OF: number[] = [];
 REACHES.forEach((r, i) => {
-  ALL.add(r.ax, r.az, r.bx, r.bz, r.half, 8);
+  ALL.add(r.ax, r.az, r.bx, r.bz, r.half, ALL_MARGIN);
   if (!Number.isNaN(r.ca)) {
     BRICK.add(r.ax, r.az, r.bx, r.bz, r.half, SHOULDER + 8);
     BRICK_OF.push(i);
@@ -279,6 +281,14 @@ export function roadEdge(x: number, z: number): number {
 export function onRoad(x: number, z: number, margin = 0): boolean {
   const hit = ALL.nearest(x, z);
   return hit !== null && hit.d < REACHES[hit.index].half + margin;
+}
+
+/**
+ * Whether any way comes within `r` m of (x, z) beyond its half-width: a patch of ground none comes near need not
+ * ask `onRoad` plant by plant. True when `r` is past what the ways are filed for (it cannot tell).
+ */
+export function roadNear(x: number, z: number, r: number): boolean {
+  return r >= ALL_MARGIN || onRoad(x, z, r);
 }
 
 /** The ways' points, for laying things along them (trees along the road): each piece's points every STEP m, its surface and whether it is raised. */

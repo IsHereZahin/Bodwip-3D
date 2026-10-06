@@ -5,6 +5,9 @@ export class Hud {
   private readonly title = document.getElementById('title');
   private readonly hint = document.getElementById('hint');
   private readonly err = document.getElementById('err');
+  /** The caption's style as last written. */
+  private captionOpacity = '';
+  private captionBottom = '';
   private readonly captionEl = document.getElementById('caption');
   private readonly toastEl = document.getElementById('toast');
   private readonly toastText = document.getElementById('toast-text');
@@ -42,8 +45,11 @@ export class Hud {
     const el = this.captionEl;
     if (!el) return;
     if (el.textContent !== text) el.textContent = text;
-    el.style.opacity = String(alpha * 0.95);
-    el.style.bottom = `${(bar * 100) / 2}%`;
+    // (written only when they change: every frame else)
+    const opacity = (alpha * 0.95).toFixed(3);
+    const bottom = `${((bar * 100) / 2).toFixed(2)}%`;
+    if (opacity !== this.captionOpacity) el.style.opacity = this.captionOpacity = opacity;
+    if (bottom !== this.captionBottom) el.style.bottom = this.captionBottom = bottom;
   }
 
   dismissHint(): void {

@@ -149,6 +149,32 @@ const hb = { a: new Vector3(), f: new Vector3(), d: new Vector3(), ad: new Vecto
 const Y = new Vector3();
 const X = new Vector3();
 const Z = new Vector3();
+// the limbs' own scratch (posing runs every frame for every person: nothing is made there)
+const limbRoot = new Vector3();
+const limbHinge = new Vector3();
+const qHinge = new Quaternion();
+const qTwist = new Quaternion();
+
+/** A side's bones that are posed every frame, looked up once. */
+interface SideBones {
+  clavicle: number;
+  shoulder01: number;
+  upperarm01: number;
+  upperarm02: number;
+  lowerarm01: number;
+  lowerarm02: number;
+  wrist: number;
+  upperleg01: number;
+  upperleg02: number;
+  lowerleg01: number;
+  lowerleg02: number;
+  foot: number;
+  eye: number;
+  lidUpper: number;
+  lidLower: number;
+  /** Which way the eye looks in the bind (head to tail). */
+  eyeAxis: Vector3;
+}
 
 /** The rotation whose y axis is `dir` and x axis `side` (made square to it). */
 function frame(dir: Vector3, side: Vector3, out: Quaternion): Quaternion {
@@ -251,6 +277,8 @@ export class Human {
   private readonly at: Vector3[];
   private readonly q: Quaternion[];
   private readonly index = new Map<string, number>();
+  /** The bones posed every frame, looked up once: the trunk's, and each side's (0 his right, 1 his left). */
+  private readonly ix: { root: number; spine05: number; spine: readonly number[]; neck: readonly number[]; head: number; sides: readonly SideBones[] };
   private readonly grips = new Map<string, Grip>();
   /** Per side (0 his right, 1 his left): bind frames of the limbs and the hand's across. */
   private readonly limb: {
@@ -280,6 +308,35 @@ export class Human {
     this.group.name = `human:${name}`;
     data.names.forEach((n, i) => this.index.set(n, i));
     this.bind = data.bones.map((b) => vec(b.head));
+    const sideBones = (s: 'R' | 'L'): SideBones => {
+      const eye = this.bi(`eye.${s}`);
+      return {
+        clavicle: this.bi(`clavicle.${s}`),
+        shoulder01: this.bi(`shoulder01.${s}`),
+        upperarm01: this.bi(`upperarm01.${s}`),
+        upperarm02: this.bi(`upperarm02.${s}`),
+        lowerarm01: this.bi(`lowerarm01.${s}`),
+        lowerarm02: this.bi(`lowerarm02.${s}`),
+        wrist: this.bi(`wrist.${s}`),
+        upperleg01: this.bi(`upperleg01.${s}`),
+        upperleg02: this.bi(`upperleg02.${s}`),
+        lowerleg01: this.bi(`lowerleg01.${s}`),
+        lowerleg02: this.bi(`lowerleg02.${s}`),
+        foot: this.bi(`foot.${s}`),
+        eye,
+        lidUpper: this.bi(`orbicularis03.${s}`),
+        lidLower: this.bi(`orbicularis04.${s}`),
+        eyeAxis: vec(data.bones[eye].tail).sub(this.bind[eye]).normalize(),
+      };
+    };
+    this.ix = {
+      root: this.bi('root'),
+      spine05: this.bi('spine05'),
+      spine: ['spine04', 'spine03', 'spine02', 'spine01'].map((n) => this.bi(n)),
+      neck: ['neck01', 'neck02', 'neck03'].map((n) => this.bi(n)),
+      head: this.bi('head'),
+      sides: SIDES.map(sideBones),
+    };
     this.at = this.bind.map((p) => p.clone());
     this.q = this.bind.map(() => new Quaternion());
     this.bones = data.bones.map((_, i) => {
@@ -481,31 +538,28 @@ void main() {`)
     this.pelvis.copy(pelvis);
     this.pelvisQ.copy(pelvisQ);
     this.chestQ.copy(chestQ);
-    const root = this.bi('root');
-    const spine5 = this.bi('spine05');
-    v2.subVectors(this.bind[root], this.bind[spine5]).applyQuaternion(pelvisQ).add(pelvis);
+    const { root, spine05, spine } = this.ix;
+    v2.subVectors(this.bind[root], this.bind[spine05]).applyQuaternion(pelvisQ).add(pelvis);
     this.set(root, v2, pelvisQ);
     // the bend from the hips to the chest shared along the spine, a little of it in the lower back too
     q2.copy(pelvisQ).invert().multiply(chestQ);
-    this.set(spine5, pelvis, q1.identity().slerp(q2, 0.12).premultiply(pelvisQ));
-    let prev = spine5;
-    const steps = ['spine04', 'spine03', 'spine02', 'spine01'];
-    steps.forEach((n, k) => {
-      const i = this.bi(n);
-      q1.identity().slerp(q2, (k + 1) / steps.length).premultiply(pelvisQ);
+    this.set(spine05, pelvis, q1.identity().slerp(q2, 0.12).premultiply(pelvisQ));
+    let prev = spine05;
+    for (let k = 0; k < spine.length; k++) {
+      const i = spine[k];
+      q1.identity().slerp(q2, (k + 1) / spine.length).premultiply(pelvisQ);
       v1.subVectors(this.bind[i], this.bind[prev]).applyQuaternion(this.q[prev]).add(this.at[prev]);
       this.set(i, v1, q1);
       prev = i;
-    });
+    }
     this.chest.copy(this.at[prev]);
     for (const m of this.meshes) m.boundingSphere?.center.copy(pelvis);
     for (let k = 0; k < 2; k++) {
-      const s = SIDES[k];
-      const clav = this.bi(`clavicle.${s}`);
+      const b = this.ix.sides[k];
       q1.copy(chestQ).multiply(this.shrug[k]);
-      v1.subVectors(this.bind[clav], this.bind[prev]).applyQuaternion(chestQ).add(this.chest);
-      this.set(clav, v1, q1);
-      this.follow(this.bi(`shoulder01.${s}`), clav);
+      v1.subVectors(this.bind[b.clavicle], this.bind[prev]).applyQuaternion(chestQ).add(this.chest);
+      this.set(b.clavicle, v1, q1);
+      this.follow(b.shoulder01, b.clavicle);
     }
   }
 
@@ -518,15 +572,14 @@ void main() {`)
 
   /** Where a shoulder joint is now (the upper arm's head), after `setTrunk`. */
   shoulder(side: number, out: Vector3): Vector3 {
-    const s = suffix(side);
-    const parent = this.bi(`shoulder01.${s}`);
-    return out.subVectors(this.bind[this.bi(`upperarm01.${s}`)], this.bind[parent]).applyQuaternion(this.q[parent]).add(this.at[parent]);
+    const b = this.ix.sides[side < 0 ? 0 : 1];
+    return out.subVectors(this.bind[b.upperarm01], this.bind[b.shoulder01]).applyQuaternion(this.q[b.shoulder01]).add(this.at[b.shoulder01]);
   }
 
   /** Where a hip joint is now, after `setTrunk`. */
   hip(side: number, out: Vector3): Vector3 {
-    const root = this.bi('root');
-    return out.subVectors(this.bind[this.bi(`upperleg01.${suffix(side)}`)], this.bind[root]).applyQuaternion(this.q[root]).add(this.at[root]);
+    const { root } = this.ix;
+    return out.subVectors(this.bind[this.ix.sides[side < 0 ? 0 : 1].upperleg01], this.bind[root]).applyQuaternion(this.q[root]).add(this.at[root]);
   }
 
   /** A point of the bind carried by the chest (spine01) as it is now. */
@@ -549,16 +602,15 @@ void main() {`)
   setHead(headQ: Quaternion, look: Vector3 | null, time: number): void {
     this.headQ.copy(headQ);
     q2.copy(this.chestQ).invert().multiply(headQ);
-    let prev = this.bi('spine01');
-    const steps = ['neck01', 'neck02', 'neck03'];
-    steps.forEach((n, k) => {
-      const i = this.bi(n);
-      q1.identity().slerp(q2, (k + 0.6) / (steps.length + 0.4)).premultiply(this.chestQ);
+    const { neck, head, spine } = this.ix;
+    let prev = spine[spine.length - 1];
+    for (let k = 0; k < neck.length; k++) {
+      const i = neck[k];
+      q1.identity().slerp(q2, (k + 0.6) / (neck.length + 0.4)).premultiply(this.chestQ);
       v1.subVectors(this.bind[i], this.bind[prev]).applyQuaternion(this.q[prev]).add(this.at[prev]);
       this.set(i, v1, q1);
       prev = i;
-    });
-    const head = this.bi('head');
+    }
     v1.subVectors(this.bind[head], this.bind[prev]).applyQuaternion(this.q[prev]).add(this.at[prev]);
     this.set(head, v1, headQ);
     this.head.copy(v1);
@@ -573,14 +625,14 @@ void main() {`)
     const blink = since < 0 ? 0 : since < BLINK.close ? since / BLINK.close : Math.max(0, 1 - (since - BLINK.close) / BLINK.open);
 
     let pitch = 0;
-    for (const s of SIDES) {
-      const eye = this.bi(`eye.${s}`);
+    for (const b of this.ix.sides) {
+      const eye = b.eye;
       this.follow(eye, head);
       // the eye turns from straight ahead (its bind) toward what it looks at, in the head's frame
       q1.copy(headQ);
       if (look) {
         v2.subVectors(look, this.at[eye]).applyQuaternion(q2.copy(headQ).invert()).normalize();
-        v3.subVectors(vec(this.data.bones[eye].tail), this.bind[eye]).normalize();
+        v3.copy(b.eyeAxis);
         const angle = v3.angleTo(v2);
         if (angle > EYE_REACH) v2.lerp(v3, 1 - EYE_REACH / angle).normalize();
         q1.multiply(q2.setFromUnitVectors(v3, v2));
@@ -589,10 +641,8 @@ void main() {`)
       this.bones[eye].quaternion.copy(q1);
       this.q[eye].copy(q1);
       // the upper lid follows the eye down and closes over it; the lower lifts a little
-      const upper = this.bi(`orbicularis03.${s}`);
-      const lower = this.bi(`orbicularis04.${s}`);
-      this.follow(upper, head, q1.copy(headQ).multiply(q2.setFromAxisAngle(v1.set(1, 0, 0), Math.max(0, pitch) * 0.7 + blink * 0.62)));
-      this.follow(lower, head, q1.copy(headQ).multiply(q2.setFromAxisAngle(v1.set(1, 0, 0), -blink * 0.12 + Math.max(0, pitch) * 0.2)));
+      this.follow(b.lidUpper, head, q1.copy(headQ).multiply(q2.setFromAxisAngle(v1.set(1, 0, 0), Math.max(0, pitch) * 0.7 + blink * 0.62)));
+      this.follow(b.lidLower, head, q1.copy(headQ).multiply(q2.setFromAxisAngle(v1.set(1, 0, 0), -blink * 0.12 + Math.max(0, pitch) * 0.2)));
     }
   }
 
@@ -601,25 +651,23 @@ void main() {`)
    * vertical and pitched `footPitch` (toes down) about its own across.
    */
   setLeg(side: number, knee: Vector3, ankle: Vector3, footYaw: number, footPitch = 0): void {
-    const s = suffix(side);
+    const b = this.ix.sides[side < 0 ? 0 : 1];
     const L = this.limb[side < 0 ? 0 : 1];
-    const hip = this.hip(side, v3).clone();
+    const hip = this.hip(side, limbRoot);
     const d = v1.subVectors(knee, hip).normalize();
     const e = v2.subVectors(ankle, knee).normalize();
-    const hinge = new Vector3().crossVectors(d, e);
+    const hinge = limbHinge.crossVectors(d, e);
     if (hinge.lengthSq() < 1e-8) hinge.copy(L.knee).applyQuaternion(this.pelvisQ);
     hinge.normalize();
     frame(d, hinge, q1).multiply(L.thigh);
-    const ul1 = this.bi(`upperleg01.${s}`);
-    this.set(ul1, hip, q1);
-    this.follow(this.bi(`upperleg02.${s}`), ul1);
+    this.set(b.upperleg01, hip, q1);
+    this.follow(b.upperleg02, b.upperleg01);
     frame(e, hinge, q1).multiply(L.shin);
-    const ll1 = this.bi(`lowerleg01.${s}`);
-    this.set(ll1, knee, q1);
-    this.follow(this.bi(`lowerleg02.${s}`), ll1);
+    this.set(b.lowerleg01, knee, q1);
+    this.follow(b.lowerleg02, b.lowerleg01);
     q1.setFromAxisAngle(v1.set(0, 1, 0), footYaw);
     if (footPitch) q1.multiply(q2.setFromAxisAngle(v1.set(1, 0, 0), footPitch));
-    this.set(this.bi(`foot.${s}`), ankle, q1);
+    this.set(b.foot, ankle, q1);
   }
 
   /**
@@ -736,27 +784,24 @@ void main() {`)
    * hinge; the forearm from the elbow toward the wrist, twisting in two steps to meet the hand.
    */
   setArm(side: number, elbow: Vector3): void {
-    const s = suffix(side);
+    const b = this.ix.sides[side < 0 ? 0 : 1];
     const L = this.limb[side < 0 ? 0 : 1];
-    const gh = this.shoulder(side, v3).clone();
-    const wristBone = this.bi(`wrist.${s}`);
-    const wrist = this.at[wristBone];
+    const gh = this.shoulder(side, limbRoot);
+    const wrist = this.at[b.wrist];
     const u = v1.subVectors(elbow, gh).normalize();
     const f = v2.subVectors(wrist, elbow).normalize();
-    const hinge = new Vector3().crossVectors(u, f);
+    const hinge = limbHinge.crossVectors(u, f);
     if (hinge.lengthSq() < 1e-8) hinge.copy(L.hinge).applyQuaternion(this.chestQ);
     hinge.normalize();
     frame(u, hinge, q1).multiply(L.upper);
-    const ua1 = this.bi(`upperarm01.${s}`);
-    this.set(ua1, gh, q1);
-    this.follow(this.bi(`upperarm02.${s}`), ua1);
+    this.set(b.upperarm01, gh, q1);
+    this.follow(b.upperarm02, b.upperarm01);
     // the forearm: about the hinge at the elbow, turned with the hand at the wrist
-    const hingeQ = frame(f, hinge, new Quaternion()).multiply(L.foreHinge);
-    const across = v3.copy(L.across).applyQuaternion(this.q[wristBone]);
-    const twistQ = frame(f, across, new Quaternion()).multiply(L.foreTwist);
-    const la1 = this.bi(`lowerarm01.${s}`);
-    this.set(la1, elbow, q1.copy(hingeQ).slerp(twistQ, 0.4));
-    this.follow(this.bi(`lowerarm02.${s}`), la1, q1.copy(hingeQ).slerp(twistQ, 0.92));
+    const hingeQ = frame(f, hinge, qHinge).multiply(L.foreHinge);
+    const across = v3.copy(L.across).applyQuaternion(this.q[b.wrist]);
+    const twistQ = frame(f, across, qTwist).multiply(L.foreTwist);
+    this.set(b.lowerarm01, elbow, q1.copy(hingeQ).slerp(twistQ, 0.4));
+    this.follow(b.lowerarm02, b.lowerarm01, q1.copy(hingeQ).slerp(twistQ, 0.92));
   }
 
   /** A bone, to hang things on that move with it (its frame is the bind's, turned and moved with the bone). */
@@ -786,10 +831,5 @@ void main() {`)
       for (const h of ray.intersectObject(m, false))
         if (h.face && (!best || h.distance > best.distance)) best = { distance: h.distance, point: h.point.clone(), normal: h.face.normal.clone() };
     return best && { point: best.point, normal: best.normal };
-  }
-
-  /** Sets one bone directly (the braid's links). */
-  setBone(i: number, at: Vector3, q: Quaternion): void {
-    this.set(i, at, q);
   }
 }

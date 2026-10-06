@@ -538,32 +538,6 @@ const CROWNS: Crown[] = [];
 export function treeCrowns(): readonly Crown[] {
   return CROWNS;
 }
-/** The crowns filed in 40 m cells, for `overCrowns`. */
-const CROWN_CELLS = new Map<number, Crown[]>();
-const crownCell = (i: number, j: number) => (i + 4096) * 8192 + (j + 4096);
-
-/**
- * The height a camera at (x, z) must be above to pass over every crown there (with `margin` m to spare), or
- * -Infinity where no crown is: the film's flights keep above it.
- */
-export function overCrowns(x: number, z: number, margin = 1.5): number {
-  let top = -Infinity;
-  const i0 = Math.floor(x / 40);
-  const j0 = Math.floor(z / 40);
-  for (let i = i0 - 1; i <= i0 + 1; i++) {
-    for (let j = j0 - 1; j <= j0 + 1; j++) {
-      for (const c of CROWN_CELLS.get(crownCell(i, j)) ?? []) {
-        // a dome over the crown's top, reaching down to nothing a few metres beyond its edge, so the height to
-        // keep above rises and falls smoothly as a camera comes over it
-        const R = c.r + margin + 4;
-        const d2 = (c.x - x) ** 2 + (c.z - z) ** 2;
-        if (d2 >= R * R) continue;
-        top = Math.max(top, (c.y + 0.85 * c.r + margin) * Math.sqrt(1 - d2 / (R * R)));
-      }
-    }
-  }
-  return top;
-}
 export function kashStand(): { x: number; z: number } | null {
   return thickestKash;
 }
@@ -1185,14 +1159,8 @@ export function buildVegetation(
     (g, i) => grassItems[i].length && group.add(instanced(g, mats.grass, grassItems[i], { layer: LAYER_NO_REFLECT, receive: true })),
   );
 
-  // the banyan's crown too (world/banyan.ts builds it), and every crown filed for `overCrowns`
+  // the banyan's crown too (world/banyan.ts builds it)
   CROWNS.push({ x: BANYAN.x, y: terrainHeight(BANYAN.x, BANYAN.z) + 11, z: BANYAN.z, r: BANYAN.crown, blossom: false });
-  for (const c of CROWNS) {
-    const k = crownCell(Math.floor(c.x / 40), Math.floor(c.z / 40));
-    let list = CROWN_CELLS.get(k);
-    if (!list) CROWN_CELLS.set(k, (list = []));
-    list.push(c);
-  }
 
   return group;
 }

@@ -51,6 +51,11 @@ export function sunDirection(hour: number, out: Vector3): Vector3 {
   return horizonDirection(sunHourAngle(hour), sunDec, out);
 }
 
+/** The sun's direction on another `day` at `hour`, leaving the sun's own day as it is (for places worked out ahead). */
+export function sunDirectionOn(day: number, hour: number, out: Vector3): Vector3 {
+  return horizonDirection(sunHourAngle(hour), declination(((day - 79) / 365.2422) * Math.PI * 2), out);
+}
+
 /** `age` is days since new moon. The moon's small tilt off the ecliptic is ignored. */
 export function moonDirection(hour: number, age: number, out: Vector3): Vector3 {
   const lon = sunLongitude + (age / SYNODIC_MONTH) * Math.PI * 2;

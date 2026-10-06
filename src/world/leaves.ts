@@ -92,6 +92,8 @@ interface Leaf {
 
 export class FallingLeaves {
   readonly mesh: InstancedMesh;
+  /** Scratch for each frame's posing (nothing is made there). */
+  private readonly scratch = { m: new Matrix4(), q: new Quaternion(), turn: new Quaternion(), scale: new Vector3(), up: new Vector3(0, 1, 0) };
   private readonly leaves: Leaf[] = [];
   private readonly cells = new Map<number, Crown[]>();
   private readonly rng = new Rng(57);
@@ -133,11 +135,7 @@ export class FallingLeaves {
   update(dt: number, t: number, eye: Vector3, keepFar = false): void {
     if (dt <= 0) return;
     this.shed(dt, eye);
-    const m = new Matrix4();
-    const q = new Quaternion();
-    const turn = new Quaternion();
-    const scale = new Vector3();
-    const up = new Vector3(0, 1, 0);
+    const { m, q, turn, scale, up } = this.scratch;
     const gust = G.uWind.value.z;
     let n = 0;
     for (let i = 0; i < this.leaves.length; i++) {

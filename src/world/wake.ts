@@ -1,3 +1,4 @@
+import { smoothstep } from '../core/mathx';
 import { HERO_HULL, heroBeamAtWater } from './hull';
 
 // The water the hero boat moves as she goes, one field for the water's surface (which rises and falls with
@@ -17,10 +18,6 @@ const KELVIN = Math.tan((19.47 * Math.PI) / 180);
 const GRAVITY = 9.81;
 
 const sq = (x: number) => x * x;
-const smooth = (a: number, b: number, x: number) => {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
-};
 
 /** Height of the boat's own waves (m) at `q` in her frame, going `speed` m/s through the water; no blade. */
 export function wakeHeight(qx: number, qy: number, speed: number): number {
@@ -40,7 +37,7 @@ export function wakeHeight(qx: number, qy: number, speed: number): number {
     const e = (ax - arm) / (0.35 + d * 0.06);
     const decay = Math.exp(-d * 0.012) / (1 + d * 0.07);
     h += amp * 0.6 * Math.exp(-e * e) * decay * Math.cos((Math.PI * 2 * (d * 0.57 + ax * 0.82)) / (0.6 * lt));
-    const inside = smooth(arm + 0.3, arm - 1.2, ax) * smooth(1.4 * HALF, 2 * HALF, d);
+    const inside = smoothstep(arm + 0.3, arm - 1.2, ax) * smoothstep(1.4 * HALF, 2 * HALF, d);
     h += amp * 0.3 * inside * decay * Math.cos((Math.PI * 2 * d) / lt);
   }
   return h;
@@ -122,7 +119,7 @@ export function shipWakeHeight(qx: number, qy: number, speed: number, half: numb
     const e = (ax - arm) / (0.35 + 0.1 * beam + d * 0.06);
     const decay = Math.exp(-d * 0.0015) / (1 + d * 0.004);
     h += amp * 0.6 * Math.exp(-e * e) * decay * Math.cos((Math.PI * 2 * (d * 0.57 + ax * 0.82)) / (0.6 * lt));
-    const inside = smooth(arm + 0.3, arm - 1.2, ax) * smooth(1.4 * half, 2 * half, d);
+    const inside = smoothstep(arm + 0.3, arm - 1.2, ax) * smoothstep(1.4 * half, 2 * half, d);
     h += amp * 0.3 * inside * decay * Math.cos((Math.PI * 2 * d) / lt);
   }
   return h;

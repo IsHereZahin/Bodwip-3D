@@ -69,6 +69,8 @@ export class Songbirds {
   readonly group = new Group();
   private readonly sitting: InstancedMesh;
   private readonly flying: InstancedMesh;
+  /** Scratch for each frame's posing (nothing is made there). */
+  private readonly scratch = { m: new Matrix4(), q: new Quaternion(), one: new Vector3(1, 1, 1), up: new Vector3(0, 1, 0), p: new Vector3() };
   private readonly birds: Bird[] = [];
   private readonly crowns: readonly Crown[];
   private readonly rng = new Rng(63);
@@ -137,11 +139,7 @@ export class Songbirds {
   /** `still`: night or hard rain, when they keep to their perches. */
   update(dt: number, t: number, eye: Vector3, still: boolean): void {
     if (!this.crowns.length) return;
-    const m = new Matrix4();
-    const q = new Quaternion();
-    const one = new Vector3(1, 1, 1);
-    const up = new Vector3(0, 1, 0);
-    const p = new Vector3();
+    const { m, q, one, up, p } = this.scratch;
     let ns = 0;
     let nf = 0;
     for (const b of this.birds) {

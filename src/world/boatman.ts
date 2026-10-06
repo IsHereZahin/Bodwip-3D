@@ -1,4 +1,5 @@
 import { BufferAttribute, BufferGeometry, DoubleSide, Euler, Group, LatheGeometry, Matrix4, Mesh, MeshStandardMaterial, Quaternion, SphereGeometry, TorusGeometry, Vector2, Vector3 } from 'three';
+import { angleDelta, smoothstep, tableAt } from '../core/mathx';
 import { MeshBuilder } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { clothTexture, weaveTexture } from '../render/textures';
@@ -57,27 +58,10 @@ const GAMCHHA_COUNT = 17;
 /** How far the sando stands off his skin (as built in scripts/humans/build.mjs), and the gamchha off it. */
 const VEST_OFF = 0.012;
 
-/** Linear interpolation in a table of values at even steps from 0 to 1, clamped. */
-function along(table: readonly number[], f: number): number {
-  const x = Math.min(table.length - 1.0001, Math.max(0, f * (table.length - 1)));
-  const k = Math.floor(x);
-  return table[k] + (table[k + 1] - table[k]) * (x - k);
-}
-
-function smoothstep(a: number, b: number, x: number): number {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
-}
-
-/** The shortest signed angle from 0 to `a`. */
-function wrap(a: number): number {
-  return Math.atan2(Math.sin(a), Math.cos(a));
-}
-
 /** The lungi's folds: pleats gathered at the knot, the overlap running down from it, drape, the waist's roll, a ragged hem. */
 export function lungiFold(t: number, th: number): { r: number; y: number } {
   const knot = Math.PI / 2;
-  const near = (c: number, w: number) => Math.exp(-((wrap(th - c) / w) ** 2));
+  const near = (c: number, w: number) => Math.exp(-((angleDelta(c, th) / w) ** 2));
   const drape = (0.004 + 0.014 * t) * (0.55 * Math.sin(5 * th + 1.3) + 0.35 * Math.sin(9 * th + 0.4) + 0.22 * Math.sin(14 * th + 2.1));
   const pleats = t < 0.45 ? 0.007 * near(knot, 0.55) * (1 - t / 0.45) * Math.sin(th * 24) : 0;
   const overlap = 0.011 * near(knot + 0.25, 0.1) * (t > 0.05 ? 1 : 0.4);
@@ -88,28 +72,36 @@ export function lungiFold(t: number, th: number): { r: number; y: number } {
   return { r: drape + pleats + overlap + roll + between, y: hem };
 }
 
+const ikD = new Vector3();
+const ikDir = new Vector3();
+const ikBend = new Vector3();
+
 /** Two-bone IK: places `mid` (knee or elbow) so the chain from `root` reaches `target`, bending toward `pole`. */
 export function solveTwoBone(root: Vector3, target: Vector3, a: number, b: number, pole: Vector3, mid: Vector3, end: Vector3): void {
-  const d = new Vector3().subVectors(target, root);
+  const d = ikD.subVectors(target, root);
   let len = d.length();
   const reach = (a + b) * 0.999;
   if (len > reach) {
     d.multiplyScalar(reach / len);
     len = reach;
   }
-  const dir = d.clone().normalize();
+  const dir = ikDir.copy(d).normalize();
   end.copy(root).add(d);
   const x = (a * a - b * b + len * len) / (2 * len);
   const h = Math.sqrt(Math.max(a * a - x * x, 0));
-  const bend = new Vector3().subVectors(pole, root);
+  const bend = ikBend.subVectors(pole, root);
   bend.addScaledVector(dir, -bend.dot(dir)).normalize();
   mid.copy(root).addScaledVector(dir, x).addScaledVector(bend, h);
 }
 
+/** A damped spring step toward `target` (its answer is reused by the next call). */
+const sprung: [number, number] = [0, 0];
 function spring(x: number, v: number, target: number, f: number, zeta: number, dt: number): [number, number] {
   const w = f * Math.PI * 2;
   v += (w * w * (target - x) - 2 * zeta * w * v) * dt;
-  return [x + v * dt, v];
+  sprung[0] = x + v * dt;
+  sprung[1] = v;
+  return sprung;
 }
 
 /**
@@ -312,7 +304,7 @@ export class Boatman {
       ),
       hatMat,
     );
-    const rim = new Mesh(new TorusGeometry(0.345, 0.011, 5, 32), new MeshStandardMaterial({ color: '#5a4630', roughness: 0.8 }));
+    const rim = new Mesh(new TorusGeometry(0.345, 0.011, 5, 32), patchMaterial(new MeshStandardMaterial({ color: '#5a4630', roughness: 0.8 }), {}));
     rim.rotation.x = Math.PI / 2;
     rim.position.y = -0.008;
     const hatHolder = new Group();
@@ -480,6 +472,9 @@ export class Boatman {
     n.copy(this.back).applyQuaternion(this.body.headQ);
   };
 
+  /** Each end's pin, made once. */
+  private readonly tailPins = [this.tailPin(0), this.tailPin(1)];
+
   private readonly tailOut = (p: Vector3, out: Vector3): void => {
     out.subVectors(p, this.skullAt).normalize();
   };
@@ -519,7 +514,7 @@ export class Boatman {
     this.legAcross.normalize();
     this.legFwd.crossVectors(this.legAcross, UP).normalize();
     // the thigh's outline is its widest reach (the buttock's, the muscle's): the cloth hangs round less
-    const r = along(this.body.data.sections.thigh, s) * 0.8;
+    const r = tableAt(this.body.data.sections.thigh, s) * 0.8;
     const clear = 0.012 + 0.03 * smoothstep(0, 0.5, s);
     const belly = Math.sin(Math.PI * s);
     // at the hips it carries on from the waist's ellipse
@@ -544,13 +539,16 @@ export class Boatman {
     out.addScaledVector(this.cAy, -out.dot(this.cAy)).normalize();
   };
 
-  /** Keeps the lungi off his thighs and the tops of his shins, a finger's width proud of the skin. */
+  /** The thigh's and the shin's top's radius at `f` along them, a finger's width proud of the skin. */
+  private readonly thighOff = (f: number): number => tableAt(this.body.data.sections.thigh, f) + 0.012;
+  private readonly shinOff = (f: number): number => tableAt(this.body.data.sections.shin, f * 0.3) + 0.012;
+
+  /** Keeps the lungi off his thighs and the tops of his shins (asked for each of its points, every frame: no closures made here). */
   private readonly keepOffLegs = (p: Vector3): void => {
-    const { thigh, shin } = this.body.data.sections;
     for (let i = 0; i < 2; i++) {
       // not round the top of the thigh: the hip joint is inside him, and the waist sits close above it
-      this.pushOff(p, this.hips[i], this.knees[i], (f) => along(thigh, f) + 0.012, false);
-      this.pushOff(p, this.knees[i], this.shinTop[i], (f) => along(shin, f * 0.3) + 0.012, true);
+      this.pushOff(p, this.hips[i], this.knees[i], this.thighOff, false);
+      this.pushOff(p, this.knees[i], this.shinTop[i], this.shinOff, true);
     }
   };
 
@@ -710,7 +708,7 @@ export class Boatman {
     this.gamchha.update(dt, time, this.gamchhaPin, this.awayFromChest, this.keepOffChest, wind, gravity);
     if (this.tails.length) {
       this.body.onHead(this.skull, this.skullAt);
-      this.tails.forEach((tail, k) => tail.update(dt, time + k * 1.7, this.tailPin(k), this.tailOut, this.tailKeep, wind, gravity));
+      this.tails.forEach((tail, k) => tail.update(dt, time + k * 1.7, this.tailPins[k], this.tailOut, this.tailKeep, wind, gravity));
     }
 
     // his weight, for the boat: his hips and his chest (which leans out over the blade with each pull)

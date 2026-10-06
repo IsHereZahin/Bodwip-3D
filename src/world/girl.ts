@@ -18,6 +18,7 @@ import {
   Vector4,
 } from 'three';
 import { G } from '../core/globals';
+import { angleDelta, smoothstep, tableAt } from '../core/mathx';
 import { windAt } from '../env/wind';
 import { MeshBuilder, rgb, scaleRgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
@@ -108,29 +109,15 @@ const RAIN = { open: 0.1, close: 0.04, act: 2.4, react: 1.2 };
 /** Its tilt answers the wind as a damped spring (Hz, damping); how far she lets it go (rad). */
 const TILT = { f: 1.15, zeta: 0.32, max: 0.5 };
 
-function smooth(a: number, b: number, x: number): number {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
-}
+const ease = (x: number) => smoothstep(0, 1, x);
 
-const ease = (x: number) => smooth(0, 1, x);
-
-/** Linear interpolation in a table of values at even steps from 0 to 1, clamped. */
-function along(table: readonly number[], f: number): number {
-  const x = Math.min(table.length - 1.0001, Math.max(0, f * (table.length - 1)));
-  const k = Math.floor(x);
-  return table[k] + (table[k + 1] - table[k]) * (x - k);
-}
-
-/** A damped spring step toward `target`, for the eased angles of her gaze. */
+/** A damped spring step toward `target`, for the eased angles of her gaze (its answer is reused by the next call). */
+const stepped: [number, number] = [0, 0];
 function follow(x: number, v: number, target: number, w: number, dt: number): [number, number] {
   v += (w * w * (target - x) - 2 * w * v) * dt;
-  return [x + v * dt, v];
-}
-
-/** The shortest signed angle from `a` to `b`. */
-function turnTo(a: number, b: number): number {
-  return Math.atan2(Math.sin(b - a), Math.cos(b - a));
+  stepped[0] = x + v * dt;
+  stepped[1] = v;
+  return stepped;
 }
 
 /** The canopy's height below its crown at a share `f` of its radius: a shallow dome. */
@@ -290,9 +277,13 @@ export class Girl {
    * carried closed by her side, ½ held up before her, 1 over her head), and what she is doing with it.
    */
   private hasBrolly = false;
+  /** Whether she brought it out: settled only while nobody watches her (or at a jump), never in sight. */
+  private brought = false;
   private open = 0;
   private raise = 0;
   private brollyAct: { up: boolean; t: number } | null = null;
+  /** Where she looks this frame (`gaze` fills it). */
+  private readonly gazeNow: { yaw: number; pitch: number; at: Vector3 | null } = { yaw: 0, pitch: 0, at: null };
   private rainFor = 0;
   private readonly upright = new Vector3();
   private readonly holdAt = new Vector3();
@@ -425,12 +416,12 @@ export class Girl {
       rings: 22,
       fold: (t, th) => ({
         r:
-          0.005 * Math.sin(th * 32) * (1 - smooth(0, 0.25, t)) +
-          (0.016 * Math.sin(th * 11 + 0.5) + 0.01 * Math.sin(th * 7 + 2.1) + 0.012 * (0.5 + 0.5 * Math.sin(th * 4 + 1))) * smooth(0.08, 1, t),
-        y: 0.006 * Math.sin(th * 11 + 0.5) * smooth(0.9, 1, t),
+          0.005 * Math.sin(th * 32) * (1 - smoothstep(0, 0.25, t)) +
+          (0.016 * Math.sin(th * 11 + 0.5) + 0.01 * Math.sin(th * 7 + 2.1) + 0.012 * (0.5 + 0.5 * Math.sin(th * 4 + 1))) * smoothstep(0.08, 1, t),
+        y: 0.006 * Math.sin(th * 11 + 0.5) * smoothstep(0.9, 1, t),
       }),
-      freedom: (t) => 0.95 * smooth(0.1, 1, t),
-      shade: (t) => (t < 0.025 ? 0.85 : 0.94 + 0.06 * smooth(0.85, 1, t)),
+      freedom: (t) => 0.95 * smoothstep(0.1, 1, t),
+      shade: (t) => (t < 0.025 ? 0.85 : 0.94 + 0.06 * smoothstep(0.85, 1, t)),
       uRepeat: 6,
       vRepeat: 1,
     });
@@ -440,7 +431,7 @@ export class Girl {
     const first = ORNA_PINS[0];
     const last = ORNA_PINS[ORNA_PINS.length - 1];
     // narrower down her front (over her breast), wider down her back
-    const open = (i: number) => (i < first ? (ORNA.front - ORNA.narrow) * smooth(0, 3, first - i) : (ORNA.back - ORNA.narrow) * smooth(0, 4, i - last));
+    const open = (i: number) => (i < first ? (ORNA.front - ORNA.narrow) * smoothstep(0, 3, first - i) : (ORNA.back - ORNA.narrow) * smoothstep(0, 4, i - last));
     this.orna = new ClothRibbon(ornaMat, ORNA.count, 0.1, (i) => ORNA.narrow + open(i), ORNA_PINS, 1, 1);
     const neck = body.bindOf('neck01');
     const mid = (y: number) => body.bindOf('spine01').z + radiusAt(chestMap, y - body.bindOf('spine01').y, 0).zc;
@@ -554,7 +545,7 @@ export class Girl {
     if (jumped) {
       this.crossing = -1;
       this.side = along > WATCH.cross + 2 ? 1 : 0;
-      this.lean = this.side === 1 ? 1 : smooth(WATCH.notice, WATCH.lean, along);
+      this.lean = this.side === 1 ? 1 : smoothstep(WATCH.notice, WATCH.lean, along);
     }
     if (this.crossing < 0 && this.side === 0 && near && along > WATCH.cross && along < WATCH.cross + 6) this.crossing = 0;
     if (this.crossing >= 0) {
@@ -564,7 +555,7 @@ export class Girl {
         this.side = 1;
       }
     }
-    const want = this.crossing >= 0 ? 0 : this.side === 0 ? smooth(WATCH.notice, WATCH.lean, along) : 1;
+    const want = this.crossing >= 0 ? 0 : this.side === 0 ? smoothstep(WATCH.notice, WATCH.lean, along) : 1;
     this.lean += (want - this.lean) * (jumped ? 1 : 1 - Math.exp(-dt / 1.4));
     const hand = this.crossing < 0 && this.lean > 0.55 ? 1 : 0;
     this.handOn += (hand - this.handOn) * (jumped ? 1 : 1 - Math.exp(-dt / 0.45));
@@ -600,7 +591,7 @@ export class Girl {
       const k = ease(f.t);
       f.at.lerpVectors(f.from, f.want, k);
       f.at.y += STEP.lift * Math.sin(Math.PI * f.t);
-      f.yaw = f.fromYaw + turnTo(f.fromYaw, f.wantYaw) * k;
+      f.yaw = f.fromYaw + angleDelta(f.fromYaw, f.wantYaw) * k;
       if (f.t >= 1) {
         f.at.copy(f.want);
         f.yaw = f.wantYaw;
@@ -612,7 +603,7 @@ export class Girl {
     // the foot that lags more, or the one that did not step last when both lag
     const lag = this.feet.map((f) => {
       const d = Math.hypot(f.at.x - f.want.x, f.at.z - f.want.z);
-      const turn = Math.abs(turnTo(f.yaw, f.wantYaw));
+      const turn = Math.abs(angleDelta(f.yaw, f.wantYaw));
       return d > STEP.slack || turn > STEP.turn ? d + turn * 0.3 : 0;
     });
     if (lag[0] <= 0 && lag[1] <= 0) return;
@@ -633,12 +624,12 @@ export class Girl {
       // where he will come out from under her: the water beyond the far parapet
       const w = bridgeToWorld(FAR.x, BRIDGE.width / 2 + 4);
       this.target.set(w.x, BRIDGE.water + 0.8, w.z);
-      watch = smooth(0.2, 0.55, this.crossing);
+      watch = smoothstep(0.2, 0.55, this.crossing);
     } else if (this.side === 0 ? along > WATCH.notice : along < WATCH.gone * 1.6) {
       this.target.copy(man);
       // once he has gone a long way she keeps looking where he went, her gaze lifting a little along the khal
       if (this.side === 1 && along > WATCH.gone) this.target.y += (along - WATCH.gone) * 0.05;
-      watch = this.side === 0 ? smooth(WATCH.notice, WATCH.notice + 5, along) : 1;
+      watch = this.side === 0 ? smoothstep(WATCH.notice, WATCH.notice + 5, along) : 1;
     }
     if (watch <= 0) return;
     const eyes = this.v.copy(this.body.head).applyQuaternion(this.group.quaternion).add(this.group.position);
@@ -664,11 +655,11 @@ export class Girl {
     const h = SKIRT_TOP - t * SKIRT_DROP;
     out.c.set(0, h, this.hips.zc * (1 - t)).applyQuaternion(this.pelvisQ).add(this.pelvis);
     // lower down it hangs round both legs (over its lining), clear of them, standing out toward the hem
-    const legs = smooth(0.15, 0.6, t);
+    const legs = smoothstep(0.15, 0.6, t);
     const half = this.hipAt[0].distanceTo(this.hipAt[1]) / 2;
-    const thigh = along(this.body.data.sections.thigh, Math.min(1, t * 1.1)) + SALWAR_OFF;
+    const thigh = tableAt(this.body.data.sections.thigh, Math.min(1, t * 1.1)) + SALWAR_OFF;
     // and round her feet as they part in a step
-    const stride = Math.max(0, this.ankles[0].distanceTo(this.ankles[1]) - 0.2) * 0.5 * smooth(0.5, 1, t);
+    const stride = Math.max(0, this.ankles[0].distanceTo(this.ankles[1]) - 0.2) * 0.5 * smoothstep(0.5, 1, t);
     out.ax.copy(ax);
     out.az.copy(az);
     out.a = Math.max(this.hips.a, half + thigh * legs + 0.01) + SKIRT_FLARE * t * t;
@@ -680,8 +671,8 @@ export class Girl {
   private readonly keepOffLegs = (p: Vector3): void => {
     const { thigh, shin } = this.body.data.sections;
     for (let i = 0; i < 2; i++) {
-      this.pushOff(p, this.hipAt[i], this.knees[i], along(thigh, 0.5) + SALWAR_OFF + 0.01);
-      this.pushOff(p, this.knees[i], this.ankles[i], along(shin, 0.2) + SALWAR_OFF);
+      this.pushOff(p, this.hipAt[i], this.knees[i], tableAt(thigh, 0.5) + SALWAR_OFF + 0.01);
+      this.pushOff(p, this.knees[i], this.ankles[i], tableAt(shin, 0.2) + SALWAR_OFF);
     }
   };
 
@@ -743,18 +734,21 @@ export class Girl {
   /**
    * Her umbrella this instant: with her in the rains, opened as the rain comes and closed once it stops; raised
    * before her and opened, then lifted over her head (or lowered before her, closed, and carried down by her side).
-   * A jump (`snap`: a new scene, the journey begun again) finds it as the weather is.
+   * A jump (`snap`: a new scene, the journey begun again) finds it as the weather is. Whether she has brought it
+   * changes only out of sight (`watched` false): a shower out of the rains catches her without it while she is
+   * watched, and once it is over she carries it closed till nobody is looking; it never appears or vanishes in view.
    */
-  private brollyWeather(dt: number, rain: number, rainy: boolean, snap: boolean): void {
+  private brollyWeather(dt: number, rain: number, rainy: boolean, snap: boolean, watched: boolean): void {
     const carry = rainy || rain > 0.05;
     if (snap) {
       this.brollyAct = null;
-      this.hasBrolly = carry;
+      this.brought = this.hasBrolly = carry;
       this.open = this.raise = carry && rain > RAIN.open ? 1 : 0;
       return;
     }
-    // (while she is closing it she still has it, whatever the season does)
-    this.hasBrolly = carry || this.open > 0;
+    if (!watched) this.brought = carry;
+    // (while she is closing it and lowering it to her side she still has it, whatever the season does)
+    this.hasBrolly = this.brought || this.open > 0 || this.raise > 0 || this.brollyAct !== null;
     const want = this.hasBrolly && (this.open > 0.5 ? rain > RAIN.close : rain > RAIN.open);
     const act = this.brollyAct;
     if (!act) {
@@ -766,9 +760,9 @@ export class Girl {
     act.t += dt;
     const k = Math.min(1, act.t / RAIN.act);
     // up: raised before her (to ⅓), opened (to ⅔), lifted over her head; down the other way
-    const lift = smooth(0, 0.33, k);
-    const spread = smooth(0.33, 0.67, k);
-    const over = smooth(0.67, 1, k);
+    const lift = smoothstep(0, 0.33, k);
+    const spread = smoothstep(0.33, 0.67, k);
+    const over = smoothstep(0.67, 1, k);
     if (act.up) {
       this.raise = 0.5 * lift + 0.5 * over;
       this.open = spread;
@@ -782,9 +776,10 @@ export class Girl {
   /**
    * Poses her for this instant. `t`: seconds; `man`: the majhi's head (world), whom she watches; `rain`: how hard
    * it rains (0..1), which has her open her umbrella and tilt it into the wind; `rainy`: the rains' season, when
-   * she has it with her.
+   * she has it with her; `watched`: whether a camera is near enough to see her (what she carries changes only
+   * when it isn't).
    */
-  update(dt: number, t: number, man: Vector3, rain: number, rainy: boolean): void {
+  update(dt: number, t: number, man: Vector3, rain: number, rainy: boolean, watched: boolean): void {
     const body = this.body;
     const { dims } = body;
     const way = journeyFrame(man.x, man.z);
@@ -793,7 +788,7 @@ export class Girl {
     const nearKhal = way !== null && Math.abs(alongWay) < 400 && Math.abs(bridgeFrame(man.x, man.z).x) < 18;
     const wasAlong = this.lastAlong;
     this.choreograph(dt, alongWay, nearKhal);
-    this.brollyWeather(dt, rain, rainy, !Number.isFinite(wasAlong) || Math.abs(alongWay - wasAlong) > 6);
+    this.brollyWeather(dt, rain, rainy, !Number.isFinite(wasAlong) || Math.abs(alongWay - wasAlong) > 6, watched);
     this.place();
     this.stepFeet(dt);
 
@@ -818,7 +813,7 @@ export class Girl {
     this.pelvisQ.setFromEuler(this.e.set(0.03 + leanZ * 0.5 + 0.06 * this.handOn, 0.06 * shift + (swing >= 0 ? (swing === 0 ? 0.07 : -0.07) * walk : 0), -0.045 * shift + leanX * 0.5 - swayX * 0.6, 'YXZ'));
 
     // where she looks: the chest turns with a share of it, the head the rest, her eyes ahead of both
-    const look = { yaw: 0, pitch: 0, at: null as Vector3 | null };
+    const look = this.gazeNow;
     this.gaze(t, man, alongWay, look);
     const step = Math.min(dt, 1 / 20);
     [this.lookYaw, this.vYaw] = follow(this.lookYaw, this.vYaw, look.yaw, 1.6, step);
@@ -843,7 +838,7 @@ export class Girl {
       const pole = this.pole.copy(hip).add(this.v.set(side * 0.1, -0.3, 1).applyQuaternion(this.pelvisQ));
       solveTwoBone(hip, ankle, dims.thigh, dims.shin, pole, this.knees[i], this.end);
       const pitch = f.t >= 0 ? 0.22 * Math.sin(Math.PI * 2 * f.t) : 0;
-      body.setLeg(side, this.knees[i], this.end, turnTo(this.rootYaw, f.yaw), pitch);
+      body.setLeg(side, this.knees[i], this.end, angleDelta(this.rootYaw, f.yaw), pitch);
     }
 
     // the umbrella: the gusts push its canopy downwind and she holds it against them; when the rain drives
@@ -876,7 +871,8 @@ export class Girl {
       if (this.handOn > 0.001) out.lerp(this.v.set(0.17 * side, BRIDGE.parapetHeight + 0.045, face + 0.07), ease(this.handOn));
       return out;
     };
-    const handThumb = (side: number) => this.v.set(side * (0.1 + 0.6 * this.handOn), -0.2 * (1 - this.handOn), 1 - 0.6 * this.handOn).normalize().applyQuaternion(this.pelvisQ).clone();
+    // (in this.v: each is handed over before the next is asked for)
+    const handThumb = (side: number) => this.v.set(side * (0.1 + 0.6 * this.handOn), -0.2 * (1 - this.handOn), 1 - 0.6 * this.handOn).normalize().applyQuaternion(this.pelvisQ);
 
     // the umbrella in her right hand: over her head (giving a little to the tilt), held up before her, or carried
     // closed by its handle, its tip down by her foot
@@ -903,7 +899,7 @@ export class Girl {
     if (this.hasBrolly) this.placeHand(right, this.grip, this.shaftDir);
     else this.placeHand(right, easy(-1, -swingArm, this.holdAt), handThumb(-1));
     // her left hangs easy, or rests on the coping
-    this.placeHand(left, easy(1, swingArm, this.v2).clone(), handThumb(1));
+    this.placeHand(left, easy(1, swingArm, this.v2), handThumb(1));
     for (const arm of this.arms) {
       const shoulder = body.shoulder(arm.side, arm.shoulder);
       const pole = this.pole.set(arm.side * 0.4, -0.5, -0.35).applyQuaternion(this.chestQ).add(shoulder);
@@ -931,7 +927,7 @@ export class Girl {
     const onDeck = this.v3.set(sx, 0, sz).applyQuaternion(this.group.quaternion).add(this.group.position);
     const inside = Math.abs(bridgeFrame(onDeck.x, onDeck.z).z) < BRIDGE.width / 2 - 0.3;
     this.brollyShadow.position.set(sx, 0.014, sz);
-    const strength = smooth(0.12, 0.4, key.y) * (1 - G.uOvercast.value * 0.8) * (inside ? 1 : 0);
+    const strength = smoothstep(0.12, 0.4, key.y) * (1 - G.uOvercast.value * 0.8) * (inside ? 1 : 0);
     (this.brollyShadow.material as MeshBasicMaterial).opacity = 0.42 * strength * this.open;
     this.brollyShadow.visible = strength * this.open > 0.01;
 

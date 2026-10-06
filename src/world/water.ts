@@ -49,9 +49,10 @@ const FIELD_WIDE: FieldRect = {
 };
 /**
  * The fine field round the camera: 1 km square at 4 m a texel, so the creeks and the khal have their own
- * depth. Rebuilt round the camera once it strays `drift` m from the middle, `rows` rows a frame.
+ * depth. Rebuilt round the camera once it strays `drift` m from the middle, `ms` milliseconds of it a frame (a
+ * whole one is ≈0.5 s of work: a fixed 24 rows a frame cost ≈50 ms a frame for a dozen frames after every cut).
  */
-const FINE = { size: 1024, texels: 256, drift: 300, rows: 24 };
+const FINE = { size: 1024, texels: 256, drift: 300, ms: 2 };
 
 /** Tiling ripple normals, generated once. */
 function rippleNormals(maxAnisotropy: number): DataTexture {
@@ -126,30 +127,70 @@ function fillField(o: FieldRect, data: Uint16Array, from: number, to: number): v
   }
 }
 
-function fieldTexture(o: FieldRect): { texture: DataTexture; bounds: Vector4 } {
+function fieldTexture(o: FieldRect, filled = true): { texture: DataTexture; bounds: Vector4 } {
   const data = new Uint16Array(o.w * o.h * 4);
-  fillField(o, data, 0, o.h);
+  if (filled) fillField(o, data, 0, o.h);
   const texture = new DataTexture(data, o.w, o.h, RGBAFormat, HalfFloatType);
   texture.minFilter = texture.magFilter = LinearFilter;
   texture.needsUpdate = true;
   return { texture, bounds: new Vector4(o.x0, o.z0, 1 / o.sx, 1 / o.sz) };
 }
 
+/** A field being filled, a few rows at a time. */
+interface Filling {
+  rect: FieldRect;
+  data: Uint16Array;
+  row: number;
+}
+
 /**
  * The fine field follows the camera: once it strays from the field's middle a new one is filled round it a
- * few rows a frame (no hitch), then swapped in whole.
+ * little each frame (no hitch), then swapped in whole; beyond the fine field the wide one stands in meanwhile.
+ * The film readies the field where its next shot opens ahead of the cut (`warm`), and the camera takes it up
+ * when it gets there. Two textures take turns: the one readied ahead is uploaded to the GPU before the cut, so
+ * the cut's frame only switches to it.
  */
 class FineField {
-  readonly texture: DataTexture;
+  /** The water's `tField`: the texture of the field in use. */
+  readonly uniform: { value: DataTexture };
   readonly bounds: Vector4;
+  private readonly textures: [DataTexture, DataTexture];
   private rect: FieldRect;
-  private next: { rect: FieldRect; data: Uint16Array; row: number } | null = null;
+  private next: Filling | null = null;
+  private ahead: Filling | null = null;
+  /** The filling the spare texture already holds, uploaded (the one readied ahead); null if none. */
+  private spareHolds: Filling | null = null;
+  private readonly upload: (texture: Texture) => void;
 
-  constructor(x: number, z: number) {
+  constructor(x: number, z: number, upload: (texture: Texture) => void) {
     this.rect = FineField.around(x, z);
     const f = fieldTexture(this.rect);
-    this.texture = f.texture;
+    this.textures = [f.texture, fieldTexture(this.rect, false).texture];
+    this.uniform = { value: f.texture };
     this.bounds = f.bounds;
+    this.upload = upload;
+  }
+
+  private get spare(): DataTexture {
+    return this.textures[this.uniform.value === this.textures[0] ? 1 : 0];
+  }
+
+  /** Puts a filled field's data in the spare texture (uploaded now if `now`, else when it is first drawn). */
+  private stage(f: Filling, now: boolean): void {
+    const spare = this.spare;
+    (spare.image.data as Uint16Array).set(f.data);
+    spare.needsUpdate = true;
+    if (now) this.upload(spare);
+    this.spareHolds = f;
+  }
+
+  /** Shows a filled field: the spare texture, holding it already or given it now. */
+  private show(f: Filling): void {
+    if (this.spareHolds !== f) this.stage(f, false);
+    this.uniform.value = this.spare;
+    this.spareHolds = null;
+    this.bounds.set(f.rect.x0, f.rect.z0, 1 / f.rect.sx, 1 / f.rect.sz);
+    this.rect = f.rect;
   }
 
   private static around(x: number, z: number): FieldRect {
@@ -158,23 +199,50 @@ class FineField {
     return { x0: Math.round((x - FINE.size / 2) / step) * step, z0: Math.round((z - FINE.size / 2) / step) * step, sx: FINE.size, sz: FINE.size, w: FINE.texels, h: FINE.texels };
   }
 
+  /** How far (x, z) is from a field's middle (m, the larger of the two ways). */
+  private static off(rect: FieldRect, x: number, z: number): number {
+    return Math.max(Math.abs(x - rect.x0 - FINE.size / 2), Math.abs(z - rect.z0 - FINE.size / 2));
+  }
+
+  private static start(x: number, z: number): Filling {
+    return { rect: FineField.around(x, z), data: new Uint16Array(FINE.texels * FINE.texels * 4), row: 0 };
+  }
+
+  /** Fills rows of `f` until `until` (performance.now()), one at least; true once it is whole. */
+  private static fill(f: Filling, until: number): boolean {
+    do {
+      fillField(f.rect, f.data, f.row, f.row + 1);
+      f.row++;
+    } while (f.row < f.rect.h && performance.now() < until);
+    return f.row >= f.rect.h;
+  }
+
   /** Follows the camera at (x, z); `now` rebuilds round it at once (stills, jumps). */
   update(x: number, z: number, now = false): void {
+    // the camera has come where a field was being readied: it is the one to follow now
+    if (this.ahead && FineField.off(this.ahead.rect, x, z) < FINE.drift) {
+      this.next = this.ahead;
+      this.ahead = null;
+    }
     if (!this.next) {
-      const off = Math.max(Math.abs(x - this.rect.x0 - FINE.size / 2), Math.abs(z - this.rect.z0 - FINE.size / 2));
-      if (off < (now ? 8 : FINE.drift)) return;
-      this.next = { rect: FineField.around(x, z), data: new Uint16Array(FINE.texels * FINE.texels * 4), row: 0 };
+      if (FineField.off(this.rect, x, z) < (now ? 8 : FINE.drift)) return;
+      this.next = FineField.start(x, z);
     }
     const n = this.next;
-    const to = now ? n.rect.h : Math.min(n.rect.h, n.row + FINE.rows);
-    fillField(n.rect, n.data, n.row, to);
-    n.row = to;
-    if (n.row < n.rect.h) return;
-    (this.texture.image.data as Uint16Array).set(n.data);
-    this.texture.needsUpdate = true;
-    this.bounds.set(n.rect.x0, n.rect.z0, 1 / n.rect.sx, 1 / n.rect.sz);
-    this.rect = n.rect;
+    if (n.row < n.rect.h && !FineField.fill(n, now ? Infinity : performance.now() + FINE.ms)) return;
+    this.show(n);
     this.next = null;
+  }
+
+  /** Readies the field round (x, z) until `until` (performance.now()), to be taken up when the camera comes; true once ready. */
+  warm(x: number, z: number, until: number): boolean {
+    if (FineField.off(this.rect, x, z) < FINE.drift) return true;
+    if (!this.ahead || FineField.off(this.ahead.rect, x, z) > 8) this.ahead = FineField.start(x, z);
+    const a = this.ahead;
+    if (a.row < a.rect.h && !(performance.now() < until && FineField.fill(a, until))) return false;
+    // ready: into the spare texture and onto the GPU now, while only one shot is drawn (it would be the cut's frame)
+    if (this.spareHolds !== a) this.stage(a, true);
+    return true;
   }
 }
 
@@ -738,6 +806,8 @@ export interface Water {
   inland: Mesh;
   /** Keeps the fine field round the camera at (x, z) (`now` rebuilds it at once), and the mirror at the level of the water nearest it. */
   update(x: number, z: number, now?: boolean): void;
+  /** Readies the fine field round (x, z) until `until` (performance.now()), for a shot about to open there; true once ready. */
+  warm(x: number, z: number, until: number): boolean;
   /** The hero boat: x, z, heading, speed through the water. */
   boat: Vector4;
   /** Its paddle blade in the boat's frame (x across, z along), how hard it pulls, how deep it is (0..1). */
@@ -753,8 +823,9 @@ export interface Water {
   ambient: Color;
 }
 
-export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAnisotropy: number): Water {
-  const field = new FineField(0, 0);
+/** `upload` puts a texture on the GPU now (the renderer's `initTexture`). */
+export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAnisotropy: number, upload: (texture: Texture) => void): Water {
+  const field = new FineField(0, 0, upload);
   const wide = fieldTexture(FIELD_WIDE);
   // every shader that asks which water stands where (GLSL_COMMON's waterLevels) reads it through G
   const levels = levelTexture();
@@ -773,7 +844,7 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
     tRefl: { value: reflection },
     uTexMatrix: { value: textureMatrix },
     tNormal: { value: rippleNormals(maxAnisotropy) },
-    tField: { value: field.texture },
+    tField: field.uniform,
     uField: { value: field.bounds },
     tFieldWide: { value: wide.texture },
     uFieldWide: { value: wide.bounds },
@@ -820,6 +891,7 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
   return {
     mesh: sea,
     inland: make(true),
+    warm: (x, z, until) => field.warm(x, z, until),
     update: (x, z, now = false) => {
       field.update(x, z, now);
       G.uMirrorLevel.value = mirrorLevelAt(x, z);

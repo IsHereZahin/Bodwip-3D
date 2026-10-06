@@ -571,8 +571,8 @@ for (const [name, spec] of Object.entries(CHARACTERS)) {
       const deep = interior(BODY, region);
       for (let i = 0; i < NV; i++) if (deep[i]) hide[i] = 1;
     } else if (garment === 'blouse') {
-      // a plain cotton saree blouse: a round neck, short sleeves to the middle of the upper arm, its hem at the
-      // waist (the saree's skirt and আঁচল are cloth, world/girl.ts)
+      // a plain cotton blouse: a round neck, short sleeves to the middle of the upper arm, its hem at the waist
+      // (the lehenga's skirt and the ওড়না are cloth, world/girl.ts)
       const sleeve = (i) => {
         const side = P[i * 3] > 0 ? 0 : 1;
         const a = L.gh[side];
@@ -693,10 +693,6 @@ for (const [name, spec] of Object.entries(CHARACTERS)) {
     parts.hair = part(tris, hair.at, hair.n, hair.px.obj.vt, (v) => skinOf(proxyWeights(hair.px.refs[v])), null, reach, lock);
   }
 
-  // the braid: its hanging part gets a chain of bones of its own, which the scene swings (world/human.ts)
-  let braid = null;
-  if (spec.hair.braid) braid = braidChain(hair, L, out, parts, bones);
-
   // measurements for the cloth and the posing
   const trunkOnly = ([a, b, c]) => [a, b, c].every((k) => arms(cat(k.v)) < 0.5 && catW.head[k.v] < 0.5 && catW.thigh[k.v] < 0.5);
   const noArms = ([a, b, c]) => [a, b, c].every((k) => arms(cat(k.v)) < 0.5 && catW.head[k.v] < 0.5);
@@ -743,7 +739,6 @@ for (const [name, spec] of Object.entries(CHARACTERS)) {
   out.characters[name] = {
     height: spec.height,
     bones,
-    extra: braid,
     crown: round(crown),
     sections,
     parts: Object.fromEntries(Object.entries(parts).map(([k, p]) => [k, putPart(p)])),
@@ -757,62 +752,6 @@ for (const [name, spec] of Object.entries(CHARACTERS)) {
   };
   const counts = Object.entries(parts).map(([k, p]) => `${k} ${p.position.length / 3}v/${p.index.length / 3}t`).join(', ');
   console.log(`${name}: ${spec.height} m; ${counts}`);
-}
-
-/**
- * Takes the braid out of the hair's head: the hair hanging below the nape gets a chain of bones down its middle
- * (appended after the skeleton's own, the first one's parent the head), and those vertices are weighted to the
- * nearest two links. Returns the chain's joints for the scene.
- */
-function braidChain(hair, L, out, parts, bones) {
-  const { px, at, n } = hair;
-  const count = px.refs.length;
-  const nape = L.head[1] - 0.01;
-  const hanging = [];
-  for (let i = 0; i < count; i++) if (at[i * 3 + 1] < nape) hanging.push(i);
-  if (!hanging.length) return null;
-  // the braid's middle line, from the nape down, at even steps of height
-  let lowest = Infinity;
-  for (const i of hanging) lowest = Math.min(lowest, at[i * 3 + 1]);
-  const LINKS = 8;
-  const joints = [];
-  for (let k = 0; k <= LINKS; k++) {
-    const y = nape - ((nape - lowest) * k) / LINKS;
-    let sx = 0;
-    let sz = 0;
-    let n = 0;
-    for (const i of hanging)
-      if (Math.abs(at[i * 3 + 1] - y) < (nape - lowest) / LINKS / 1.5) {
-        sx += at[i * 3];
-        sz += at[i * 3 + 2];
-        n++;
-      }
-    joints.push(n ? [sx / n, y, sz / n] : joints[k - 1]);
-  }
-  const first = bones.length;
-  const head = out.bones.indexOf('head');
-  const chain = [];
-  for (let k = 0; k < LINKS; k++) chain.push({ head: round(joints[k]), tail: round(joints[k + 1]), parent: k ? first + k - 1 : head });
-  // each hanging vertex to the two links its height lies between, faded in from the head over the first link
-  const tris = triangles(px.obj.faces);
-  const skinBraid = (v) => {
-    const y = at[v * 3 + 1];
-    if (y >= nape) return skinOf(proxyWeights(px.refs[v]));
-    const f = Math.min(LINKS - 1e-6, ((nape - y) / (nape - lowest)) * LINKS);
-    const k = Math.floor(f);
-    const w = f - k;
-    const map = new Map();
-    if (k === 0 && w < 0.5) {
-      for (const [b, bw] of proxyWeights(px.refs[v])) map.set(b, bw * (1 - 2 * w) * 0.5);
-      map.set(first, (map.get(first) ?? 0) + 0.5 + w);
-    } else {
-      map.set(first + k, 1 - w + (k === LINKS - 1 ? w : 0));
-      if (k < LINKS - 1) map.set(first + k + 1, w);
-    }
-    return skinOf(map);
-  };
-  parts.hair = part(tris, at, n, px.obj.vt, skinBraid);
-  return { braid: chain };
 }
 
 writeFileSync(path.join(OUT, 'humans.bin'), deflateRawSync(Buffer.concat(chunks), { level: 9 }));

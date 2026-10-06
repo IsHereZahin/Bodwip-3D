@@ -35,14 +35,20 @@ export interface SceneWorld {
   sweep?: readonly (readonly [number, number])[];
 }
 
+const SWEEP_D: number[] = [];
+const SWEEP_M: number[] = [];
+
 /** The hours of a `sweep` at `u` (0..1): a monotone cubic through its keys (Fritsch–Carlson), so time never runs back or stops dead. */
 export function sweepAt(keys: readonly (readonly [number, number])[], u: number): number {
   const n = keys.length;
   if (u <= keys[0][0]) return keys[0][1];
   if (u >= keys[n - 1][0]) return keys[n - 1][1];
-  const d: number[] = [];
+  // (the secants and the slopes in reused arrays: a sweep is asked for every frame)
+  const d = SWEEP_D;
+  const m = SWEEP_M;
+  d.length = m.length = 0;
   for (let i = 0; i < n - 1; i++) d.push((keys[i + 1][1] - keys[i][1]) / (keys[i + 1][0] - keys[i][0]));
-  const m: number[] = [d[0]];
+  m.push(d[0]);
   for (let i = 1; i < n - 1; i++) m.push(d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2);
   m.push(d[n - 2]);
   for (let i = 0; i < n - 1; i++) {
@@ -103,7 +109,10 @@ export interface Stage {
   sap(): void;
   readonly sunDir: Vector3;
   readonly moonDir: Vector3;
-  /** Builds whatever of each point's surroundings is not built yet (the ground, the grass, the crops), without showing it. */
+  /**
+   * Builds what of each point's surroundings is not built yet (the ground, the grass, the crops), without showing
+   * it: the ground all of it, the rest within a moment's budget (their own updates finish it).
+   */
   prepare(points: readonly Vector3[]): void;
   /** Builds a little of the same within this frame's budget; true once all of it is built. */
   warm(points: readonly Vector3[]): boolean;
@@ -141,14 +150,16 @@ export interface Leaving {
 /** Seconds a dissolve takes between scenes, and between the shots of one scene. */
 const DISSOLVE = 2.2;
 const SHOT_DISSOLVE = 0.7;
-/** Seconds before a cut that the next shot's places begin to be built. */
-const WARM_AHEAD = 6;
+/** Seconds before a cut that the next shot's places begin to be built (a place thick with grass and crops takes a second or more of building, a few milliseconds a frame). */
+const WARM_AHEAD = 9;
 /** Where through a shot its places are readied. */
 const PATH = [0, 0.25, 0.5, 0.75, 1] as const;
 /** The boat's usual way (m/s), for guessing where she will be through a shot not yet begun. */
 const CRUISE = 1.2;
 /** How a shot's own camera move carries on past its end while it dissolves away: slowing over this many seconds. */
 const CARRY = 1.2;
+/** Seconds into a scene after which "previous" starts it again rather than going back to the one before. */
+const RESTART = 3;
 
 /** The shot being left, while the next dissolves in over it. */
 interface Outgoing {
@@ -210,10 +221,16 @@ export class Director {
   private readonly boatWas = new Vector3();
   /** How long the dissolve into the shot now showing takes (s). */
   private dissolveFor = DISSOLVE;
+  /** Seconds into the scene now showing (all its shots). */
+  private sceneTime = 0;
+  /** A skip asked for while a dissolve was still going on, taken once it has (0: none). */
+  private queued = 0;
+  private readonly scenesShown: number;
 
   constructor(scenes: readonly Scene[], stage: Stage) {
     this.scenes = scenes;
     this.stage = stage;
+    this.scenesShown = scenes.filter((s) => !s.shot).length;
     const self = this;
     this.guess = Object.create(stage, {
       boatPos: { get: () => self.guessPos },
@@ -240,7 +257,7 @@ export class Director {
     return Math.max(0, k);
   }
   get sceneCount(): number {
-    return this.scenes.filter((s) => !s.shot).length;
+    return this.scenesShown;
   }
 
   /** The first shot of the scene the shot `i` belongs to. */
@@ -250,17 +267,23 @@ export class Director {
   }
 
   /**
-   * On to the scene `step` from this one (−1 the one before, +1 the next), at the viewer's asking: cut as the
-   * film cuts by itself, this shot going on beneath while the other dissolves in, from its beginning.
+   * On to the scene `step` from this one (−1 the one before, or this one's beginning once it has run a few
+   * seconds; +1 the next), at the viewer's asking: cut as the film cuts by itself, this shot going on beneath
+   * while the other dissolves in, from its beginning. Asked during a dissolve, it waits for it to end (cutting
+   * then would drop the half-faded shot at once).
    */
   skip(step: number): void {
     if (!this.playing) return;
+    if (this.out) {
+      this.queued = step;
+      return;
+    }
     const n = this.scenes.length;
     let i = this.firstShot(this.index);
     if (step > 0) {
       do i = (i + 1) % n;
       while (this.scenes[i].shot);
-    } else i = this.firstShot((i - 1 + n) % n);
+    } else if (this.sceneTime < RESTART) i = this.firstShot((i - 1 + n) % n);
     this.leaveScene();
     this.enter(i);
   }
@@ -281,20 +304,28 @@ export class Director {
     this.enter(0);
   }
 
-  /** Hands the camera back, the film's shot dissolving into the viewer's view; `immediate` (for stills) at once, without putting the viewer's world back. */
-  stop(immediate = false): void {
+  /**
+   * Hands the camera back, the film's shot dissolving into the viewer's view; `immediate` at once (a jump from the
+   * map, under its own moment of dark; or a still), putting the viewer's world back unless `restore` is false
+   * (stills keep the world they set).
+   */
+  stop(immediate = false, restore = true): void {
     if (!this.playing) return;
     this.playing = false;
+    this.queued = 0;
     if (immediate) {
       this.finishLeaving();
       this.dissolve = 0;
       this.captionAlpha = 0;
       this.letterbox = 0;
+      if (restore) this.stage.restore();
       return;
     }
     this.leaveScene();
     this.stage.restore();
     if (this.out) this.out.moved = true;
+    // the hand-back is a full dissolve, whichever shot it leaves
+    this.dissolveFor = DISSOLVE;
   }
 
   /**
@@ -308,24 +339,35 @@ export class Director {
       this.viewPos.copy(camera.position);
       this.captionAlpha = damp(this.captionAlpha, 0, 6, dt);
     } else {
+      // a skip asked for during the last dissolve, now it has ended
+      if (this.queued !== 0 && !this.out) {
+        const step = this.queued;
+        this.queued = 0;
+        this.skip(step);
+      }
       const scene = this.scenes[this.index];
       this.time += dt;
+      this.sceneTime += dt;
       // the end of the shot: on into the next, this one going on beneath it as it dissolves away
       if (this.time >= scene.seconds) {
         this.leaveScene();
         this.enter((this.index + 1) % this.scenes.length);
       }
-      this.play(t, camera);
+      this.play(dt, t, camera);
     }
     this.updateLeaving(dt, t, camera);
     this.letterbox = damp(this.letterbox, this.playing ? 1 : 0, 2.2, dt);
   }
 
-  private play(t: number, camera: PerspectiveCamera): void {
+  private play(dt: number, t: number, camera: PerspectiveCamera): void {
     const scene = this.scenes[this.index];
     this.frameCamera(scene, t, camera);
-    this.caption = scene.caption;
-    this.captionAlpha = scene.caption ? clamp(Math.min((this.time - 1.2) / 0.9, (scene.seconds - 1.6 - this.time) / 0.9), 0, 1) : 0;
+    // a caption still up as its scene is left (the viewer skipped on) fades before the next one's comes
+    if (scene.caption !== this.caption && this.captionAlpha > 0.02) this.captionAlpha = damp(this.captionAlpha, 0, 9, dt);
+    else {
+      this.caption = scene.caption;
+      this.captionAlpha = scene.caption ? clamp(Math.min((this.time - 1.2) / 0.9, (scene.seconds - 1.6 - this.time) / 0.9), 0, 1) : 0;
+    }
     if (scene.world.sweep && !scene.shot) this.stage.sweep(sweepAt(scene.world.sweep, clamp(this.time / scene.seconds, 0, 1)));
     // the last seconds: build the next shot's places ahead, a little each frame
     if (this.time > scene.seconds - WARM_AHEAD && !this.aheadDone) {
@@ -362,6 +404,7 @@ export class Director {
     const scene = this.scenes[index];
     this.index = index;
     this.time = 0;
+    if (!scene.shot) this.sceneTime = 0;
     this.boatWas.copy(this.stage.boatPos);
     this.dissolveFor = scene.shot ? SHOT_DISSOLVE : DISSOLVE;
     // a further shot of the same scene: its world goes on as it is
@@ -375,7 +418,7 @@ export class Director {
     if (this.out) this.out.moved = Math.hypot(this.stage.boatPos.x - this.boatWas.x, this.stage.boatPos.z - this.boatWas.z) > 0.5;
     this.ahead = null;
     this.aheadDone = false;
-    // whatever was not built ahead is built now, along the whole shot
+    // what was not built ahead: the ground now, along the whole shot, and the grass and crops begun (main.ts)
     this.stage.prepare(this.pathOf(scene, false));
   }
 

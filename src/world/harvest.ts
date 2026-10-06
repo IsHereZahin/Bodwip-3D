@@ -176,10 +176,14 @@ export class Harvest {
     this.group.visible = false;
   }
 
-  /** `ripe`: the season's share of ripe fields (env/season.ts crops[2]); they are out only while it stands. */
-  update(dt: number, t: number, eye: Vector3, ripe: number): void {
+  /**
+   * `ripe`: the season's share of ripe fields (env/season.ts crops[2]); they are out only while it stands. Posed
+   * while `eye` (or `also`, a shot's still dissolving away) is near.
+   */
+  update(dt: number, t: number, eye: Vector3, ripe: number, also: Vector3 | null = null): void {
     this.group.visible = ripe > 0.35;
-    if (!this.group.visible || Math.hypot(eye.x - this.at.x, eye.z - this.at.z) > 250) return;
+    const far = (p: Vector3) => Math.hypot(p.x - this.at.x, p.z - this.at.z) > 250;
+    if (!this.group.visible || (far(eye) && (!also || far(also)))) return;
     for (const r of this.reapers) r.update(dt, t);
   }
 }

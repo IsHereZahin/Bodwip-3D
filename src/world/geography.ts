@@ -3,7 +3,7 @@ import { fbm } from '../core/noise';
 import { FeatureGrid, HOMESTEAD_MOUNDS, MOUNDS, PONDS, POND_BANK, local, pondReach, shapeDistance, shapePoint, type Mound, type Pond } from './layout';
 import { BANYAN, FAR_GROVES, HILLS, MOUND, PLAIN, POND_LEVEL, POND_RISE, SALT_FIELD, TEA_STALL, WATER_LEVEL, WORLD } from './plan';
 import { railGround, railShare } from './railway';
-import { onRoad, roadCover, roadEdge, roadGround } from './roads';
+import { onRoad, roadCover, roadEdge, roadGround, roadNear } from './roads';
 import { BRIDGE, SANKO, bridgeDeck, bridgeEnds, bridgeFrame, bridgeSoffit, bridgeToWorld, onBridge, onSanko, sankoEnds, type Point2 } from './sites';
 import {
   BIL,
@@ -34,7 +34,7 @@ import {
 // khal and the bil cut in, their banks of mud (and on the inside of the river's bend a broad sandy char).
 // x points west, z north; heights are metres, the water at WATER_LEVEL.
 
-export { BIL, JOURNEY, WATER_LEVEL, bilLocal, bilPoint, bilReach, charShare, journeyAt, journeyFrame, journeyHalfWidth, onRoad, waterwayAt };
+export { BIL, JOURNEY, WATER_LEVEL, bilLocal, bilPoint, bilReach, charShare, journeyAt, journeyFrame, journeyHalfWidth, onRoad, roadNear, waterwayAt };
 export { BRIDGE, SANKO, bridgeDeck, bridgeEnds, bridgeFrame, bridgeSoffit, bridgeToWorld, onBridge, onSanko, sankoEnds, type Point2 };
 export { HOMESTEAD_MOUNDS, MOUNDS, PONDS, pondReach, shapePoint, type Mound, type Pond };
 

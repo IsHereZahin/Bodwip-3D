@@ -7,7 +7,7 @@ import { MeshBuilder, mixRgb, rgb, type RGB } from '../render/builder';
 import { CORRIDOR, CROP_REACH } from '../render/glsl';
 import { patchMaterial } from '../render/patch';
 import { mustardCanopyTexture, mustardRacemeTexture, riceCanopyTexture, riceHillTexture } from '../render/textures';
-import { corridorDistance, onRoad, terrainHeight } from './geography';
+import { corridorDistance, onRoad, roadNear, terrainHeight } from './geography';
 import { groundLattice } from './terrain';
 
 // The crops in the paddy plots, standing in 3D round the camera (out to CROP_REACH; beyond, the terrain
@@ -75,6 +75,8 @@ export function plotCropAt(x: number, z: number, crops: readonly [number, number
 const MARGIN = 0.6;
 
 const CHUNK = 8;
+/** How many views' wanted lists `warm` keeps (the film readies a shot by five points; the map jump by one). */
+const WARM_VIEWS = 16;
 /** A chunk's half-diagonal: how far its patches stand from its middle at most. */
 const CHUNK_REACH = CHUNK * 0.71;
 /**
@@ -429,6 +431,8 @@ export class Crops {
   private cur = 0;
   private readonly cache = new Map<string, ChunkData>();
   private wanted: Want[] = [];
+  /** The wanted lists of views being readied ahead (`warm`), by where they are. */
+  private readonly warmWants = new Map<string, Want[]>();
   private centre = '';
   private dirty = false;
   private frame = 0;
@@ -553,7 +557,15 @@ export class Crops {
 
   /** Builds the chunks a view at `view` will want, until `until` (performance.now()), without showing them: the film readies its next shot. True once all are built. */
   warm(view: Vector3, until: number): boolean {
-    for (const w of this.wantedAt(view)) {
+    if (performance.now() > until) return false;
+    // the film asks after the same few points frame after frame: their lists are worked out once
+    const key = `${Math.round(view.x)},${Math.round(view.y)},${Math.round(view.z)}`;
+    let wants = this.warmWants.get(key);
+    if (!wants) {
+      if (this.warmWants.size >= WARM_VIEWS) this.warmWants.clear();
+      this.warmWants.set(key, (wants = this.wantedAt(view)));
+    }
+    for (const w of wants) {
       const chunk = this.cache.get(w.key);
       if (chunk) {
         chunk.used = this.frame;
@@ -663,6 +675,9 @@ export class Crops {
       const ny = Math.max(1, Math.round((PLOT.h - 2 * MARGIN) / size));
       const px = (PLOT.w - 2 * MARGIN) / nx;
       const py = (PLOT.h - 2 * MARGIN) / ny;
+      // a chunk no way comes near asks nothing of each patch (the ways' index is the dearest question here)
+      const clear = Math.max(px, py) * 0.6 + 0.2;
+      const nearWay = roadNear(x0 + CHUNK / 2, z0 + CHUNK / 2, CHUNK_REACH + clear);
       for (let i = i0; i <= i1; i++) {
         for (let j = j0; j <= j1; j++) {
           for (let u = 0; u < nx; u++) {
@@ -674,7 +689,7 @@ export class Crops {
               const g = lattice(x, z);
               if (g.zone < ZONE_MIN) continue;
               // no patch reaches over a road or a footpath through the fields (the lattice misses a narrow one)
-              if (onRoad(x, z, Math.max(px, py) * 0.6 + 0.2)) continue;
+              if (nearWay && onRoad(x, z, clear)) continue;
               mat.compose(pos.set(x, g.h - 0.02, z), q, scl.set(px / size, 1, py / size));
               m.push(...mat.elements);
               const tint = rng.range(0.86, 1.08);

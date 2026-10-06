@@ -327,7 +327,8 @@ export function buildVillages(huts: readonly HutPlan[], ghats: readonly Ghat[]):
       },
     }),
   );
-  moored.castShadow = true;
+  // (no shadow: the shadow pass would draw the hulls where they are built, not lifted onto the water, and things
+  // that move cast none, the shadow map not being redrawn every frame)
   moored.receiveShadow = true;
   group.add(moored);
   return group;
