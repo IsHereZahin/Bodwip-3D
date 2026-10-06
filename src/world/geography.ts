@@ -1,10 +1,11 @@
 import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
+import { SLUICE_SITE, carve, channelAt } from './channels';
 import { FeatureGrid, HOMESTEAD_MOUNDS, MOUNDS, PONDS, POND_BANK, local, pondReach, shapeDistance, shapePoint, type Mound, type Pond } from './layout';
-import { BANYAN, FAR_GROVES, HILLS, MOUND, PLAIN, POND_LEVEL, POND_RISE, SALT_FIELD, TEA_STALL, WATER_LEVEL, WORLD } from './plan';
+import { BANYAN, FAR_GROVES, GRAVE_BANYAN, HILLS, MOSQUE, MOSQUE_GROUNDS, MOUND, PLAIN, POND_LEVEL, POND_RISE, SALT_FIELD, TEA_STALL, WATER_LEVEL, WORLD } from './plan';
 import { railGround, railShare } from './railway';
 import { onRoad, roadCover, roadEdge, roadGround, roadNear } from './roads';
-import { BRIDGE, SANKO, bridgeDeck, bridgeEnds, bridgeFrame, bridgeSoffit, bridgeToWorld, onBridge, onSanko, sankoEnds, type Point2 } from './sites';
+import { BRIDGE, SANKO, bridgeDeck, bridgeEnds, bridgeFrame, bridgeSoffit, bridgeToWorld, onBridge, onSanko, sankoDeck, sankoEnds, sankoFrame, type Point2 } from './sites';
 import {
   BIL,
   JOURNEY,
@@ -35,7 +36,7 @@ import {
 // x points west, z north; heights are metres, the water at WATER_LEVEL.
 
 export { BIL, JOURNEY, WATER_LEVEL, bilLocal, bilPoint, bilReach, charShare, journeyAt, journeyFrame, journeyHalfWidth, onRoad, roadNear, waterwayAt };
-export { BRIDGE, SANKO, bridgeDeck, bridgeEnds, bridgeFrame, bridgeSoffit, bridgeToWorld, onBridge, onSanko, sankoEnds, type Point2 };
+export { BRIDGE, SANKO, bridgeDeck, bridgeEnds, bridgeFrame, bridgeSoffit, bridgeToWorld, onBridge, onSanko, sankoDeck, sankoEnds, sankoFrame, type Point2 };
 export { HOMESTEAD_MOUNDS, MOUNDS, PONDS, pondReach, shapePoint, type Mound, type Pond };
 
 /** The designed area's extent: x from WORLD_X0 (east edge) to WORLD_X1 (west edge), z from WORLD_Z1 (south) to WORLD_Z0 (north). */
@@ -307,9 +308,19 @@ function landHeight(x: number, z: number): number {
   return pondGround(x, z, h);
 }
 
-/** Height of the ground at (x, z): the land, with the river, the khals and the bil cut in. */
+/** The land with the small channels cut into it (world/channels.ts): the hill stream's gully, the sluice's drain. */
+function channelGround(x: number, z: number, h: number): number {
+  const c = channelAt(x, z);
+  if (!c) return h;
+  const ch = c.ch;
+  const d = c.d;
+  // (its bed follows the land along its line: asked there, so the ledges run straight across it)
+  return carve(ch, d, h, landHeight(c.x, c.z));
+}
+
+/** Height of the ground at (x, z): the land, with the small channels, then the river, the khals and the bil cut in. */
 export function terrainHeight(x: number, z: number): number {
-  return bilGround(x, z, wayGround(x, z, landHeight(x, z)));
+  return bilGround(x, z, wayGround(x, z, channelGround(x, z, landHeight(x, z))));
 }
 
 /** The surface of a pond's water over (x, z), or null where there is none. */
@@ -457,6 +468,11 @@ export function landUse(x: number, z: number): LandUse {
   if (n) verge = Math.max(verge, smoothstep(POND_BANK.top + 3.5, POND_BANK.top + 1, n.d));
   verge = Math.max(verge, smoothstep(6, 1, roadEdge(x, z)), roadCover(x, z));
   verge = Math.max(verge, railShare(x, z));
+  // the small channels' banks: grass, not field
+  const ch = channelAt(x, z, 4);
+  if (ch) verge = Math.max(verge, smoothstep(ch.ch.width / 2 + 4, ch.ch.width / 2 + 1, ch.d));
+  // the mosque's grounds: a common of grass round it, its pond and its graveyard, its edge ragged
+  verge = Math.max(verge, smoothstep(3, -3, shapeDistance(MOSQUE_GROUNDS, x, z) + edgeWobble(x, z) * 2));
   // the hills are forest: the grove's floor under their trees
   mound = Math.max(mound, hillShare(x, z), groveShare(x, z));
   const sand = charShare(x, z) * (1 - mound);
@@ -480,12 +496,53 @@ export function landUse(x: number, z: number): LandUse {
 export function onLandmark(x: number, z: number, margin = 0): boolean {
   if (onBridge(x, z, margin + 1) || onSanko(x, z, margin + 0.5)) return true;
   if (Math.hypot(x - BANYAN.x, z - BANYAN.z) < 5 + margin) return true;
+  if (Math.hypot(x - GRAVE_BANYAN.x, z - GRAVE_BANYAN.z) < 4 + margin) return true;
+  // the mosque, its forecourt and steps, and the ghat down into its pond: built ground, kept clean
+  if (onMosqueWorks(x, z, margin)) return true;
+  // the small channels' beds and the sluice
+  const ch = channelAt(x, z, margin + 0.6);
+  if (ch && ch.d < ch.ch.width / 2 + margin + 0.6) return true;
+  if (Math.hypot(x - SLUICE_SITE.x, z - SLUICE_SITE.z) < 5 + margin) return true;
   if (Math.hypot(x - TEA_STALL.x, z - TEA_STALL.z) < 4 + margin) return true;
   // the salt field: its beds and bunds are worked ground
   const salt = saltLocal(x, z);
   if (Math.max(-salt.u, salt.u - SALT_FIELD.w, -salt.v, salt.v - SALT_FIELD.d) < margin) return true;
   for (const m of MOUNDS) if (!m.home && m.id !== 'banyan' && shapeDistance(m, x, z) < margin - 4) return true;
   return false;
+}
+
+const GRAVES = MOUNDS.find((m) => m.id === 'graveyard');
+
+/** Inside the mosque's graveyard (on its rise's top), where short grass grows among the graves. */
+export function inGraveyard(x: number, z: number): boolean {
+  return GRAVES !== undefined && shapeDistance(GRAVES, x, z) < -0.5;
+}
+
+/**
+ * On what the mosque has built along its axis (plan.ts MOSQUE: z out of its door, east): itself from its mihrab
+ * to the foot of its steps, and the ghat down into its pond.
+ */
+function onMosqueWorks(x: number, z: number, margin: number): boolean {
+  const s = Math.sin(MOSQUE.face);
+  const c = Math.cos(MOSQUE.face);
+  // the mosque's frame stands 2 m behind its mound's middle (landmarks.ts mosque)
+  const dx = x - (MOSQUE.x - 2 * s);
+  const dz = z - (MOSQUE.z - 2 * c);
+  const along = dx * s + dz * c;
+  const across = Math.abs(dx * c - dz * s);
+  if (across < 7.2 + margin && along > -6.5 - margin && along < 15.6 + margin) return true;
+  // the pond's ghat: its landing, its benches and its steps on the axis at the pond's rim
+  const g = MOSQUE.pond.ghat;
+  if (!g) return false;
+  const gx = x - g[0];
+  const gz = z - g[1];
+  const ga = gx * s + gz * c;
+  return Math.abs(gx * c - gz * s) < 3.4 + margin && ga > -3.2 - margin && ga < 4.5 + margin;
+}
+
+/** On the mosque's grounds, whose grass is kept short (grazed, and cut for the prayers). */
+export function onMosqueGrounds(x: number, z: number): boolean {
+  return shapeDistance(MOSQUE_GROUNDS, x, z) < 0;
 }
 
 /** Where a homestead comes down to its water: snapped to the nearest bank of the river or a khal, `s` along it and the side it is on. */

@@ -17,7 +17,7 @@ import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
 import { CORRIDOR, CROP_REACH } from '../render/glsl';
 import { patchMaterial } from '../render/patch';
-import { WATER_LEVEL, corridorDistance, onBridge, onLandmark, onRoad, roadNear, terrainHeight } from './geography';
+import { WATER_LEVEL, corridorDistance, inGraveyard, onBridge, onLandmark, onMosqueGrounds, onRoad, roadNear, terrainHeight } from './geography';
 import { nearStone } from './stones';
 import { groundLattice } from './terrain';
 import type { Ghat, HutPlan } from './village';
@@ -443,7 +443,10 @@ export class Meadow {
         // none in the khal's or the bil's water, nor on the mud just above it
         if (g.h < WATER_LEVEL + 0.25) continue;
         if (huts.some((h) => Math.hypot(h.x - x, h.z - z) < Math.max(h.l, h.w) * 0.6 + 0.4)) continue;
-        if (onBridge(x, z) || onLandmark(x, z) || nearStone(x, z, 0.05)) continue;
+        // (the graveyard's grass is let grow among its graves; the mosque's grounds are kept short)
+        const graves = inGraveyard(x, z);
+        const short = graves || onMosqueGrounds(x, z);
+        if (onBridge(x, z) || (onLandmark(x, z) && !graves) || nearStone(x, z, 0.05)) continue;
         // nothing grows on a road, a footpath or the bridge's worn way: they stay trodden and clear (the
         // lattice is too coarse to see a footpath's metre, so each is asked here)
         if (nearWay && onRoad(x, z, 0.25)) continue;
@@ -452,12 +455,12 @@ export class Meadow {
         // grass where the ground is grassy, in drifts, thinning on trodden earth and in the paddy
         const drift = smoothstep(0.28, 0.62, fbm(x * 0.07, z * 0.07, 2, 91));
         // none in the paddy plots (zone > 0)
-        const density = (g.grass * (0.45 + 0.55 * drift) + g.dirt * 0.12 * drift) * (1 - Math.abs(g.zone)) * (1 - g.bare);
+        const density = (g.grass * (0.45 + 0.55 * drift) + g.dirt * 0.12 * drift) * (1 - Math.abs(g.zone)) * (1 - g.bare) * (short ? 0.75 : 1);
         if (rng.next() > density) continue;
         const lush = fbm(x * 0.03 + 7, z * 0.03, 2, 92);
         const dry = Math.min(1, g.dirt * 1.4 + smoothstep(0.62, 0.8, lush) * 0.5);
         const tint = mixRgb(scaleRgb([1, 1, 1], rng.range(0.82, 1.12)), [1.25, 1.05, 0.7], dry * rng.range(0.4, 1));
-        push(lod, x, g.h - 0.02, z, rng.range(0.75, 1.25), rng.range(0.8, 1.15) * (0.75 + lush * 0.9), tint);
+        push(lod, x, g.h - 0.02, z, rng.range(0.75, 1.25), rng.range(0.8, 1.15) * (0.75 + lush * 0.9) * (short ? 0.42 : 1), tint);
         // wild flowers: kolmi near the water, ghashphul and yellow weeds elsewhere
         if (rng.next() < 0.07 * drift) {
           const wet = g.h < WATER_LEVEL + 0.9;

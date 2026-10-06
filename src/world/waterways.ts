@@ -210,10 +210,13 @@ export const KHAL = new Waterway('khal', KHAL_POINTS, 60, -0.06, (line) => {
   };
 });
 
-/** The side khal: a narrow drain through the fields to the bil, ≈7 m across and knee to waist deep; still. */
+/**
+ * The side khal: a drain through the fields to the bil, ≈8 m across and chest deep, still; the boat's way to
+ * the bil goes up it (deep and wide enough for her and her paddle), under the bamboo sanko.
+ */
 export const SIDE_KHAL = new Waterway('side khal', SIDE_KHAL_POINTS, 30, 0, (line) => ({
-  half: (s) => 3.4 + 0.5 * wander(s, 17) + 2.2 * (1 - smoothstep(0, 24, s)) + 2.5 * smoothstep(line.length - 40, line.length, s),
-  depth: () => 0.9,
+  half: (s) => 4.2 + 0.4 * wander(s, 17) + 2.2 * (1 - smoothstep(0, 24, s)) + 2.5 * smoothstep(line.length - 40, line.length, s),
+  depth: () => 1.3,
 }));
 
 /** The salt creek: ≈7 m of the sea's water by the salt field, widening toward the coast; tidal, so still here. */
@@ -312,6 +315,13 @@ export function bilReach(x: number, z: number): number {
   return Math.hypot(da, dc) / outline;
 }
 
+/** Where the old bridge and the bamboo sanko stand: the khal's and the side khal's point and heading there. */
+export const BRIDGE_SITE = KHAL.at(KHAL.line.nearestS(BRIDGE_NEAR[0], BRIDGE_NEAR[1]));
+export const SANKO_SITE = (() => {
+  const s = SIDE_KHAL.line.nearestS(SANKO_NEAR[0], SANKO_NEAR[1]);
+  return { ...SIDE_KHAL.at(s), s, half: SIDE_KHAL.half(s) };
+})();
+
 // ---------- the journey ----------
 
 /** How far the boat's way keeps from a rock's edge (m: her half-beam and room to spare). */
@@ -326,10 +336,25 @@ function rockSwerve(s: number): number {
   return off;
 }
 
+/** A curve from `a` on its heading to `b` on its heading, `k` m of each heading drawn out (its inner points, into `pts`). */
+function curveInto(pts: number[], a: { x: number; z: number; heading: number }, b: { x: number; z: number; heading: number }, k: number): void {
+  const c1 = { x: a.x + Math.sin(a.heading) * k, z: a.z + Math.cos(a.heading) * k };
+  const c2 = { x: b.x - Math.sin(b.heading) * k, z: b.z - Math.cos(b.heading) * k };
+  for (let t = 0.05; t < 1; t += 0.05) {
+    const u = 1 - t;
+    pts.push(u * u * u * a.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * b.x, u * u * u * a.z + 3 * u * u * t * c1.z + 3 * u * t * t * c2.z + t * t * t * b.z);
+  }
+}
+
+/** How far into the side khal the way has come round onto its middle (m, past its flared mouth). */
+const SIDE_IN = 24;
+
 /**
  * The boat's way: down the river from where she sets out, round the banyan's corner into the khal (swinging
- * wide of it), up the khal under the old bridge, and on into the bil. A line of its own, so she and the
- * cameras follow one smooth course whatever the waters' own lines do at the confluence.
+ * wide of it), up the khal under the old bridge, off it into the side khal through the fields, along its middle
+ * under the bamboo sanko (the user chose this way, so that she passes under it), and out into the bil toward its
+ * middle. A line of its own, so she and the cameras follow one smooth course whatever the waters' own lines do
+ * where they meet.
  */
 const JOURNEY_LINE = (() => {
   const from = RIVER.line.nearestS(JOURNEY_FROM[0], JOURNEY_FROM[1]);
@@ -343,46 +368,47 @@ const JOURNEY_LINE = (() => {
     pts.push(p.x, p.z);
   }
   // round into the khal: a curve from the river's way to the khal's, a little way up it
-  const a = RIVER.at(leave);
   const enter = 44;
-  const b = KHAL.at(enter);
-  const k = 30;
-  const c1 = { x: a.x + Math.sin(a.heading) * k, z: a.z + Math.cos(a.heading) * k };
-  const c2 = { x: b.x - Math.sin(b.heading) * k, z: b.z - Math.cos(b.heading) * k };
-  for (let t = 0.05; t < 1; t += 0.05) {
-    const u = 1 - t;
-    pts.push(u * u * u * a.x + 3 * u * u * t * c1.x + 3 * u * t * t * c2.x + t * t * t * b.x, u * u * u * a.z + 3 * u * u * t * c1.z + 3 * u * t * t * c2.z + t * t * t * b.z);
-  }
-  // up the khal to its head, swerving round its rocks
-  for (let s = enter; s <= KHAL.length; s += STEP) {
+  curveInto(pts, RIVER.at(leave), KHAL.at(enter), 30);
+  // up the khal under the old bridge, swerving round its rocks, to a little short of where the side khal leaves it
+  const onKhal = (s: number) => {
     const p = KHAL.at(s);
     const o = rockSwerve(s);
-    pts.push(p.x + Math.cos(p.heading) * o, p.z - Math.sin(p.heading) * o);
+    return { x: p.x + Math.cos(p.heading) * o, z: p.z - Math.sin(p.heading) * o, heading: p.heading };
+  };
+  const branch = KHAL.line.nearestS(SIDE_KHAL.at(0).x, SIDE_KHAL.at(0).z) - 22;
+  for (let s = enter; s <= branch; s += STEP) {
+    const p = onKhal(s);
+    pts.push(p.x, p.z);
   }
-  // and on into the bil, easing from the khal's heading toward the bil's middle line
-  const head = KHAL.at(KHAL.length);
-  for (let d = STEP; d <= INTO_BIL; d += STEP) {
-    const t = d / INTO_BIL;
-    const along = { x: head.x + Math.sin(head.heading) * d, z: head.z + Math.cos(head.heading) * d };
-    const mid = bilPoint(-BIL.halfLen + d * 1.1, 0);
-    pts.push(along.x + (mid.x - along.x) * t * 0.5, along.z + (mid.z - along.z) * t * 0.5);
+  // round into the side khal, and along its middle under the sanko to where it opens into the bil
+  curveInto(pts, onKhal(branch), SIDE_KHAL.at(SIDE_IN), 15);
+  for (let s = SIDE_IN; s <= SIDE_KHAL.length; s += STEP) {
+    const p = SIDE_KHAL.at(s);
+    pts.push(p.x, p.z);
   }
+  // and out into the bil, curving from the side khal's heading toward its middle, INTO_BIL m or so
+  const head = SIDE_KHAL.at(SIDE_KHAL.length);
+  const end = bilPoint(BIL.halfLen * 0.1, BIL.halfWid * 0.05);
+  const toEnd = Math.atan2(end.x - head.x, end.z - head.z);
+  curveInto(pts, head, { ...end, heading: toEnd }, INTO_BIL * 0.3);
+  pts.push(end.x, end.z);
   return new Line(resample(smoothLine(resample(pts, STEP), 5), STEP), 60);
 })();
 
 /**
  * The journey (m along the boat's way): its length; where the scene opens, where she leaves the river for the
- * khal, passes under the old bridge and comes out into the bil.
+ * khal, passes under the old bridge and under the sanko, and comes out of the side khal into the bil.
  */
 export const JOURNEY = (() => {
   const near = (p: { x: number; z: number }) => JOURNEY_LINE.nearestS(p.x, p.z);
-  const bridge = KHAL.line.nearestS(BRIDGE_NEAR[0], BRIDGE_NEAR[1]);
   return {
     length: JOURNEY_LINE.length,
     opening: near({ x: OPENING_NEAR[0], z: OPENING_NEAR[1] }),
     turn: near(KHAL.at(10)),
-    bridge: near(KHAL.at(bridge)),
-    head: near(KHAL.at(KHAL.length)),
+    bridge: near(BRIDGE_SITE),
+    sanko: near(SANKO_SITE),
+    head: near(SIDE_KHAL.at(SIDE_KHAL.length)),
   };
 })();
 
@@ -409,13 +435,6 @@ export const journeyHalfWidth = (() => {
     const i = Math.floor(f);
     return halfs[i] + (halfs[i + 1] - halfs[i]) * (f - i);
   };
-})();
-
-/** Where the old bridge and the bamboo sanko stand: the khal's and the side khal's point and heading there. */
-export const BRIDGE_SITE = KHAL.at(KHAL.line.nearestS(BRIDGE_NEAR[0], BRIDGE_NEAR[1]));
-export const SANKO_SITE = (() => {
-  const s = SIDE_KHAL.line.nearestS(SANKO_NEAR[0], SANKO_NEAR[1]);
-  return { ...SIDE_KHAL.at(s), s, half: SIDE_KHAL.half(s) };
 })();
 
 // ---------- how far from the boat's way ----------

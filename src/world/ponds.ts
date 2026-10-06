@@ -16,6 +16,8 @@ const UP = new Vector3(0, 1, 0);
 
 /** The ponds shapla grows on: the old ones the design leaves to the lilies (a village's fish ponds are kept clear). */
 export const LILY_PONDS = PONDS.filter((p) => p.lilies);
+/** The ponds kept clean (the mosque's): only a little shapla in a corner or two, and no reeds. */
+const KEPT_PONDS = PONDS.filter((p) => p.kept);
 
 /** A round pad with the lily's notch, its rim turned up a little. */
 function pad(): BufferGeometry {
@@ -121,6 +123,27 @@ export function buildPondLife(): Group {
         pads.push({ x, y: p.level + 0.01, z, ry: rng.range(0, Math.PI * 2), s, tx: rng.range(-0.03, 0.03), tz: rng.range(-0.03, 0.03) });
         if (rng.next() < 0.2) {
           (rng.next() < 0.6 ? white : pink).push({ x: x + rng.range(-0.1, 0.1), y: p.level + 0.02, z: z + rng.range(-0.1, 0.1), ry: rng.range(0, 6.28), s: rng.range(1.3, 1.8) });
+        }
+      }
+    }
+  }
+  // the kept pond: a small raft of shapla or two near its banks, away from its ghat, more of them in flower
+  for (const p of KEPT_PONDS) {
+    const rafts = rng.int(2, 3);
+    for (let r = 0; r < rafts; r++) {
+      let at = shapePoint(p, rng.sign() * rng.range(0.5, 0.75) * p.hu, rng.sign() * rng.range(0.45, 0.7) * p.hv);
+      if (p.ghat && Math.hypot(at.x - p.ghat.x, at.z - p.ghat.z) < p.r * 0.9) at = { x: 2 * p.x - at.x, z: 2 * p.z - at.z };
+      const n = rng.int(7, 13);
+      for (let i = 0; i < n; i++) {
+        const d = Math.sqrt(rng.next()) * rng.range(0.8, 2.2);
+        const b = rng.range(0, Math.PI * 2);
+        const x = at.x + Math.cos(b) * d;
+        const z = at.z + Math.sin(b) * d;
+        if (pondReach(p, x, z) > 0.9 || terrainHeight(x, z) > p.level - 0.25) continue;
+        const s = rng.range(0.2, 0.34);
+        pads.push({ x, y: p.level + 0.01, z, ry: rng.range(0, Math.PI * 2), s, tx: rng.range(-0.03, 0.03), tz: rng.range(-0.03, 0.03) });
+        if (rng.next() < 0.35) {
+          (rng.next() < 0.55 ? white : pink).push({ x: x + rng.range(-0.1, 0.1), y: p.level + 0.02, z: z + rng.range(-0.1, 0.1), ry: rng.range(0, 6.28), s: rng.range(1.3, 1.8) });
         }
       }
     }

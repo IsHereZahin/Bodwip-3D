@@ -225,6 +225,8 @@ export interface PondSpec {
   halfD: number;
   lilies?: boolean;
   ghat?: Pt;
+  /** Kept clean by the village (the mosque's): clear, no hyacinth, a few shapla, bright fish. */
+  kept?: boolean;
 }
 
 const S = Math.PI;
@@ -292,7 +294,35 @@ export const TEA_STALL = { x: -97, z: 106, face: E + 0.5 } as const;
 export const ZAMINDAR = { x: -440, z: 240, face: S + 0.35, w: 72, d: 54, pond: { x: -530, z: 262, yaw: 0.35, halfW: 20, halfD: 13 } as PondSpec } as const;
 
 /** The mosque: its middle and the way its door looks (east: it faces the qibla, west, across its prayer hall); its pond before it. */
-export const MOSQUE = { x: 152, z: 212, face: E, w: 40, d: 34, pond: { x: 100, z: 206, yaw: 0, halfW: 17, halfD: 12, ghat: [116, 206] } as PondSpec } as const;
+/** (its axis, out of its door toward its pond, runs along z = 212: the walk and the pond's ghat lie on it) */
+export const MOSQUE = { x: 152, z: 212, face: E, w: 40, d: 34, pond: { x: 100, z: 206, yaw: 0, halfW: 17, halfD: 12, ghat: [117, 212], kept: true } as PondSpec } as const;
+
+/**
+ * The big old trees round the mosque's pond, on its banks, their crowns over its water and their shade on it: a
+ * rain tree at one corner, three mangoes (one where a jackfruit might be), a coconut leaning out over the water.
+ * Not evenly spaced, as trees left standing round a pond never are.
+ */
+export const MOSQUE_POND_TREES: readonly { kind: 'mango' | 'rain' | 'coconut'; x: number; z: number; s: number; ry: number }[] = [
+  { kind: 'rain', x: 86, z: 221.5, s: 1.15, ry: 0.4 },
+  { kind: 'mango', x: 110.5, z: 221, s: 1.2, ry: 2.2 },
+  { kind: 'mango', x: 80.5, z: 192.5, s: 1.1, ry: 4.1 },
+  { kind: 'mango', x: 105, z: 190.5, s: 0.95, ry: 1.3 },
+  { kind: 'coconut', x: 80, z: 208, s: 1.05, ry: 1.6 },
+];
+
+/**
+ * The mosque's graveyard (কবরস্থান): a low rise of its own just south of the mosque (a rounded rectangle as the
+ * mounds are: `hu` m half along `face`, north here, `hv` across), its graves lying north to south; and the old
+ * banyan standing at its west corner, the tree the mosque, its pond and its graveyard are known by across the
+ * fields (no platform round it: the graveyard's is left as it grew).
+ */
+export const GRAVEYARD = { x: 156, z: 169, face: 0.06, hu: 10, hv: 13 } as const;
+/**
+ * The mosque's grounds: the village's common round the mosque, its pond and its graveyard, grass under old
+ * trees rather than fields (a rounded rectangle like the mounds, its corners' radius `corner`).
+ */
+export const MOSQUE_GROUNDS = { x: 132, z: 192, face: 0, hu: 44, hv: 64, corner: 18 } as const;
+export const GRAVE_BANYAN = { x: 181, z: 165, crown: 13 } as const;
 
 /**
  * The wooded hills (টিলা) that rise from the plain in a few places. An ellipse each, `stretch` times longer along
@@ -318,6 +348,36 @@ export const HILLS: readonly { x: number; z: number; r: number; h: number; stret
  * round each (waterways.ts `rockSwerve`). All on her right going up: the boatman paddles on his left, and the
  * blade must not reach a rock.
  */
+/**
+ * The hill stream (ছড়া): a spring high on the steep wooded hill over the river's south bank where the boat sets
+ * out, its water tumbling down the hill's face in a gully over rock ledges, a fall of a metre or so off each, into
+ * the river: full and white in the rains, a thread in the dry months. Its line from the spring down to the
+ * river's edge, and its gully's width (m).
+ */
+export const HILL_STREAM: { points: readonly Pt[]; width: number } = {
+  points: [
+    [-868, -56],
+    [-866, -44],
+    [-862.5, -33],
+    [-861, -22],
+    [-858.5, -11],
+    [-859.5, 1],
+    [-860.5, 12],
+    [-860, 22],
+  ],
+  // (wide enough for the ground's 2 m lattice to draw its gully)
+  width: 4.6,
+};
+
+/**
+ * The sluice (স্লুইস গেট) in the river's north levee where a drain from the fields runs out: a brick headwall over
+ * its vent, an iron gate raised on a screw by a wheel, an apron down to the water. From the rains into autumn
+ * the fields' water pours out through it into the river; in the dry months the gate is down and the drain dry.
+ * The drain's start in the fields, its width and depth (m), and how far back from the river's edge the
+ * headwall stands (m).
+ */
+export const SLUICE: { fields: Pt; width: number; depth: number; back: number } = { fields: [-576, 214], width: 3.4, depth: 0.7, back: 2.2 };
+
 export const KHAL_ROCKS: readonly { s: number; c: number; r: number }[] = [
   { s: 110, c: -1.4, r: 1.0 },
   { s: 400, c: -1.2, r: 0.85 },
@@ -418,9 +478,10 @@ export const ROADS: readonly RoadSpec[] = [
   // the khal's east bank: from the road north past the homesteads toward the bil
   { kind: 'earth', width: 1.3, points: [[-46, 246], [-60, 300], [-62, 360], [-56, 430], [-30, 500], [8, 548], [30, 562]] },
   // west of the khal: the way to the mosque from the river path and from the road, past the mosque's front
-  // between it and its pond, and a brick walk from its door to the pond's ghat (for the ablutions)
+  // between it and its pond, and a brick walk on the mosque's axis from the foot of its steps to the pond's ghat
+  // (for the ablutions), crossing the path
   { kind: 'earth', width: 1.8, points: [[126, 40], [124, 100], [124, 160], [129, 212], [136, 262]] },
-  { kind: 'brick', width: 2, flat: true, points: [[139, 212], [130, 210], [122, 207]] },
+  { kind: 'brick', width: 2.2, flat: true, points: [[138.8, 212], [130, 212], [119.4, 212]] },
   { kind: 'earth', width: 1.3, points: [[266, 166], [262, 220], [262, 276]] },
   { kind: 'earth', width: 1.3, points: [[282, 346], [278, 312], [276, 286]] },
   // the field path north over the side khal by the bamboo sanko, to the homestead by the bil

@@ -281,7 +281,8 @@ export function buildVillages(huts: readonly HutPlan[], ghats: readonly Ghat[]):
   });
 
   // the ponds' ghats
-  for (const pond of PONDS) if (pond.ghat) pondGhat(bricks, pond, pond.ghat, rng);
+  // (the mosque's pond has its own, built with the mosque: landmarks.ts mosqueGhat)
+  for (const pond of PONDS) if (pond.ghat && !pond.kept) pondGhat(bricks, pond, pond.ghat, rng);
 
   const group = new Group();
   group.name = 'villages';

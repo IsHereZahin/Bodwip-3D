@@ -45,7 +45,7 @@ node scripts/headless/shoot.mjs <outDir> --base http://localhost:5173/ --shots '
 | `season` | 0–5 (0 গ্রীষ্ম … 5 বসন্ত), at its middle |
 | `weather` | `'auto' \| 'clear' \| 'drizzle' \| 'rain' \| 'storm'` |
 | `wind` | Hold the wind at this strength (`null`: follow the season) |
-| `rain`, `wet` | Hold the rain and how wet the land is (0..1). With `film`, a scene that has its own `rain` keys sets them back on the next frame |
+| `rain`, `wet` | Hold the rain and how wet the land is (0..1). With `film`, a scene that has its own `rain` keys sets them back on the next frame. A still without `film` lets go of any rain held before it |
 
 `shot()` sets the water level and the weather at once. Rain streaks need the world to run a while first (`trace`).
 
@@ -82,27 +82,37 @@ node scripts/headless/shoot.mjs <outDir> --base http://localhost:5173/ --shots '
   - Start just before the cut: `shot({ film: [i, 0.3] })`, then `resume()`.
   - Record every frame's interval with `requestAnimationFrame`, alongside `info().scene`.
   - A CPU profile across the cut (CDP `Profiler`) shows what the cut's frame builds: what the warm-ahead didn't reach, or something new.
-- **The 32 shots** (`film` index), in order:
+- **The 33 shots** (`film` index), in order:
 
 | i | Shot | i | Shot |
 | --- | --- | --- | --- |
 | 0 | শীতের ভোর | 16–19 | লাল ছাতা, shots 4–7 (no caption) |
 | 1 | খেজুরের রস | 20 | বর্ষার ঘের |
 | 2 | মাঝি | 21 | ডুবো মাঠে আমন |
-| 3 | গ্রামের ঘাট | 22 | শাপলা বিল |
-| 4 | গ্রামের পথ | 23 | পুকুরপাড় |
-| 5 | সরিষার মাঠ | 24 | কাশবন |
-| 6 | লবণ মাঠ | 25–27 | জেলের জাল: wide, medium, close |
-| 7 | ট্রেন যাচ্ছে | 28 | হেমন্তের ধান |
-| 8 | বসন্তের রং | 29 | সূর্যাস্ত |
-| 9 | কালবৈশাখী | 30 | চাঁদ ওঠা |
-| 10 | আষাঢ়ের মেঘ | 31 | রাতের বিল |
-| 11 | বর্ষার খাল | | |
+| 3 | গ্রামের ঘাট | 22 | বাঁশের সাঁকো |
+| 4 | গ্রামের পথ | 23 | শাপলা বিল |
+| 5 | সরিষার মাঠ | 24 | পুকুরপাড় |
+| 6 | লবণ মাঠ | 25 | কাশবন |
+| 7 | ট্রেন যাচ্ছে | 26–28 | জেলের জাল: wide, medium, close |
+| 8 | বসন্তের রং | 29 | হেমন্তের ধান |
+| 9 | কালবৈশাখী | 30 | সূর্যাস্ত |
+| 10 | আষাঢ়ের মেঘ | 31 | চাঁদ ওঠা |
+| 11 | বর্ষার খাল | 32 | রাতের বিল |
 | 12 | আষাঢ়ের ধারা | | |
 | 13–15 | লাল ছাতা, shots 1–3 | | |
 - **The petal (shot 8, 23 s):** it lets go 6 s in and touches the water ≈9.5 s later (`petal().fall`). Judge its swing, its tumbling and the ripple from a recording; stills at u ≈ 0.26–0.65 show the follow, and 0.69–0.76 the ripple (it shows only where it catches the light). Hide `petals lying` and `petals afloat` to tell the film's petal from the rest.
 - **Fallen petals:** a still round a tree in flower at day 75 (`free` at 3 m, looking down), and at day 200 there must be none.
-- **The cast net:** record shots 25–27. The net must show in flight, the water ring as it strikes, the haul's pulls move his whole body and the boat, and the bag come up over the gunwale.
+- **Ripples, fish, frogs:** they need frames: `shot(…)`, then `resume()`, wait 2–5 s, then capture. Frogs come out in the rains (day ≈205); `stats('frogs')` counts them. A still settles the frogs and the turtles where they would be (`settle`).
+- **The new places** (`free` = x, y, z, yaw, pitch):
+  - the mosque, its pond, graveyard and banyan from the pond's east bank: `[72, 4.6, 213, 1.85, -0.1]`; the graveyard `[146, 4.2, 158, 0.6, -0.4]`;
+  - the mosque's front on its axis `[122, 4.2, 212, 1.5708, 0.02]`, the kalima `[136, 4.6, 212, 1.5708, 0.05]`, the minaret `[132, 3.5, 190, 0.62, 0.42]`, the walk from over the pond `[112, 3.6, 212, 1.5708, -0.12]`, the ghat from the water `[105, 3.0, 209, 1.33, -0.15]` and close `[112.5, 3.4, 206.5, 0.74, -0.3]`. At night (hour 20.5) the doors and windows glow, the lantern lights the ghat's steps, and its glints lie on the pond;
+  - the kept pond's pebbles along its north shore `[100, 3.2, 210, 0, -0.55]` (look away from the sun: looking down into it, its reflection fills the frame);
+  - the sanko with the boat under it (`journey` 0.7869 puts her boatman under its walkway): from the bank `[143.6, 3.4, 466.6, 0.606, 0.02]` and from the film's camera `[164, 2.9, 481, -1.91, 0.1]`; check day 230 (the water highest: his mathal must clear the walkway) and day 40;
+  - the turtles' first rock (day 20, morning): `[-13.5, 3.4, 122.5, 0, -0.4]`;
+  - the hill stream from the river: `[-862, 3.2, 48, 3.14, 0.12]` (day 205 full, day 20 a thread);
+  - the sluice from the river: `[-540, 2.8, 141, -0.45, -0.06]` (day 230 and 300 pouring, day 20 shut).
+- **The cast net:** record shots 26–28. The net must show in flight, the water ring as it strikes, the haul's pulls move his whole body and the boat, and the bag come up over the gunwale.
+- **The sanko (shot 22):** stills keep the boat where the scene starts; record it (`shot({ film: [22, 0] })`, `resume()`, a frame every 1.5 s) to see her come up through its middle span, the boatman pass under the walkway and come out before the cut.
 - **Rain:** the drops and the splashes show only in motion: judge them from a recording. Close up (`shot` with `free` at 1 m over the water), check the rings, the crowns, the puddles and the wet ground. Compare dry and wet with `rain: 0` and `wet` 0 or 1.
 
 ## Pitfalls

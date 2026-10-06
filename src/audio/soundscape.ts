@@ -1,6 +1,7 @@
 /**
  * The whole soundscape is synthesised with Web Audio from one noise buffer and a few oscillators: the khal's
- * water, wind, rain, the paddle's splashes, birds by day, crickets by night, thunder. Nothing is downloaded.
+ * water, wind, rain, the paddle's splashes, birds by day, crickets by night, frogs in the rains, the rush of the
+ * hill stream's falls and the sluice, thunder. Nothing is downloaded.
  * Browsers only allow audio after a user gesture, so `start()` is called from one.
  */
 export class Soundscape {
@@ -14,8 +15,11 @@ export class Soundscape {
   private rain: GainNode | null = null;
   /** A downpour's roar under the hiss: low and full, only in heavy rain. */
   private downpour: GainNode | null = null;
+  /** Falling water near: the hill stream's falls, the sluice's spill. */
+  private falls: GainNode | null = null;
   private nextBird = 2;
   private nextCricket = 0;
+  private nextFrog = 0;
   /** Thunder on its way (it travels at the speed of sound), to be let fade if the scene changes first. */
   private readonly rolling: { source: AudioBufferSourceNode; gain: GainNode }[] = [];
   private hidden = false;
@@ -70,6 +74,7 @@ export class Soundscape {
     // rain: a bright hiss on the water and the leaves, silent until it rains
     this.rain = this.bed(9000, 1400, 0);
     this.downpour = this.bed(900, 120, 0);
+    this.falls = this.bed(5200, 450, 0);
   }
 
   setMuted(muted: boolean): void {
@@ -172,6 +177,57 @@ export class Soundscape {
     }
   }
 
+  /**
+   * A frog calling from the water's edge in the rains: mostly the small frogs' quick rattling croaks, now and then a
+   * bullfrog's deep two or three "gwaang"s.
+   */
+  private frog(level: number): void {
+    const ctx = this.ctx!;
+    const t = ctx.currentTime + 0.05;
+    const pan = ctx.createStereoPanner();
+    pan.pan.value = Math.random() * 1.8 - 0.9;
+    pan.connect(this.master!);
+    const bull = Math.random() < 0.18;
+    const o = ctx.createOscillator();
+    o.type = bull ? 'sawtooth' : 'square';
+    const f = bull ? 110 + Math.random() * 60 : 650 + Math.random() * 650;
+    o.frequency.value = f;
+    const filter = ctx.createBiquadFilter();
+    filter.type = bull ? 'lowpass' : 'bandpass';
+    filter.frequency.value = bull ? 520 : f * 1.6;
+    filter.Q.value = bull ? 0.8 : 4;
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    o.connect(filter).connect(g).connect(pan);
+    const peak = (bull ? 0.05 : 0.016) * level;
+    const calls = bull ? 2 + Math.floor(Math.random() * 2) : 1 + Math.floor(Math.random() * 3);
+    let at = t;
+    for (let c = 0; c < calls; c++) {
+      if (bull) {
+        // a swelling croak, falling a little in pitch
+        o.frequency.setValueAtTime(f * 1.08, at);
+        o.frequency.linearRampToValueAtTime(f * 0.92, at + 0.42);
+        g.gain.setValueAtTime(0, at);
+        g.gain.linearRampToValueAtTime(peak, at + 0.08);
+        g.gain.linearRampToValueAtTime(peak * 0.7, at + 0.32);
+        g.gain.linearRampToValueAtTime(0, at + 0.45);
+        at += 0.7 + Math.random() * 0.3;
+      } else {
+        // a rattle: a few quick pulses
+        const pulses = 4 + Math.floor(Math.random() * 5);
+        for (let p = 0; p < pulses; p++) {
+          const pa = at + p * 0.045;
+          g.gain.setValueAtTime(0, pa);
+          g.gain.linearRampToValueAtTime(peak, pa + 0.006);
+          g.gain.linearRampToValueAtTime(0, pa + 0.03);
+        }
+        at += pulses * 0.045 + 0.18 + Math.random() * 0.25;
+      }
+    }
+    o.start(t);
+    o.stop(at + 0.1);
+  }
+
   /** A burst of cricket chirps: a high tone pulsed a few times. */
   private crickets(level: number): void {
     const ctx = this.ctx!;
@@ -235,7 +291,11 @@ export class Soundscape {
    * `night`, `wind` (its strength now), `rain` (0..1) where the listener is; `water`: how near the water they
    * are (1 on it or by it, 0 high above it or far off over the fields).
    */
-  update(dt: number, night: number, wind: number, rain: number, water: number): void {
+  /**
+   * `frogs`: how many frogs the season brings out (0..1, they call at dusk and through the night, and in the rain);
+   * `falls`: how near and how full the falling water nearest the listener is (0..1).
+   */
+  update(dt: number, night: number, wind: number, rain: number, water: number, frogs = 0, falls = 0): void {
     const ctx = this.ctx;
     if (!ctx || !this.master || !this.wind || !this.windFilter || !this.river || !this.rain || !this.lap) return;
     const now = ctx.currentTime;
@@ -247,6 +307,7 @@ export class Soundscape {
     // the hiss grows faster than the rain (a drizzle is soft, a downpour loud), and a roar comes in under it
     this.rain.gain.setTargetAtTime(0.04 * rain + 0.08 * rain * rain, now, 1.5);
     if (this.downpour) this.downpour.gain.setTargetAtTime(0.11 * Math.max(0, (rain - 0.45) / 0.55) ** 1.5, now, 2);
+    if (this.falls) this.falls.gain.setTargetAtTime(0.1 * falls, now, 1);
     this.windFilter.frequency.setTargetAtTime(280 + 140 * wind + 260 * Math.sin(now * 0.07) ** 2, now, 2);
     if (this.muted || this.hidden) return;
     // the birds keep quiet in the rain and a hard wind, as the songbirds do (they sit still then)
@@ -259,6 +320,13 @@ export class Soundscape {
     if (this.nextCricket <= 0) {
       if (night > 0.3 && rain < 0.6) this.crickets(night * (1 - rain));
       this.nextCricket = 0.6 + Math.random() * 1.6;
+    }
+    // the frogs: a chorus through the rainy nights, a few calls in the rain by day
+    this.nextFrog -= dt;
+    if (this.nextFrog <= 0) {
+      const chorus = frogs * Math.max(night, Math.min(1, rain * 1.5) * 0.5);
+      if (chorus > 0.05) this.frog(Math.min(1, chorus));
+      this.nextFrog = chorus > 0.05 ? (0.15 + Math.random() * 0.6) / Math.max(0.3, chorus) : 1.5;
     }
   }
 }

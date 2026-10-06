@@ -66,6 +66,28 @@ uniform float uRain;
 uniform float uOvercast;
 uniform float uHillCloud;
 uniform vec4 uLightning;
+uniform vec4 uLamp0;
+uniform vec4 uLamp1;
+uniform vec4 uLamp2;
+uniform vec3 uLampColor0;
+uniform vec3 uLampColor1;
+uniform vec3 uLampColor2;
+
+// One of the village's lamps on a surface at p facing n (world): a soft light, falling off nearly as the square
+// of the distance and smoothly to nothing at its reach, wrapped a little round the surface (a room's lamp fills
+// it from its walls too). Three separate uniforms, not an array indexed in a loop (slow on ANGLE/Direct3D).
+vec3 lampLight(vec4 lamp, vec3 color, vec3 p, vec3 n) {
+  vec3 d = lamp.xyz - p;
+  float d2 = dot(d, d);
+  float reach2 = lamp.w * lamp.w;
+  if (d2 >= reach2 || dot(color, color) <= 0.0) return vec3(0.0);
+  float edge = 1.0 - d2 / reach2;
+  float nl = clamp(dot(n, d * inversesqrt(max(d2, 1e-4))) * 0.85 + 0.15, 0.0, 1.0);
+  return color * edge * edge / (1.0 + d2) * nl;
+}
+vec3 lampsAt(vec3 p, vec3 n) {
+  return lampLight(uLamp0, uLampColor0, p, n) + lampLight(uLamp1, uLampColor1, p, n) + lampLight(uLamp2, uLampColor2, p, n);
+}
 
 float hash12(vec2 p) {
   vec3 p3 = fract(vec3(p.xyx) * 0.1031);
@@ -183,6 +205,12 @@ float seaExposure(vec2 p) {
   return texture2D(tLevel, (uLevelMap.xy - p) * uLevelMap.zw).a;
 }
 
+// How clear an inland water at p is beyond the season's own (the level map's a, which is the sea's exposure
+// over the sea): 1 over the pond the village keeps clean (world/water.ts levelTexture)
+float waterClarity(vec2 p) {
+  return texture2D(tLevel, (uLevelMap.xy - p) * uLevelMap.zw).a;
+}
+
 // The surface of the water over p (m): the sea's (the tide) over its cells, an inland water's own over
 // its, and far below the ground where there is none (a field below high water behind its bund stays dry)
 float waterSurface(vec2 p) {
@@ -250,10 +278,13 @@ vec3 underwater(vec3 col, vec3 wpos) {
   // the rivers run clear and green from late autumn through the dry months, and silty brown in the rains, as
   // the land's runoff (uFlowScale, the season's) brings the silt down
   float clear = 1.0 - smoothstep(0.8, 1.4, uFlowScale);
+  // a pond kept clean stays clear whatever the season: its bed and its fish seen through it
+  float kept = lv.g > 0.5 ? 0.0 : waterClarity(wpos.xz);
   vec3 body = mix(uWaterBody, uWaterBody * vec3(0.62, 0.98, 1.2), open);
-  body = mix(body, body * vec3(0.72, 1.06, 1.02), clear);
-  vec3 seen = col * mix(vec3(0.78, 0.86, 0.72), vec3(0.74, 0.92, 0.86), clear);
-  return mix(body, seen, exp(-path * mix(mix(2.8, 1.5, open), 0.7, clear)));
+  body = mix(body, body * vec3(0.72, 1.06, 1.02), max(clear, kept));
+  body = mix(body, body * vec3(0.9, 1.25, 1.2), kept);
+  vec3 seen = col * mix(mix(vec3(0.78, 0.86, 0.72), vec3(0.74, 0.92, 0.86), clear), vec3(0.92, 1.0, 0.95), kept);
+  return mix(body, seen, exp(-path * mix(mix(mix(2.8, 1.5, open), 0.7, clear), 0.18, kept)));
 }
 
 // Aerial perspective: analytic exponential height fog plus a thin river mist that hugs the water

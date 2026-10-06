@@ -6,7 +6,7 @@ import { patchMaterial } from '../render/patch';
 import { hyacinthLeafTexture } from '../render/textures';
 import { windAt } from '../env/wind';
 import type { BoatBody } from './boatPhysics';
-import { SALT_CREEK, WATER_LEVEL, inlandWaterAt, meanWaterLevelAt, risenLevel, terrainHeight, waterLevelAt, waterwayAt } from './geography';
+import { PONDS, SALT_CREEK, WATER_LEVEL, inlandWaterAt, meanWaterLevelAt, pondReach, risenLevel, terrainHeight, waterLevelAt, waterwayAt } from './geography';
 import { HERO_HULL, heroBeamAtWater, hullHalfWidthAt, type HullShape } from './hull';
 import { wakeHeight } from './wake';
 import { SHELTERED, waveHeight, waveSlope } from './waves';
@@ -26,6 +26,8 @@ export interface DriftObstacles {
 }
 
 const NO_OBSTACLES: DriftObstacles = { hulls: [], posts: [] };
+/** The ponds kept clean (the mosque's). */
+const KEPT = PONDS.filter((p) => p.kept);
 const UP = new Vector3(0, 1, 0);
 const PLANTS = 720;
 const LEAVES = 160;
@@ -34,7 +36,7 @@ const N = PLANTS + LEAVES;
 const REACH = 160;
 /** They float only where the fresh water is at least this deep (m). */
 const FLOATS = 0.25;
-/** In the khal they are set down only within this of its banks (m): its middle is the boats' way. */
+/** In the khals they are set down only within this of their banks (m), and within 0.4 of a narrow one's half: their middle is the boats' way. */
 const EDGE = 3;
 /** Frames a mat with no water to go to waits before it looks again. */
 const RETRY = 45;
@@ -466,7 +468,9 @@ export class Drift {
       // in the khal (and on its way across the bil) they gather in the slack water along the banks, out of the
       // boats' way; none in the salt creek, whose water is the sea's
       const w = waterwayAt(x, z);
-      if (w && (w.d < w.half - EDGE || w.way === SALT_CREEK)) continue;
+      if (w && (w.d < w.half - Math.min(EDGE, w.half * 0.4) || w.way === SALT_CREEK)) continue;
+      // none on the pond the village keeps clean
+      if (KEPT.some((p) => pondReach(p, x, z) < 1.3)) continue;
       return [x, z];
     }
     return null;

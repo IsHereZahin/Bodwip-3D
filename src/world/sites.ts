@@ -85,17 +85,40 @@ export function bridgeEnds(): { e: Point2; w: Point2 } {
 
 /**
  * The bamboo sanko carrying the field path over the side khal: its middle and the side khal's heading there
- * (it crosses square to it), `half` m from its middle to each landing, its deck's height above the water at
- * the middle, and the water.
+ * (it crosses square to it), `half` m from its middle to each landing, its walkway's height at the middle, the
+ * clear way for boats under it, and the water (heights in its frame are above the water's mean level).
+ *
+ * The boat's way goes under it (waterways.ts JOURNEY_LINE). Her tallest is the boatman standing at her stern
+ * under his mathal, ≈2.2 m over the water; the rains raise the water up to 0.85 m: so the walkway rises in a
+ * high hump to `crown`, and its middle span (±`gap`) stands on no trestles, wide enough for her and the paddle's
+ * reach. Long approaches keep the climb walkable, with bamboo rungs where it is steep.
  */
 export const SANKO = {
   x: SANKO_SITE.x,
   z: SANKO_SITE.z,
   angle: SANKO_SITE.heading,
-  half: SANKO_SITE.half + 4.5,
-  crown: 1.9,
+  half: SANKO_SITE.half + 7.5,
+  crown: 3.7,
+  gap: 2.8,
+  /** The fields' level at its landings (where the walkway comes down to the path). */
+  bank: PLAIN - WATER_LEVEL,
   water: WATER_LEVEL,
 };
+
+/** The sanko's walkway's height at `a` m along it from its middle, from `ends` at its landings (above the water's mean). */
+export function sankoDeck(a: number, ends = SANKO.bank): number {
+  const t = Math.min(1, Math.abs(a) / SANKO.half);
+  return ends + (SANKO.crown - ends) * (1 - t * t);
+}
+
+/** (a, b) in the sanko's frame: `a` along it (across the side khal), `b` along the side khal (sankoToWorld's inverse). */
+export function sankoFrame(x: number, z: number): { a: number; b: number } {
+  const c = Math.cos(SANKO.angle);
+  const s = Math.sin(SANKO.angle);
+  const dx = x - SANKO.x;
+  const dz = z - SANKO.z;
+  return { a: dx * c - dz * s, b: dx * s + dz * c };
+}
 
 /** A point of the sanko's frame in the world: `a` along it (across the side khal), `b` along the side khal. */
 export function sankoToWorld(a: number, b: number): Point2 {

@@ -158,6 +158,35 @@ function cover(x: number, z: number, h: number): Cover {
   };
 }
 
+/** The quadtree's corner (its root's least x and z), and the size it spans (m). */
+function rootSquare(): { x0: number; z0: number; s: number } {
+  // the map and a margin of sea floor round it (heights fade to the deep there)
+  const size = Math.max(WORLD_X1 - WORLD_X0, WORLD_Z0 - WORLD_Z1) + 800;
+  let s = LEAF;
+  while (s < size) s *= 2;
+  return { x0: (WORLD_X0 + WORLD_X1) / 2 - s / 2, z0: (WORLD_Z0 + WORLD_Z1) / 2 - s / 2, s };
+}
+
+/**
+ * The ground as the finest patches draw it at (x, z) (their lattice's heights, interpolated): what lies on the
+ * ground near the camera rests on this, not on `terrainHeight`, where the ground is cut finer than the lattice
+ * (a narrow stream's gully would otherwise bury what lies in it).
+ */
+export function meshGround(x: number, z: number): number {
+  const root = ROOT;
+  const step = LEAF / N;
+  const fx = (x - root.x0) / step;
+  const fz = (z - root.z0) / step;
+  const i = Math.floor(fx);
+  const j = Math.floor(fz);
+  const tx = fx - i;
+  const tz = fz - j;
+  const at = (a: number, b: number) => terrainHeight(root.x0 + a * step, root.z0 + b * step);
+  const a = at(i, j) + (at(i + 1, j) - at(i, j)) * tx;
+  const b = at(i, j + 1) + (at(i + 1, j + 1) - at(i, j + 1)) * tx;
+  return a + (b - a) * tz;
+}
+
 /** Ground cover at a point of the world (see `Cover`), with the terrain height there. */
 export function groundAt(x: number, z: number): Cover & { h: number } {
   const h = terrainHeight(x, z);
@@ -202,6 +231,7 @@ export function groundLattice(x0: number, z0: number, size: number, step: number
 const N = 64;
 /** The smallest patch (m): ≈2 m between vertices. */
 const LEAF = 128;
+const ROOT = rootSquare();
 /** A patch splits while the camera is nearer its centre than this many times its size. */
 const SPLIT = 1.5;
 /** Most patch-building time spent in one frame (ms) once running; the first frame builds all it needs. */
@@ -331,11 +361,7 @@ export class Terrain {
       terrain: true,
       splat: ground ?? undefined,
     });
-    // the map and a margin of sea floor round it (heights fade to the deep there)
-    const size = Math.max(WORLD_X1 - WORLD_X0, WORLD_Z0 - WORLD_Z1) + 800;
-    let s = LEAF;
-    while (s < size) s *= 2;
-    this.root = { key: '', x: (WORLD_X0 + WORLD_X1) / 2, z: (WORLD_Z0 + WORLD_Z1) / 2, size: s };
+    this.root = { key: '', x: (WORLD_X0 + WORLD_X1) / 2, z: (WORLD_Z0 + WORLD_Z1) / 2, size: ROOT.s };
   }
 
   /** Shows the patches the camera needs, building those not yet made; `all` builds every one now (for stills and the first frame). */

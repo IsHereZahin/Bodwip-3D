@@ -78,6 +78,17 @@ export const G = {
   uRain: { value: 0 },
   /** 0..1: how far the sky has closed over with rain cloud (no sun glitter, soft light). */
   uOvercast: { value: 0 },
+  /**
+   * The village's lamps after dark (world/landmarks.ts lampsGlow): where each stands (xyz) and how far its light
+   * reaches (w, m), and its colour times its strength (black by day). Lit materials take their soft light
+   * (render/glsl.ts lampsAt), the water their glints.
+   */
+  uLamp0: { value: new Vector4() },
+  uLamp1: { value: new Vector4() },
+  uLamp2: { value: new Vector4() },
+  uLampColor0: { value: new Color(0, 0, 0) },
+  uLampColor1: { value: new Color(0, 0, 0) },
+  uLampColor2: { value: new Color(0, 0, 0) },
   /** How much cloud lies on the hills (0..1): winter's mornings and evenings most, some in the rains (main.ts). */
   uHillCloud: { value: 0 },
   /** A lightning strike's light (world/lightning.ts): xyz the way to where it lights the cloud from within, w how bright now. */

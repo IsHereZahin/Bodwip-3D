@@ -8,7 +8,8 @@ import { patchMaterial } from '../render/patch';
 import { castNetTexture, softSpotTexture, weaveTexture } from '../render/textures';
 import { Boatman, type OarPose, type Outfit } from './boatman';
 import type { HumanName } from './humanData';
-import { fishGeometry, type Fish } from './fish';
+import { fishGeometry } from './fish';
+import type { Ripples } from './ripples';
 import { WATER_LEVEL, terrainHeight, waterRise } from './geography';
 import { buildHull, hullHalfWidthAt, hullStation, type HullShape } from './hull';
 import type { BodyDrive } from './paddle';
@@ -99,7 +100,7 @@ export class Fisher {
   readonly group = new Group();
   private readonly boat = new Group();
   private readonly man: Boatman;
-  private readonly fish: Fish;
+  private readonly ripples: Ripples;
   private readonly stance: Vector3;
   private readonly site: FisherPlace;
   /** In his dinghy on the river (else on foot on a bund). */
@@ -158,8 +159,8 @@ export class Fisher {
   private readonly q = new Quaternion();
   private readonly axis = new Vector3();
 
-  constructor(fish: Fish, place: FisherPlace = SITE) {
-    this.fish = fish;
+  constructor(ripples: Ripples, place: FisherPlace = SITE) {
+    this.ripples = ripples;
     this.site = place;
     this.afloat = place.ground === undefined;
     this.group.name = 'fisher';
@@ -657,8 +658,8 @@ export class Fisher {
       // a streak back up along its fall
       pos[o + 4] = pos[o + 1] + Math.min(0.09, 0.02 + Math.abs(this.dripVel[i]) * 0.012);
       if (pos[o + 1] <= level) {
-        // into the water (its patter is the water shader's, under the bag; now and then a ring of its own)
-        if (this.dripRng.next() < 0.25) this.fish.ring(this.v.set(pos[o], level, pos[o + 2]), this.dripRng.range(0.35, 0.7));
+        // into the water (its patter is the water shader's, under the bag; near the camera each its own ring)
+        if (this.dripRng.next() < 0.5) this.ripples.drop(pos[o], pos[o + 2], 0.05, this.dripRng.range(0.002, 0.005));
         this.dripVel[i] = 0;
         pos[o + 1] = pos[o + 4] = -1e4;
       }

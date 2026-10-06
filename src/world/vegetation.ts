@@ -46,7 +46,7 @@ import {
   waterLevelAt,
   type Mound,
 } from './geography';
-import { BANYAN, FAR_GROVES, HILLS, WORLD } from './plan';
+import { BANYAN, FAR_GROVES, GRAVE_BANYAN, HILLS, WORLD } from './plan';
 import { roadLines } from './roads';
 import { nearStone } from './stones';
 import { KHAL, SIDE_KHAL, journeyDistance, type Waterway } from './waterways';
@@ -884,7 +884,11 @@ export function buildVegetation(
     // these take the spring's red flower where the shader gives it (`seasonal: 'tree'`); the hills' garjan does not
     if (c) CROWNS.push({ x: p.x, y: p.y + c.y * p.s, z: p.z, r: c.r * p.s, blossom: b !== B.garjan, kind: c.kind });
   };
-  for (const f of featured) put(B[f.kind], { x: f.x, y: terrainHeight(f.x, f.z) - 0.15, z: f.z, ry: f.ry, s: f.s });
+  for (const f of featured) {
+    // (the rest of the planting keeps its distance)
+    occ.add(f.x, f.z, 2.5 * f.s);
+    put(B[f.kind], { x: f.x, y: terrainHeight(f.x, f.z) - 0.15, z: f.z, ry: f.ry, s: f.s });
+  }
 
   // the homesteads' joba bushes by the houses: one or two beside a house, by the door or the yard
   for (const h of huts) {
@@ -1268,6 +1272,7 @@ export function buildVegetation(
 
   // the banyan's crown too (world/banyan.ts builds it)
   CROWNS.push({ x: BANYAN.x, y: terrainHeight(BANYAN.x, BANYAN.z) + 11, z: BANYAN.z, r: BANYAN.crown, blossom: false, kind: 'banyan' });
+  CROWNS.push({ x: GRAVE_BANYAN.x, y: terrainHeight(GRAVE_BANYAN.x, GRAVE_BANYAN.z) + 10, z: GRAVE_BANYAN.z, r: GRAVE_BANYAN.crown, blossom: false, kind: 'banyan' });
 
   return group;
 }

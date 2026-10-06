@@ -4,7 +4,7 @@ import { sunDirectionOn } from '../env/astro';
 import { makeSeasonState, seasonAt } from '../env/season';
 import { plotCropAt } from '../world/crops';
 import { FISHER_SITE } from '../world/fisher';
-import { BIL, BRIDGE, HOMESTEAD_MOUNDS, JOURNEY, SALT_CREEK, WATER_LEVEL, bridgeDeck, bridgeFrame, bridgeToWorld, corridorDistance, journeyAt, journeyFrame, journeyHalfWidth, landUse, saltPoint, shapePoint, terrainHeight, waterLevelAt, waterRise, waterwayAt } from '../world/geography';
+import { BIL, BRIDGE, HOMESTEAD_MOUNDS, JOURNEY, SALT_CREEK, SANKO, WATER_LEVEL, bridgeDeck, bridgeFrame, bridgeToWorld, corridorDistance, journeyAt, journeyFrame, journeyHalfWidth, landUse, saltPoint, shapePoint, terrainHeight, waterLevelAt, waterRise, waterwayAt } from '../world/geography';
 import { bloomRank } from '../world/leaves';
 import { LILY_PONDS } from '../world/ponds';
 import { SALT_FIELD, type Pt } from '../world/plan';
@@ -813,6 +813,19 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
         const k = ease(smoothstep(0.3, 1, u));
         pos.y += k * 6.5;
         look.y -= k * 1.5;
+      },
+    },
+    {
+      caption: 'বাঁশের সাঁকো',
+      seconds: 14,
+      world: { day: 230, hour: 8.6, weather: 'clear', wind: 0.3, rain: [[0, 0], [1, 0]], wet: [[0, 0.6], [1, 0.56]] },
+      // the side khal on a late-rains morning, the water high: low on it past the high bamboo sanko, looking back
+      // as the boat comes up to it and through under its middle span, the majhi standing at her stern clear under
+      // the walkway, and on toward the camera, which draws back before her
+      journey: fractionAt(JOURNEY.sanko - 10),
+      pose: (u, s, pos, look) => {
+        onWay(JOURNEY.sanko + lerp(13, 16, ease(u)), 1.5, lerp(1.0, 1.25, u), pos);
+        rel(s, 0, 0, 1.3, look).lerp(a.set(SANKO.x, SANKO.water + SANKO.crown - 0.4, SANKO.z), lerp(0.4, 0.15, ease(u)));
       },
     },
     {

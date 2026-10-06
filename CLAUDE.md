@@ -9,7 +9,7 @@ There are no audio files and no map data.
 
 ## Start here
 
-- **This branch, `cinematic-village`,** is the user's direction of 2026-10-05: the best-looking cinematic Bengali village round a small river journey (river → khal under an old brick arch → shapla bil), designed in `src/world/plan.ts`. Beauty and village logic come before geography; quality and cohesion come before the number of features.
+- **This branch, `cinematic-village`,** is the user's direction of 2026-10-05: the best-looking cinematic Bengali village round a small river journey (river → khal under an old brick arch → side khal under a bamboo sanko → shapla bil), designed in `src/world/plan.ts`. Beauty and village logic come before geography; quality and cohesion come before the number of features.
 - **Before changing anything, read the docs that bear on the task** (`docs/ai-helper/`):
   - `decisions.md`: the user's direction and standing decisions, and why; what was rejected; the branch history.
   - `architecture.md`: the map of `src/` and where to change what.
@@ -82,7 +82,10 @@ There are no audio files and no map data.
 - Fog is split between passes. The mirror pass fogs only water → object (the `uReflPass` branch of `applyAtmosphere`), and the water shader fogs camera → water.
 - `tsconfig` has `erasableSyntaxOnly`: no constructor parameter properties, enums or namespaces. It also has `noUnusedLocals`/`noUnusedParameters`.
 - Watch for aliasing of shared temporary vectors. `waterwayAt`, `Waterway.frame` and `journeyFrame` each return their own reused object: copy what you need before calling the same one again.
-- A module that `geography.ts` imports must not import `geography.ts` back, or it would read its constants before they exist. That is why `roads.ts` takes the ground as a parameter of `buildRoads`, the crossings' frames live in `sites.ts`, and the river's levee and char live in `waterways.ts`.
+- A module that `geography.ts` imports must not import `geography.ts` back, or it would read its constants before they exist. That is why `roads.ts` takes the ground as a parameter of `buildRoads`, the crossings' frames live in `sites.ts`, the river's levee and char live in `waterways.ts`, and the small channels' shapes (`channels.ts`) are plain data that geography carves.
+- What lies on the ground near the camera where the ground is cut finer than the terrain's 2 m lattice (the hill stream's gully, the sluice's drain) rests on `meshGround` (terrain.ts), not `terrainHeight`. Laid on the true carved bed, the stream sank under the drawn ground in pieces.
+- Whatever touches the water near the camera rings it through the ripple patch (`Ripples.drop`, world/ripples.ts), never a decal ring: the old white ring decals looked pasted on at close range.
+- An `InstancedMesh` with per-instance colours gets its `instanceColor` in its constructor, before the load-time compile. Made later by `setColorAt`, it recompiles the material the first time one shows (a hitch mid-film).
 - Cameras and the film follow `boat.course` (smoothed). `boat.heading` wags about a degree with each stroke and would shake them.
 - The hero group's rotation is `(rotX, heading, rotZ, 'YXZ')`: rotX positive is bow down, rotZ positive is starboard up. Local hull height is `heave + x·rotZ − z·rotX`.
 - Boat and boatman form a loop: `hero.crew` (where his weight is) feeds `rig.update` one frame late, and `hero.update` reads the body to pose him.
@@ -146,9 +149,14 @@ There are no audio files and no map data.
   - A big plant answers the gusts late (`uGust.y`, how far the fronts roll in a second: the past at a point is the present downwind).
   - The wood and the leaves of one plant must share `wind` and `windHeight`, or the crown parts from its trunk (the tal's fans and the banana's stem did).
 - Things that move must not cast shadows, because the shadow map is not redrawn every frame (the hero boat, the girl, the train). This includes the moored boats: their vertex shader lifts them onto the water, and the shadow pass would draw them unlifted.
+- The water reads the key light's shadow map through getters (`Water.takeShadow`), because a dissolve swaps the light's map for the shot being left. In shadow the sun's glitter goes out; the reflection stays.
+- The level map's `a` is the sea's exposure over the sea and, over inland water, how clear it is kept (GLSL `waterClarity`: the mosque's pond). Read it as clarity only where `g` (the sea) is 0.
 - Camera-facing quads built in a vertex shader (the rain, the lightning) must be `DoubleSide`.
 - Anything that reads `Cover.zone` must allow for its sign (paddy > 0, salt < 0): the meadow uses `1 − |zone|`.
 - The water is see-through: every material that can sit below the water must go through `patchMaterial`, or it will show through the water untinted.
+- `patchMaterial` needs a lit built-in material (its chunks read the normal): a `MeshBasicMaterial` does not compile through it. Make a glow an emissive `MeshStandardMaterial` (the mosque's lit openings take their gradient from an `emissiveMap`).
+- The lamps' light is three separate uniform pairs (`uLamp0..2`, `uLampColor0..2`), never an array indexed in a loop. A fourth lamp light needs its own pair in globals.ts, glsl.ts `lampsAt` and water.ts's glints. What glows after dark is set by `lampsGlow` and tracked by `worldLook` (`NIGHT_GLOWS`).
+- Whatever spans the boat's way must clear her: the boatman stands ≈2.2 m over the water under his mathal, and the rains raise it up to 0.85 m. The sanko's `crown` and its trestle-free `gap` are sized for that (sites.ts `SANKO`).
 - The ground blend samples only the two strongest layers, with the layer index as a texture coordinate. Arrays indexed in loops took frames from 16.7 ms to 26–32 ms in headless Chrome (ANGLE/Direct3D).
 - The meadow builds only a few chunks a frame, so stills call `meadow.update(camera.position, true)` to build them all.
 - The orbit camera always looks at the boat, so it cannot look up at a high moon. Stills of a high moon need `shot({ free, face })`.
@@ -162,7 +170,7 @@ There are no audio files and no map data.
 
 - TypeScript strict. Keep modules small and focused, put the reason in comments, and match the surrounding style.
 - Keep it procedural apart from the six CC0 textures in `public/textures/` and the people's MakeHuman (CC0) data in `public/humans/`; ask before adding any other asset.
-- External requests: those textures (same origin) and the Noto Serif Bengali Google Font, with system fallbacks.
+- External requests: those textures (same origin) and the Google Fonts Noto Serif Bengali (the UI) and Amiri (the mosque's kalima, the user's choice), with system fallbacks.
 - The people are realistic but generic: no likeness of any real person.
 - The village is designed in `plan.ts`. Change the layout there (and check it top-down) rather than placing things ad hoc in the builders.
 - Every visible element gets the same level of finish. Before adding anything, ask whether it belongs in a Bengali village and whether it makes the river journey more beautiful.

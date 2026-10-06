@@ -1309,6 +1309,59 @@ export function petalTexture(): DataTexture {
   return toTexture(ctx);
 }
 
+/**
+ * The light seen through a lit doorway or window at night, along u from the opening's foot (0) out to its edge
+ * (1): warm and brightest where the lamp's light pools on the floor inside, dimming toward the edges.
+ */
+export function glowTexture(): DataTexture {
+  const W = 64;
+  const ctx = paint(W, 2, (c) => {
+    const g = c.createLinearGradient(0, 0, W, 0);
+    g.addColorStop(0, '#ffd49a');
+    g.addColorStop(0.45, '#e39d5a');
+    g.addColorStop(1, '#5e3418');
+    c.fillStyle = g;
+    c.fillRect(0, 0, W, 2);
+  });
+  return toTexture(ctx);
+}
+
+/** The font the kalima over the mosque's door is written in (loaded by index.html; system Arabic faces stand in). */
+export const KALIMA_FONT = "'Amiri', 'Traditional Arabic', 'Arabic Typesetting', 'Geeza Pro', 'Segoe UI', serif";
+
+/**
+ * A calligraphic panel: `text` (Arabic, right to left) in cream on a deep green ground inside a thin gold border,
+ * as written over a village mosque's door. Painted once the font is loaded (main.ts waits for it).
+ */
+export function inscriptionTexture(text: string): DataTexture {
+  const W = 1024;
+  const H = 144;
+  const ctx = paint(W, H, (c) => {
+    c.fillStyle = '#1d4f35';
+    c.fillRect(0, 0, W, H);
+    c.strokeStyle = '#b89a52';
+    c.lineWidth = 5;
+    c.strokeRect(9, 9, W - 18, H - 18);
+    c.lineWidth = 1.5;
+    c.strokeRect(19, 19, W - 38, H - 38);
+    c.direction = 'rtl';
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillStyle = '#f3ead2';
+    // as large as fits inside the border
+    let size = 86;
+    c.font = `700 ${size}px ${KALIMA_FONT}`;
+    const room = W - 90;
+    const width = c.measureText(text).width;
+    if (width > room) {
+      size = Math.floor((size * room) / width);
+      c.font = `700 ${size}px ${KALIMA_FONT}`;
+    }
+    c.fillText(text, W / 2, H / 2 + size * 0.08);
+  });
+  return toTexture(ctx);
+}
+
 /** A soft round shadow, dark in the middle and gone at the rim (alpha only), for contact shadows. */
 export function softSpotTexture(): DataTexture {
   const S = 64;

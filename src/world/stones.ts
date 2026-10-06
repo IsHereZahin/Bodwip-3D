@@ -1,12 +1,15 @@
 import { BufferAttribute, BufferGeometry, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, RingGeometry, ShaderMaterial, Vector2 } from 'three';
 import { G, LAYER_NO_REFLECT } from '../core/globals';
+import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
 import { Rng } from '../core/rng';
 import { CORRIDOR, GLSL_COMMON } from '../render/glsl';
 import { instanced, type Placement } from '../render/instancing';
 import { patchMaterial } from '../render/patch';
 import { rockTexture } from '../render/textures';
-import { WATER_LEVEL, corridorDistance, onBridge, onLandmark, onRoad, terrainHeight } from './geography';
+import { PONDS, WATER_LEVEL, corridorDistance, onBridge, onLandmark, onRoad, pondReach, terrainHeight } from './geography';
+import { CHANNELS } from './channels';
+import { meshGround } from './terrain';
 import { KHAL_ROCKS } from './plan';
 import { KHAL, RIVER, SIDE_KHAL, type Waterway } from './waterways';
 import { planGhats } from './village';
@@ -23,14 +26,30 @@ interface Stone {
   r: number;
 }
 
+/** How a rock is cut and coloured: its rings and segments round, a tint over its stone, how mossy its top. */
+interface RockLook {
+  rings: number;
+  segs: number;
+  tint: [number, number, number];
+  moss: number;
+}
+const BOULDER: RockLook = { rings: 16, segs: 24, tint: [1, 1, 1], moss: 1 };
+/** The kept pond's pebbles: few-sided (they are small), in the greys, browns and ochres of a pond's gravel, dulled by the silt and the algae on them. */
+const PEBBLE_LOOKS: RockLook[] = [
+  { rings: 6, segs: 9, tint: [0.62, 0.66, 0.64], moss: 0.6 },
+  { rings: 6, segs: 9, tint: [0.72, 0.62, 0.5], moss: 0.6 },
+  { rings: 6, segs: 9, tint: [0.8, 0.7, 0.52], moss: 0.5 },
+  { rings: 6, segs: 9, tint: [0.48, 0.48, 0.44], moss: 0.7 },
+  { rings: 6, segs: 9, tint: [0.85, 0.82, 0.74], moss: 0.5 },
+];
+
 /**
  * A rock 1 m in radius about its middle, its foot flattened at y −0.25 and its top about 0.6 up: a lump cut by a
  * few planes into the flat faces and edges a broken, weathered stone has, a little rough all over; mossy where it
  * faces the sky and darker at its foot (vertex colour over `rockTexture`).
  */
-function rockShape(seed: number): BufferGeometry {
-  const rings = 16;
-  const segs = 24;
+function rockShape(seed: number, look: RockLook = BOULDER): BufferGeometry {
+  const { rings, segs, tint } = look;
   const rng = new Rng(seed);
   // the cutting planes: their normals (most of them across or up, so it rests on its foot with a flat top or two) and how far out
   // a few gentle cuts: a water-worn stone keeps its faces but its edges are rounded off
@@ -57,12 +76,12 @@ function rockShape(seed: number): BufferGeometry {
     // the foot settles flat into the ground
     if (y < -0.25) y = -0.25 + (y + 0.25) * 0.2;
     // moss in patches over the top and on the sides that face the sky; grey stone between and below
-    const moss = Math.max(0, Math.min(1, (ny - 0.15) * 2)) * Math.max(0, Math.min(1, (fbm(nx * 2.2 + seed, nz * 2.2 + ny, 3, seed + 3) - 0.4) * 3.5));
+    const moss = look.moss * Math.max(0, Math.min(1, (ny - 0.15) * 2)) * Math.max(0, Math.min(1, (fbm(nx * 2.2 + seed, nz * 2.2 + ny, 3, seed + 3) - 0.4) * 3.5));
     const shade = 0.8 + 0.4 * Math.min(1, (y + 0.25) / 0.55);
     pos.push(x, y, z);
     // projected mostly from above (the moss and the lichen read from where they are seen), a little from the side
     uv.push(x * 1.3 + z * 0.35 + u * 0, z * 1.3 - y * 0.8 + v * 0);
-    col.push(shade * (1 - moss * 0.45), shade * (1 - moss * 0.12), shade * (1 - moss * 0.62));
+    col.push(shade * (1 - moss * 0.45) * tint[0], shade * (1 - moss * 0.12) * tint[1], shade * (1 - moss * 0.62) * tint[2]);
   };
   // rings from the top to the bottom, each with a duplicate at the seam so the texture wraps cleanly
   for (let j = 0; j <= rings; j++) {
@@ -110,11 +129,11 @@ const ROCK_HEIGHT = 0.87;
 /** The rock shapes. */
 const SHAPES = 5;
 
-/** The khal's rocks in the world: from its middle `c` m to the left, as the boat's way reckons it. */
-export function khalRocks(): { x: number; z: number; r: number }[] {
+/** The khal's rocks in the world: from its middle `c` m to the left, as the boat's way reckons it; and their tops' height (m). */
+export function khalRocks(): { x: number; z: number; r: number; top: number }[] {
   return KHAL_ROCKS.map((k) => {
     const p = KHAL.at(k.s);
-    return { x: p.x + Math.cos(p.heading) * k.c, z: p.z - Math.sin(p.heading) * k.c, r: k.r };
+    return { x: p.x + Math.cos(p.heading) * k.c, z: p.z - Math.sin(p.heading) * k.c, r: k.r, top: WATER_LEVEL + 0.45 + 0.2 * k.r };
   });
 }
 
@@ -149,7 +168,7 @@ const PLAN = (() => {
     const bed = terrainHeight(k.x, k.z);
     // a broad boulder standing up out of the water, as a rock in a stream does; what is under the water is
     // lost in the murk, and a second, broader stone under it stands on the bed
-    const top = WATER_LEVEL + 0.45 + 0.2 * k.r;
+    const top = k.top;
     const s = k.r * 1.25;
     const sy = 1.15;
     put(k.x, top - (ROCK_HEIGHT - 0.25) * s * sy, k.z, s, sy);
@@ -168,6 +187,42 @@ const PLAN = (() => {
       put(x, b + 0.25 * r * ys, z, r, ys);
     }
   });
+
+  // the hill stream's rocks: boulders at the lip of each ledge its water falls off, one or two in its bed below,
+  // and stones along its gully's sides
+  for (const c of CHANNELS) {
+    if (c.ledge <= 0) continue;
+    const h = c.pts.map(([x, z]) => terrainHeight(x, z));
+    for (let i = 1; i + 1 < c.pts.length; i++) {
+      const [x, z] = c.pts[i];
+      const [nx, nz] = c.pts[i + 1];
+      const l = Math.hypot(nx - x, nz - z) || 1;
+      const ax = -(nz - z) / l;
+      const az = (nx - x) / l;
+      if (h[i] - h[i + 1] > 0.35) {
+        for (const side of [-1, 1]) {
+          const out = side * (c.width / 2 - rng.range(0.1, 0.35));
+          const r = rng.range(0.35, 0.6);
+          const px = x + ax * out;
+          const pz = z + az * out;
+          put(px, Math.max(terrainHeight(px, pz), meshGround(px, pz)) + 0.05 * r, pz, r, rng.range(0.9, 1.3));
+        }
+        if (rng.next() < 0.6) {
+          const out = rng.range(-0.3, 0.3);
+          const px = nx + ax * out + (nx - x) * 0.6;
+          const pz = nz + az * out + (nz - z) * 0.6;
+          put(px, Math.max(terrainHeight(px, pz), meshGround(px, pz)) + 0.02, pz, rng.range(0.18, 0.32), 0.8);
+        }
+      } else if (rng.next() < 0.3) {
+        const side = rng.sign();
+        const out = side * (c.width / 2 + rng.range(-0.1, 0.6));
+        const px = x + ax * out;
+        const pz = z + az * out;
+        const r = rng.range(0.2, 0.45);
+        put(px, Math.max(terrainHeight(px, pz), meshGround(px, pz)) + 0.08 * r, pz, r, rng.range(0.8, 1.1));
+      }
+    }
+  }
 
   // along the banks: every so often one to three stones, half of them at the water's edge, half up in the grass
   const banks: [Waterway, number, number][] = [
@@ -260,7 +315,44 @@ export function nearStone(x: number, z: number, margin: number): boolean {
   return false;
 }
 
-export function buildStones(): Group {
+/**
+ * The kept pond's (the mosque's) pebbles and small stones on its bed: thickest along its shallow edge, where the
+ * water laps them, a few over its deeper bed; lying in drifts, as the water leaves them, never in rows or rings;
+ * off its ghat.
+ */
+function pondPebbles(): Placement[][] {
+  const rng = new Rng(523);
+  const items: Placement[][] = PEBBLE_LOOKS.map(() => []);
+  for (const pond of PONDS) {
+    if (!pond.kept) continue;
+    const reach = Math.max(pond.hu, pond.hv) + 3;
+    for (let gz = -reach; gz < reach; gz += 0.45) {
+      for (let gx = -reach; gx < reach; gx += 0.45) {
+        const x = pond.x + gx + rng.range(-0.2, 0.2);
+        const z = pond.z + gz + rng.range(-0.2, 0.2);
+        if (pondReach(pond, x, z) > 1.15) continue;
+        const depth = pond.level - meshGround(x, z);
+        // from a little up the wet bank down to the shallows' foot, and thinly over the deeper bed
+        const shore = smoothstep(-0.2, -0.05, depth) * (1 - smoothstep(0.45, 0.8, depth));
+        const drift = fbm(x * 0.32 + 17, z * 0.32 - 5, 3, 29);
+        const chance = shore * smoothstep(0.38, 0.62, drift) * 0.9 + (depth > 0 ? (1 - shore) * smoothstep(0.58, 0.8, drift) * 0.18 : 0);
+        if (rng.next() > chance || onLandmark(x, z, 0.3)) continue;
+        for (let i = rng.int(1, 3); i > 0; i--) {
+          const px = x + rng.range(-0.22, 0.22);
+          const pz = z + rng.range(-0.22, 0.22);
+          const s = rng.next() < 0.07 ? rng.range(0.16, 0.3) : rng.range(0.035, 0.11);
+          const sy = rng.range(0.55, 0.95);
+          // bedded a little into the mud
+          items[rng.int(0, items.length - 1)].push({ x: px, y: meshGround(px, pz) + 0.1 * s * sy, z: pz, ry: rng.range(0, Math.PI * 2), s, sy, tx: rng.range(-0.15, 0.15), tz: rng.range(-0.15, 0.15) });
+        }
+      }
+    }
+  }
+  return items;
+}
+
+/** The stones, and apart (they are small: main.ts culls them near) the kept pond's pebbles. */
+export function buildStones(): { group: Group; pebbles: Group } {
   const group = new Group();
   group.name = 'stones';
   const tex = rockTexture(41);
@@ -271,6 +363,12 @@ export function buildStones(): Group {
   PLAN.items.forEach((list, i) => {
     if (list.length) group.add(instanced(rockShape(17 + i * 13), material, list, { cast: true, receive: true }));
   });
+  const pebbles = new Group();
+  pebbles.name = 'pebbles';
+  pondPebbles().forEach((list, i) => {
+    if (list.length) pebbles.add(instanced(rockShape(61 + i * 7, PEBBLE_LOOKS[i]), material, list, { receive: true, layer: LAYER_NO_REFLECT }));
+  });
+  group.add(pebbles);
   // the foam round those standing in the water
   if (PLAN.rings.length) {
     const ring = new RingGeometry(0.75, 1.45, 48, 2).rotateX(-Math.PI / 2);
@@ -293,5 +391,5 @@ export function buildStones(): Group {
     foam.name = 'stone-foam';
     group.add(foam);
   }
-  return group;
+  return { group, pebbles };
 }

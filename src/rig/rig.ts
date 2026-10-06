@@ -1,7 +1,8 @@
 import { PerspectiveCamera, Quaternion, Vector3 } from 'three';
 import { angleDelta, clamp, damp, lerp, smoothstep } from '../core/mathx';
 import { BoatBody, type Crew } from '../world/boatPhysics';
-import { BRIDGE, JOURNEY, bridgeDeck, bridgeFrame, bridgeSoffit, inlandWaterAt, journeyAt, journeyFrame, terrainHeight, waterLevelAt, waterwayAt } from '../world/geography';
+import { BRIDGE, JOURNEY, SANKO, bridgeDeck, bridgeFrame, bridgeSoffit, inlandWaterAt, journeyAt, journeyFrame, sankoDeck, sankoFrame, terrainHeight, waterLevelAt, waterwayAt } from '../world/geography';
+import { sankoToWorld } from '../world/sites';
 import { FlyCam } from './flycam';
 
 /** How far along her way the boatman steers for, m. */
@@ -54,6 +55,22 @@ function keepClearOfBridge(cam: Vector3): void {
   const soffit = bridgeSoffit(f.x);
   if (soffit - 0.6 > 0.8) cam.y = lerp(cam.y, Math.min(cam.y, BRIDGE.water + soffit - 0.6), s);
   else cam.y = lerp(cam.y, Math.max(cam.y, BRIDGE.water + bridgeDeck(f.x) + BRIDGE.parapetHeight + 1.2), s);
+}
+
+/**
+ * Following the boat under the bamboo sanko, the camera goes through the boats' way under its middle span, below
+ * its bracing (or, out over the banks, up over its walkway) rather than through its culms and trestles.
+ */
+function keepClearOfSanko(cam: Vector3): void {
+  const f = sankoFrame(cam.x, cam.z);
+  const s = smoothstep(4, 1, Math.abs(f.b)) * smoothstep(SANKO.half + 2, SANKO.half, Math.abs(f.a));
+  if (s <= 0) return;
+  if (Math.abs(f.a) < SANKO.gap + 1) {
+    const w = sankoToWorld(lerp(f.a, clamp(f.a, 0.5 - SANKO.gap, SANKO.gap - 0.5), s), f.b);
+    cam.x = w.x;
+    cam.z = w.z;
+    cam.y = lerp(cam.y, Math.min(cam.y, SANKO.water + sankoDeck(SANKO.gap) - 0.75), s);
+  } else cam.y = lerp(cam.y, Math.max(cam.y, SANKO.water + sankoDeck(f.a) + 2.2), s);
 }
 
 /** Whether a camera at (x, z) is over the water or close over a bank (not in among the banks' trees). */
@@ -374,6 +391,7 @@ export class Rig {
     const ground = Math.max(terrainHeight(cam.x, cam.z), waterLevelAt(cam.x, cam.z));
     cam.y = Math.max(cam.y, ground + 1.2);
     keepClearOfBridge(cam);
+    keepClearOfSanko(cam);
     this.camera.lookAt(this.target);
     this.camera.updateMatrixWorld();
   }

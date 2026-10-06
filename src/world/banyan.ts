@@ -5,7 +5,7 @@ import { patchMaterial } from '../render/patch';
 import type { Surfaces } from '../render/surfaces';
 import { leafClusterTexture, plasterTexture } from '../render/textures';
 import { terrainHeight } from './geography';
-import { BANYAN } from './plan';
+import { BANYAN, GRAVE_BANYAN } from './plan';
 
 // The old banyan (বটগাছ) at the corner of the river and the khal, the village's meeting place: a trunk grown
 // from many fused stems, great limbs spreading level far out over the ground and the water, roots let down
@@ -13,8 +13,19 @@ import { BANYAN } from './plan';
 // thirty metres across. Round its foot the village has built a plastered brick platform (বাঁধানো বটতলা) in
 // two steps where people sit; its shade is the hub's.
 
-/** The crown's middle height and its half-spread and half-height (m). */
-const CROWN = { y: 9.5, r: BANYAN.crown, h: 6.5 };
+/**
+ * A banyan: where its trunk stands, its crown's half-spread (m), its own shape (`seed`), and whether the village
+ * has built a platform round its foot. The hub's (plan.ts BANYAN) has one; the graveyard's (GRAVE_BANYAN) has not.
+ */
+export interface BanyanSpec {
+  x: number;
+  z: number;
+  crown: number;
+  seed: number;
+  platform: boolean;
+}
+export const HUB_BANYAN: BanyanSpec = { ...BANYAN, seed: 404, platform: true };
+export const GRAVEYARD_BANYAN: BanyanSpec = { ...GRAVE_BANYAN, seed: 431, platform: false };
 const BARK: RGB = rgb('#8a8072');
 
 /** Points along a gently curving limb from `a` to `b`, sagging `sag` m in its middle. */
@@ -27,12 +38,14 @@ function limb(a: Vector3, b: Vector3, sag: number, n = 6): Vector3[] {
   return out;
 }
 
-/** The banyan, its roots and its platform. */
-export function buildBanyan(bark: Surfaces['bark']): Group {
-  const rng = new Rng(404);
+/** A banyan, its roots and (if it has one) its platform. */
+export function buildBanyan(bark: Surfaces['bark'], spec: BanyanSpec = HUB_BANYAN): Group {
+  const rng = new Rng(spec.seed);
+  // the crown's middle height and its half-spread and half-height (m)
+  const CROWN = { y: 9.5 * (0.75 + 0.25 * (spec.crown / 15)), r: spec.crown, h: 6.5 * (0.8 + 0.2 * (spec.crown / 15)) };
   // built about the trunk's foot, so the wind bends it from there (patch.ts sways by height in the mesh)
-  const X = BANYAN.x;
-  const Z = BANYAN.z;
+  const X = spec.x;
+  const Z = spec.z;
   const Y = terrainHeight(X, Z) - 0.2;
   const x0 = 0;
   const z0 = 0;
@@ -117,10 +130,12 @@ export function buildBanyan(bark: Surfaces['bark']): Group {
 
   // the platform round its foot: two plastered brick steps, worn, the lower one wider
   const plaster: RGB = rgb('#cfc4ae');
-  for (const [r, h] of [
-    [4.6, 0.35],
-    [3.6, 0.7],
-  ] as const) {
+  for (const [r, h] of spec.platform
+    ? ([
+        [4.6, 0.35],
+        [3.6, 0.7],
+      ] as const)
+    : []) {
     const sides = 10;
     for (let i = 0; i < sides; i++) {
       const a = ((i + 0.5) / sides) * Math.PI * 2;
@@ -167,5 +182,6 @@ export function buildBanyan(bark: Surfaces['bark']): Group {
   return group;
 }
 
-/** Where the banyan's trunk and its platform stand, for the planting and the grass to keep clear. */
+/** Where the banyans' trunks (and the hub's platform) stand, for the planting and the grass to keep clear. */
 export const BANYAN_CLEARING = { x: BANYAN.x, z: BANYAN.z, r: 5 };
+export const GRAVE_BANYAN_CLEARING = { x: GRAVE_BANYAN.x, z: GRAVE_BANYAN.z, r: 4.5 };

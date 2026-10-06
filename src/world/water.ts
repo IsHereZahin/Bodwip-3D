@@ -18,14 +18,15 @@ import {
   ShaderMaterial,
   Vector4,
 } from 'three';
-import type { Texture } from 'three';
+import type { DirectionalLight, Texture } from 'three';
 import { G, LAYER_WATER } from '../core/globals';
 import { periodicNoise } from '../core/noise';
 import { EDGE_MARGIN, GLSL_COMMON } from '../render/glsl';
 import { HERO_HULL, HERO_SINK, hullWaterlineGlsl } from './hull';
+import { RIPPLE_GLSL, type FieldUniforms, type RippleUniforms } from './ripples';
 import { shipWakeGlsl, wakeGlsl } from './wake';
 import { OPEN_SEA, SHELTERED, swellGlsl, waveHeightLodGlsl, waveSlopeLodGlsl } from './waves';
-import { WATER_LEVEL, WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, eachWaterwayPoint, inlandWaterAt, meanWaterLevelAt, terrainHeight, waterLevelAt, waterRise, waterwayAt } from './geography';
+import { PONDS, WATER_LEVEL, WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, eachWaterwayPoint, inlandWaterAt, meanWaterLevelAt, pondReach, terrainHeight, waterLevelAt, waterRise, waterwayAt } from './geography';
 import { WORLD } from './plan';
 
 /** A field's rectangle in the world (x0, z0 its corner with the least x and z; sx, sz its extent) and its texels. */
@@ -258,7 +259,8 @@ const LEVEL_H = Math.ceil((LEVEL_AREA.z1 - LEVEL_AREA.z0) / LEVEL_CELL);
 /**
  * Which water stands where, over the world in LEVEL_CELL cells: r the surface of the water there at its mean
  * level (the river's, a khal's, the bil's or a pond's; the season's rise is GLSL waterLevels' to add); g 1 where the water is the sea's (none here); b 1 where it is water; a how
- * open it is to a sea's swell (none here). Round the water r carries the nearest water's level on for
+ * open it is to a sea's swell (none here), or over inland water how clear it is kept (1 the mosque's pond:
+ * GLSL waterClarity). Round the water r carries the nearest water's level on for
  * LEVEL_SPREAD cells, so the water grid's vertices beside a pond stand at its level and the pond's edge is cut
  * by the ground, not by the grid; farther off r lies well under the ground.
  */
@@ -266,9 +268,12 @@ function levelTexture(): { texture: DataTexture; map: Vector4 } {
   const n = LEVEL_W * LEVEL_H;
   const surface = new Float32Array(n).fill(-20);
   const inland = new Uint8Array(n);
+  const clear = new Uint8Array(n);
+  const kept = PONDS.filter((p) => p.kept);
   const centre = (i: number) => ({ x: LEVEL_AREA.x1 - ((i % LEVEL_W) + 0.5) * LEVEL_CELL, z: LEVEL_AREA.z1 - (Math.floor(i / LEVEL_W) + 0.5) * LEVEL_CELL });
   for (let i = 0; i < n; i++) {
     const c = centre(i);
+    if (kept.some((p) => pondReach(p, c.x, c.z) < 1.4)) clear[i] = 1;
     if (!inlandWaterAt(c.x, c.z)) continue;
     inland[i] = 1;
     surface[i] = meanWaterLevelAt(c.x, c.z);
@@ -311,7 +316,7 @@ function levelTexture(): { texture: DataTexture; map: Vector4 } {
     data[i * 4] = DataUtils.toHalfFloat(surface[i]);
     data[i * 4 + 1] = zero;
     data[i * 4 + 2] = DataUtils.toHalfFloat(inland[i]);
-    data[i * 4 + 3] = zero;
+    data[i * 4 + 3] = DataUtils.toHalfFloat(clear[i]);
   }
   const texture = new DataTexture(data, LEVEL_W, LEVEL_H, RGBAFormat, HalfFloatType);
   texture.minFilter = texture.magFilter = LinearFilter;
@@ -501,6 +506,52 @@ uniform vec4 uNetB0;     // ... the strike's strength, how hard it is being haul
 uniform vec4 uNetA1;     // the gher fisherman's
 uniform vec4 uNetB1;
 uniform vec4 uTouch;     // a light thing come down on the water (the film's petal, world/petals.ts): x, z, seconds since, how hard
+${RIPPLE_GLSL}
+uniform sampler2DShadow tKeyShadow;  // the key light's shadow map (env/environment.ts), and its matrix and bias; uKeyShadowOn 0 without one
+uniform mat4 uKeyShadowMatrix;
+uniform float uKeyShadowBias;
+uniform float uKeyShadowOn;
+uniform vec4 uFall0;     // where a stream or a sluice pours into the river (world/falls.ts): x, z, its reach, how hard
+uniform vec4 uFall1;
+// froth and churning where falling water comes into the river, carried off by the current
+void fallInto(vec4 f, vec2 p, vec2 flow, inout vec2 slope, inout float foam) {
+  if (f.w < 0.01) return;
+  vec2 d = p - f.xy - flow * 1.5;
+  float r = length(d);
+  if (r > f.z * 2.5) return;
+  float near = smoothstep(f.z * 2.2, 0.0, r);
+  float n = vnoise(p * 3.5 + vec2(uTime * 1.3, -uTime * 0.9)) * 0.6 + vnoise(p * 7.0 - uTime * 2.1) * 0.4;
+  foam += near * f.w * smoothstep(0.35, 0.75, n + near * 0.3) * 0.9;
+  slope += (vec2(vnoise(p * 5.0 + uTime * 2.0), vnoise(p * 5.0 + 9.0 - uTime * 2.0)) - 0.5) * near * f.w * 0.8;
+}
+// how much of the key light reaches the water here (1 out of the shadow map's reach): a few taps, soft as the
+// leaves' shadow is on the water
+float keyLight(vec3 wp) {
+  if (uKeyShadowOn < 0.5) return 1.0;
+  vec4 c = uKeyShadowMatrix * vec4(wp, 1.0);
+  c.xyz /= c.w;
+  if (c.x <= 0.0 || c.y <= 0.0 || c.x >= 1.0 || c.y >= 1.0 || c.z >= 1.0) return 1.0;
+  vec2 t = 1.5 / vec2(textureSize(tKeyShadow, 0));
+  float z = c.z + uKeyShadowBias;
+  float s = texture(tKeyShadow, vec3(c.xy + vec2(t.x, t.y * 0.4), z));
+  s += texture(tKeyShadow, vec3(c.xy + vec2(-t.x * 0.4, t.y), z));
+  s += texture(tKeyShadow, vec3(c.xy + vec2(-t.x, -t.y * 0.4), z));
+  s += texture(tKeyShadow, vec3(c.xy + vec2(t.x * 0.4, -t.y), z));
+  return s * 0.25;
+}
+// a lamp's light on the water after dark: a column of glints toward the eye broken by the ripples, seen from
+// farther off than its light falls on the land
+vec3 lampGlint(vec4 lamp, vec3 color, vec3 wp, vec3 N, vec3 V) {
+  vec3 d = lamp.xyz - wp;
+  float d2 = dot(d, d);
+  float reach = lamp.w * 3.0;
+  if (d2 >= reach * reach || dot(color, color) <= 0.0) return vec3(0.0);
+  vec3 H = normalize(d * inversesqrt(d2) + V);
+  float nh = max(dot(N, H), 0.0);
+  // as much as the water reflects at that angle: little looking down into it, more across it
+  float fres = 0.02 + 0.98 * pow(1.0 - max(dot(H, V), 0.0), 5.0);
+  return color * fres * (pow(nh, 700.0) * 1.0 + pow(nh, 50.0) * 0.03) * (1.0 - d2 / (reach * reach)) / (1.0 + d2 * 0.05);
+}
 uniform vec3 uAmb;
 uniform float uInland;
 varying vec3 vWorld;
@@ -752,6 +803,10 @@ void main() {
     float train = exp(-front * front / (spread * spread)) * exp(-age * 0.8) / (1.0 + tr * 4.0);
     slope += td / max(tr, 1e-3) * cos(front * 150.0) * train * 0.35 * uTouch.w * smoothstep(0.02, 0.006, footprint);
   }
+  // the ripples of whatever touches the water where the camera looks (world/ripples.ts), dying on the shallows
+  slope += rippleSlope(wp.xz, footprint) * smoothstep(0.0, 0.15, depth);
+  fallInto(uFall0, wp.xz, flow, slope, foam);
+  fallInto(uFall1, wp.xz, flow, slope, foam);
 
   // flecks of foam and silt riding the current, thickest in the slack water by the banks (none on still water)
   vec2 fq = vec2(fp.x * 0.9, fp.y * 0.22);
@@ -772,15 +827,19 @@ void main() {
 
   // Premultiplied: the surface reflects F of the light and lets the rest through to the riverbed, which
   // tints itself with the silty water it is seen through (see underwater()). Shallows show their bed.
+  // Under the trees' shadow the sun neither glitters on it nor lights its froth (the reflection stays)
   float keyUp = max(uKeyDir.y, 0.0);
-  vec3 light = uAmb + uKeyColor * keyUp * 0.45;
+  float sunlit = keyLight(wp);
+  vec3 light = uAmb + uKeyColor * keyUp * 0.45 * sunlit;
   vec3 col = refl * F;
   float alpha = F;
 
   // sun (or moon) glitter
   vec3 H = normalize(uKeyDir + V);
   float nh = max(dot(N, H), 0.0);
-  col += uKeyColor * (pow(nh, 1100.0) * 26.0 + pow(nh, 160.0) * 0.7) * step(0.0, uKeyDir.y) * (1.0 - uOvercast);
+  col += uKeyColor * (pow(nh, 1100.0) * 26.0 + pow(nh, 160.0) * 0.7) * step(0.0, uKeyDir.y) * (1.0 - uOvercast) * sunlit;
+  // and the lamps' after dark
+  if (uNight > 0.01) col += lampGlint(uLamp0, uLampColor0, wp, N, V) + lampGlint(uLamp1, uLampColor1, wp, N, V) + lampGlint(uLamp2, uLampColor2, wp, N, V);
   col *= sheet;
   alpha *= sheet;
 
@@ -828,6 +887,13 @@ export interface Water {
   nets: NetRipples;
   /** A light thing come down on the water: x, z, seconds since, how hard (0: none). */
   touch: Vector4;
+  /** The water's field (its bed and current), for the ripples' banks; and the ripples' own uniforms (world/ripples.ts). */
+  field: FieldUniforms;
+  ripple: RippleUniforms;
+  /** Takes the key light's shadow, whichever map it has when drawn (a dissolve lends the shot being left its own). */
+  takeShadow(light: DirectionalLight): void;
+  /** Where falling water comes into the river (world/falls.ts): x, z, reach, how hard. */
+  fallInto: [Vector4, Vector4];
   /** The three nearest moving ships (x, z, heading, speed) and their (half-length, half-beam), world/ships.ts. */
   ships: Vector4[];
   shipSizes: Vector4[];
@@ -848,10 +914,13 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
   const swirl = new Vector4(0, 0, 99, 0);
   const nets: NetRipples = { a: [new Vector4(), new Vector4()], b: [new Vector4(), new Vector4()] };
   const touch = new Vector4();
+  const fallInto: [Vector4, Vector4] = [new Vector4(), new Vector4()];
   const ships = [new Vector4(), new Vector4(), new Vector4()];
   const shipSizes = [new Vector4(), new Vector4(), new Vector4()];
   const color = new Color();
   const ambient = new Color();
+  let shadowLight: DirectionalLight | null = null;
+  const noMatrix = new Matrix4();
   const uniforms = {
     ...G,
     tRefl: { value: reflection },
@@ -861,6 +930,30 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
     uField: { value: field.bounds },
     tFieldWide: { value: wide.texture },
     uFieldWide: { value: wide.bounds },
+    // (far off until the ripples' patch is first placed)
+    tRipple: { value: null } as RippleUniforms['tRipple'],
+    uRipple: { value: new Vector4(1e6, 1e6, 1, 1) },
+    // read as each frame is drawn: the light's shadow map is made on its first shadowed frame, and swapped in dissolves
+    tKeyShadow: {
+      get value() {
+        return shadowLight?.shadow.map?.depthTexture ?? null;
+      },
+    },
+    uKeyShadowMatrix: {
+      get value() {
+        return shadowLight?.shadow.matrix ?? noMatrix;
+      },
+    },
+    uKeyShadowBias: {
+      get value() {
+        return shadowLight?.shadow.bias ?? 0;
+      },
+    },
+    uKeyShadowOn: {
+      get value() {
+        return shadowLight?.castShadow && shadowLight.shadow.map?.depthTexture ? 1 : 0;
+      },
+    },
     uBoat: { value: boat },
     uOar: { value: oar },
     uSwirl: { value: swirl },
@@ -869,6 +962,8 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
     uNetA1: { value: nets.a[1] },
     uNetB1: { value: nets.b[1] },
     uTouch: { value: touch },
+    uFall0: { value: fallInto[0] },
+    uFall1: { value: fallInto[1] },
     uShip0: { value: ships[0] },
     uShip1: { value: ships[1] },
     uShip2: { value: ships[2] },
@@ -914,6 +1009,12 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
     oar,
     swirl,
     touch,
+    field: { tField: uniforms.tField, uField: uniforms.uField, tFieldWide: uniforms.tFieldWide, uFieldWide: uniforms.uFieldWide },
+    ripple: { tRipple: uniforms.tRipple, uRipple: uniforms.uRipple },
+    takeShadow: (light) => {
+      shadowLight = light;
+    },
+    fallInto,
     nets,
     ships,
     shipSizes,

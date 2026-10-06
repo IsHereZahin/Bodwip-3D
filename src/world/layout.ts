@@ -1,4 +1,4 @@
-import { BANYAN, HOMESTEADS, MOSQUE, MOUND, PLAIN, POND_LEVEL, ZAMINDAR, type HomePond, type HomesteadSpec, type PondSpec } from './plan';
+import { BANYAN, GRAVEYARD, HOMESTEADS, MOSQUE, MOUND, PLAIN, POND_LEVEL, ZAMINDAR, type HomePond, type HomesteadSpec, type PondSpec } from './plan';
 import type { Point2 } from './sites';
 import { WATERWAYS } from './waterways';
 
@@ -113,6 +113,7 @@ export const MOUNDS: readonly Mound[] = [
   ...HOME_MOUNDS,
   { id: 'zamindar', x: ZAMINDAR.x, z: ZAMINDAR.z, face: ZAMINDAR.face, hu: ZAMINDAR.d / 2, hv: ZAMINDAR.w / 2, corner: 5, top: PLAIN + MOUND + 0.2, slope: 0.4 },
   { id: 'mosque', x: MOSQUE.x, z: MOSQUE.z, face: MOSQUE.face, hu: MOSQUE.d / 2, hv: MOSQUE.w / 2, corner: 3, top: PLAIN + 0.7, slope: 0.4 },
+  { id: 'graveyard', x: GRAVEYARD.x, z: GRAVEYARD.z, face: GRAVEYARD.face, hu: GRAVEYARD.hu, hv: GRAVEYARD.hv, corner: 4, top: PLAIN + 0.45, slope: 0.3 },
   { id: 'banyan', x: BANYAN.x - 6, z: BANYAN.z + 14, face: 0.6, hu: 26, hv: 22, corner: 12, top: PLAIN + 0.55, slope: 0.25 },
 ];
 
@@ -125,6 +126,8 @@ export const HOMESTEAD_MOUNDS: readonly Mound[] = MOUNDS.filter((m) => m.home);
 export interface Pond extends Shape {
   level: number;
   lilies: boolean;
+  /** Kept clean (the mosque's): no hyacinth, a few shapla, its own bright fish. */
+  kept: boolean;
   /** Its steps' point on the rim, if it has a ghat. */
   ghat?: Point2;
   /** For world/ponds.ts and the film: its middle and roughly its radius. */
@@ -140,6 +143,7 @@ const pondOf = (p: PondSpec): Pond => ({
   corner: Math.min(p.halfW, p.halfD) * 0.5,
   level: POND_LEVEL,
   lilies: p.lilies === true,
+  kept: p.kept === true,
   ghat: p.ghat ? { x: p.ghat[0], z: p.ghat[1] } : undefined,
   r: Math.sqrt(p.halfW * p.halfD),
 });

@@ -455,6 +455,10 @@ const SPLAT_NORMAL = /* glsl */ `
 `;
 
 const TRANSLUCENCY = /* glsl */ `
+#if defined(STANDARD) || defined(LAMBERT) || defined(PHONG)
+// the village's lamps after dark (world/landmarks.ts): their warm light on what is near them
+if (uNight > 0.01) outgoingLight += diffuseColor.rgb * lampsAt(vAtmWorld, normalize(inverseTransformDirection(normal, viewMatrix)));
+#endif
 #ifdef ATM_TRANSL
 {
   vec3 vdir = normalize(vAtmWorld - uCamPos);

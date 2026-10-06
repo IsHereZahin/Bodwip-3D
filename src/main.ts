@@ -49,6 +49,9 @@ import { buildVegetation, crownDetail, treeCrowns } from './world/vegetation';
 import { FallingLeaves } from './world/leaves';
 import { HeroPetal, PetalCarpet } from './world/petals';
 import { Fish } from './world/fish';
+import { Falls } from './world/falls';
+import { Frogs } from './world/frogs';
+import { Turtles } from './world/turtles';
 import { Songbirds } from './world/songbirds';
 import { Fisher } from './world/fisher';
 import { Harvest } from './world/harvest';
@@ -58,10 +61,14 @@ import { buildStones } from './world/stones';
 import { buildVillages, planGhats, planHuts } from './world/village';
 import { buildSanko } from './world/sanko';
 import { buildYards } from './world/yard';
-import { BANYAN_CLEARING, buildBanyan } from './world/banyan';
-import { buildLandmarks } from './world/landmarks';
+import { BANYAN_CLEARING, GRAVE_BANYAN_CLEARING, GRAVEYARD_BANYAN, buildBanyan } from './world/banyan';
+import { MOSQUE_POND_TREES } from './world/plan';
+import { NIGHT_GLOWS, buildLandmarks, lampsGlow } from './world/landmarks';
+import { KALIMA_FONT } from './render/textures';
 import { Train, buildRailway } from './world/railway';
 import { buildWater } from './world/water';
+import { Ripples } from './world/ripples';
+import { HERO_HULL } from './world/hull';
 
 const BLACK = new Color(0, 0, 0);
 const MIST = new Color(0.8, 0.72, 0.6);
@@ -155,6 +162,10 @@ async function main(hud: Hud): Promise<void> {
   await nextTask();
   const water = buildWater(pipeline.reflection.target.texture, pipeline.reflection.textureMatrix, Math.min(aniso, 8), (t) => renderer.initTexture(t));
   scene.add(water.mesh, water.inland);
+  // the water's own ripples where the camera looks: what touches it rings it
+  const ripples = new Ripples(water.field, water.boat, water.ripple);
+  let bladeWas = 0;
+  const rippleView = new Vector3();
   hud.progress(0.42);
   await nextTask();
   // the homesteads: their houses round their yards, their haystacks, their ghats and boats
@@ -165,13 +176,17 @@ async function main(hud: Hud): Promise<void> {
   scene.add(buildYards(huts));
   // the banyan at the hub, the zamindar house, its ghat and temple, the mosque, the tea stall
   scene.add(buildBanyan(surfaces.bark));
+  // and the old banyan by the mosque's graveyard
+  scene.add(buildBanyan(surfaces.bark, GRAVEYARD_BANYAN));
+  // the mosque's inscription is painted in its calligraphic face: wait for it a moment (offline, a system Arabic face stands in)
+  await Promise.race([document.fonts.load(`700 64px ${KALIMA_FONT}`, 'لا إله').catch(() => []), new Promise((r) => setTimeout(r, 4000))]);
   scene.add(buildLandmarks());
   // everything standing, for the trees and the grass to keep clear of
   const standing = huts;
   hud.progress(0.52);
   await nextTask();
   // the trees (left undrawn beyond the haze: render/cull.ts)
-  const vegetation = buildVegetation(standing, surfaces.bark, [BRIDGE_CLEARING, BANYAN_CLEARING], bridgeTrees());
+  const vegetation = buildVegetation(standing, surfaces.bark, [BRIDGE_CLEARING, BANYAN_CLEARING, GRAVE_BANYAN_CLEARING], [...bridgeTrees(), ...MOSQUE_POND_TREES]);
   scene.add(vegetation);
   cullBeyond(vegetation, 1900);
   // the leaves and petals the trees round the camera let fall (the banyan's too)
@@ -183,8 +198,20 @@ async function main(hud: Hud): Promise<void> {
   // the small birds in the trees, and the fish in the water, round the camera
   const songbirds = new Songbirds(treeCrowns());
   scene.add(songbirds.group);
-  const fish = new Fish();
+  const fish = new Fish(ripples);
   scene.add(fish.group);
+  // frogs at the waters' edges in the rains, and turtles basking on the khal's rocks in the dry months
+  const frogs = new Frogs(ripples);
+  scene.add(frogs.group);
+  const turtles = new Turtles(ripples);
+  scene.add(turtles.group);
+  // the hill stream down the wooded hill's face, and the sluice in the river's north levee
+  const falls = new Falls(ripples, water.fallInto);
+  scene.add(falls.group);
+  let fallsLoud = 0;
+  // the frogs come out in the rains and the wet; the turtles bask in the dry months' sun
+  const frogsOut = () => Math.max(smoothstep(0.1, 0.4, season.rain), weather.wet * 0.5);
+  const turtlesOut = () => season.rain < 0.15 && weather.rain < 0.05 && env.sunDir.y > 0.12;
   // the tree in flower over the khal whose petal the film follows down to the water (its ring is the fish's):
   // its crown filled out with boughs and twigs for the camera under it
   const blossom = blossomTree();
@@ -197,7 +224,7 @@ async function main(hud: Hud): Promise<void> {
     cullBeyond(blossomCrown, 1900);
   }
   // the fisherman casting his net on the river below the khal's mouth (his net's rings are the fish's)
-  const fisher = new Fisher(fish);
+  const fisher = new Fisher(ripples);
   // the water each casts his net into feels it (the river's and the gher's)
   fisher.bindWater(water.nets.a[0], water.nets.b[0]);
   scene.add(fisher.group);
@@ -210,10 +237,13 @@ async function main(hud: Hud): Promise<void> {
   cullBeyond(roads, 2600);
   scene.add(buildBridge());
   scene.add(buildSanko());
-  // stones along the banks and at the water's edge, and the khal's rocks the boat goes round
-  scene.add(buildStones());
+  // stones along the banks and at the water's edge, and the khal's rocks the boat goes round; the kept pond's
+  // pebbles, small, drawn only near
+  const stones = buildStones();
+  scene.add(stones.group);
+  cullBeyond(stones.pebbles, 160);
   // the salt field by where she sets out, and the men raking its salt in the dry months
-  const saltWorks = new SaltWorks(fish);
+  const saltWorks = new SaltWorks(ripples);
   saltWorks.bindWater(water.nets.a[1], water.nets.b[1]);
   scene.add(saltWorks.group);
   // the railway across the fields north of the bil, and its train now and then
@@ -267,6 +297,7 @@ async function main(hud: Hud): Promise<void> {
   const lightning = new Lightning();
   scene.add(lightning.mesh);
   const env = new Environment(sky, water);
+  water.takeShadow(env.key);
   env.season = season;
   env.weather = weather;
   env.addTo(scene);
@@ -459,6 +490,7 @@ async function main(hud: Hud): Promise<void> {
     .track(rain, 'visible')
     .track(hero.lantern, 'intensity')
     .track(hero.glass, 'emissiveIntensity');
+  for (const m of NIGHT_GLOWS) worldLook.track(m, 'emissiveIntensity');
   const lookLeft: Captured = [];
   const lookLive: Captured = [];
   let leftShadow: RenderTarget | null = null;
@@ -1019,6 +1051,7 @@ async function main(hud: Hud): Promise<void> {
     if (fell !== null) sound.thunder(fell);
     weather.flash = lightning.light;
     env.update(clock.hour, shownMoon());
+    lampsGlow(env.night);
     // cloud on the hills: in winter (and late autumn) lying thick in the mornings and evenings, thinner at noon;
     // in the rains it hangs on them while it rains
     const lowSun = 1 - smoothstep(0.12, 0.65, env.sunDir.y);
@@ -1030,6 +1063,19 @@ async function main(hud: Hud): Promise<void> {
     hero.wantHat(hatWanted());
     director.update(dt, t, camera);
     hero.update(dt, t, env.lamp, b);
+    // the paddle rings the water: a dimple where it bites, a wake as it pulls, a heap where it comes out; and
+    // her stem parts it as she goes
+    if (dt > 0) {
+      const wet = hero.bladeWet > 0.15;
+      if (wet && bladeWas <= 0.15) ripples.drop(hero.blade.x, hero.blade.z, 0.22, 0.012);
+      else if (wet) ripples.drop(hero.blade.x, hero.blade.z, 0.16, 0.0025 * Math.min(2, hero.bladeDrive) * dt * 60);
+      else if (bladeWas > 0.15) ripples.drop(hero.blade.x, hero.blade.z, 0.2, -0.008);
+      bladeWas = hero.bladeWet;
+      if (b.speed > 0.15) {
+        const stem = (HERO_HULL.len / 2) * 0.96;
+        ripples.drop(b.pos.x + Math.sin(b.heading) * stem, b.pos.z + Math.cos(b.heading) * stem, 0.28, 0.0012 * Math.min(b.speed, 2) * dt * 60);
+      }
+    }
     splash.update(dt, hero.blade, hero.bladeWet, b.power, splashBack.set(-Math.sin(b.heading), 0, -Math.cos(b.heading)), renderer.domElement.height);
     // (the people of a shot being left go on working while it dissolves away, though the camera has left them)
     const leftEye = director.leaving?.camera.position ?? null;
@@ -1056,6 +1102,9 @@ async function main(hud: Hud): Promise<void> {
     groundSplashes.update(dt, t, camera.position, forward, weather.rain);
     songbirds.update(dt, t, camera.position, env.night > 0.5 || weather.rain > 0.5);
     fish.update(dt, t, camera.position, b.pos);
+    frogs.update(dt, camera.position, b.pos, frogsOut());
+    turtles.update(dt, b.pos, turtlesOut());
+    fallsLoud = falls.update(dt, season.rain, season.flood, season.water, weather.wet, camera.position);
     // the bil's lilies give way to her hull and blade and are drawn back by their stems
     bil.update(dt, t, b, hero.blade, hero.bladeWet);
     perf.driftMs += (performance.now() - simStart - perf.driftMs) * 0.1;
@@ -1073,7 +1122,7 @@ async function main(hud: Hud): Promise<void> {
     else rig.focus(focus);
     focus.set(Math.round(focus.x / 12) * 12, 0, Math.round(focus.z / 12) * 12);
     if (env.aimShadow(focus, false)) renderer.shadowMap.needsUpdate = true;
-    sound.update(dt, env.night, G.uWind.value.z * gustAt(camera.position.x, camera.position.z), weather.rain, waterNear());
+    sound.update(dt, env.night, G.uWind.value.z * gustAt(camera.position.x, camera.position.z), weather.rain, waterNear(), frogsOut(), fallsLoud);
   };
   updateSky(0, true);
   step(0);
@@ -1102,7 +1151,10 @@ async function main(hud: Hud): Promise<void> {
     const raw = Math.max(0, (now - last) / 1000);
     last = now;
     perf.ms += (raw * 1000 - perf.ms) * 0.05;
-    step(debug.freeze ? 0 : Math.min(raw, 0.05));
+    const dt = debug.freeze ? 0 : Math.min(raw, 0.05);
+    step(dt);
+    // the ripples run on with the world, round where the camera looks at the water
+    ripples.update(renderer, dt, camera.position, camera.getWorldDirection(rippleView), G.uMirrorLevel.value);
     if (!director.active && !reducedMotion && !watch.event && !controls.helpOpen && !map.isOpen && now - lastInput > FILM_IDLE_MS) setFilm(true);
     if (sessionUntil && now > sessionUntil && !director.active) backToToday();
     const cut = Math.max(clamp(1 - (now - readyAt) / 2600, 0, 1), clamp(1 - (now - jumpAt) / 900, 0, 1));
@@ -1217,6 +1269,8 @@ async function main(hud: Hud): Promise<void> {
             if (o.face) rig.aim(body);
             rig.settle(o);
           }
+          // a still keeps no rain held over from a film shot before it (a film shot holds its own)
+          if (!o.film) weather.hold = null;
           if (o.film) director.cue(o.film[0], o.film[1], camera);
           else director.stop(true, false);
           if (o.rain !== undefined) {
@@ -1229,6 +1283,9 @@ async function main(hud: Hud): Promise<void> {
           lastInput = performance.now();
           debug.freeze = false;
           clock.playing = false;
+          // the frogs and the turtles where they would be by now (step poses them)
+          frogs.settle(camera.position, frogsOut());
+          turtles.settle(b0().pos, turtlesOut());
           step(0.001);
           terrain.update(camera.position, true);
           water.update(camera.position.x, camera.position.z, true);

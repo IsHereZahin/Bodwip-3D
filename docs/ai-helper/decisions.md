@@ -13,7 +13,7 @@ These are the user's decisions that still bind the work, and the reasons for the
 - **The test for anything added:** "Would this really be here?" and "Does it make the journey more beautiful?" The user's phrase: "Do less, but make what exists much better."
 - **The user's choices for this branch:**
   - the foundation: a designed village (`plan.ts`) replacing the GIS bake, with the runtime systems kept;
-  - the waterway: a river (≈30 m) → a khal (≈14 m) under the old brick arch → a shapla bil;
+  - the waterway: a river (≈30 m) → a khal (≈14 m) under the old brick arch → the side khal under the bamboo sanko → a shapla bil;
   - the focal points: a banyan ghat with a tea stall, a small mosque, an old zamindar house with its ghat, and a bamboo sanko over a side khal.
 - **Size:** the world is cut to ≈2.15 × 1.65 km, with a ≈230 m corridor either side of the waters. Beyond that is haze and the backdrop's hills; nothing grows there and the free camera can't go there. The user found the open fields beyond empty and unneeded, and wants the project kept light.
 - **Added at the user's request:**
@@ -81,6 +81,15 @@ These are the user's decisions that still bind the work, and the reasons for the
   - The shot runs: wide (the tree, the khal, petals already afloat) → in toward the water → one petal letting go and followed as it swings and tumbles down → touching the water with a small ripple → floating.
   - It is one continuous move with a depth of field and a focus pull, and the petal is never cut or jumped.
   - Petals lie thick under trees in flower, in drifts, with no repeated pattern. The film's tree has a full crown with natural, uneven branches to its top.
+- **A living river, learned from the koi-pond projects but made Bengali** (2026-10-06): ripples that spread, cross and run back off the banks from whatever touches the water; fish that swim as fish do; frogs at the edges in the rains and turtles basking on the khal's rocks; a hill stream down the wooded hill and a sluice in the levee (the user chose both). Not the Japanese garden: shapla not lotus pads, river and khal fish not koi, the river's stones, a village sluice not a garden bridge. Everything part of the place, nothing a decoration; done in one pass, judged at the end.
+- **The mosque's pond, graveyard and banyan** (2026-10-06): the mosque, its clean clear pond (bright fish, a little shapla, short grass on its banks, four or five big trees round it shading its water), a small village graveyard beside the mosque (simple graves, grass, nothing grim) and an old banyan by it, as one familiar village composition, a little irregular, never symmetric.
+- **The village planned as one ecosystem, then built** (2026-10-06): where people walk, go down to the pond, go to the mosque, and where the boat goes are decided first, and the assets placed on that plan.
+  - **The mosque:** a simple but beautiful rural Bangladeshi mosque, never luxurious: whitewash, green trim, pointed arches, Bengal domes with lotus collars and finials, an open verandah, a low forecourt wall, a modest azan minaret. Its doors and windows glow warm after dark, so its light is seen from outside, never harsh.
+  - **The kalima** «لَا إِلٰهَ إِلَّا اللَّهُ مُحَمَّدٌ رَسُولُ اللَّهِ» over the main entrance, in correct Arabic script, cream on a green panel in a thin gold border. Set in the Amiri Google Font (the user chose it); no made-up or decorative lettering.
+  - **One axis from the mosque to its pond:** the mosque's door, its steps, the brick walk and the pond's ghat lie on one line (z = 212), so a person walks straight from the road to the steps and the door, and down to the water, with no gaps, floating parts or sudden heights.
+  - **The pond's ghat** is clean and usable: no grass on or between its steps (grass may grow beside them). A small lantern on a pillar at its head lights the steps and the bank softly after dark and glints on the water.
+  - **The kept pond** has many fish of every size: shoals of little ones, medium schools that sometimes move together, a few visibly big ones deep, in natural colours at different depths. Pebbles and small stones lie on its bed, thickest in the shallows, scattered naturally, never arranged.
+  - **The boat goes under the sanko** (the user chose to take her way through the side khal): river → khal under the old bridge → side khal under the bamboo sanko → shapla bil. The sanko is built for it (high, its middle span free of trestles, rungs on its climb), and the film has a shot that shows her passing under it (বাঁশের সাঁকো), with no clipping.
 - **"জেলের জাল":** a wide shot that shows his boat clearly, then medium and close shots of the net (2026-10-06). The water answers the net: it strikes with rings and a splash, is stirred as he hauls, and drips under the lifted bag. He hauls with his whole body, from his hands to the boat under his feet.
 - **The monsoon is told as it comes** (2026-10-06):
   - The order: the Asharh cloud gathering, then the rain beginning, then a heavy Asharh downpour, with the land wetting all the while. After that the rain eases, and the land is left wet.
@@ -109,7 +118,7 @@ These are the user's decisions that still bind the work, and the reasons for the
   - six CC0 Poly Haven textures for the ground layers and the bark (the user's choice, the third request);
   - the MakeHuman CC0 people.
   - Ask before adding any other asset. There are no audio files (sound is Web Audio).
-- **Nothing copied:** valley.mengto's code carries no licence, and koi-pond-garden (MIT) gave ideas only. The project has its own render pipeline, with no postprocessing or GSAP libraries.
+- **Nothing copied:** valley.mengto's code carries no licence; koi-pond-garden (MIT) and the other koi-pond projects gave ideas only (Nagomi is PolyForm Noncommercial: never its code). The project has its own render pipeline, with no postprocessing or GSAP libraries.
 - **Target devices:** desktop and laptop (decided 2026-10-04). Phones are not a target, though the dock has been kept folding to fit 390 px.
 
 ## Working agreements
@@ -142,4 +151,8 @@ These are the user's decisions that still bind the work, and the reasons for the
   - the film as a shot list (`{ caption, T, pos(u), look(u) }`), with a letterbox and captions;
   - a gentle handheld sway;
   - the camera never under the ground or the water;
-  - the loop "describe, run, screenshot, measure, fix, repeat".
+  - the loop "describe, run, screenshot, measure, fix, repeat";
+  - a ripple simulation on the GPU round where the camera looks, drops from whatever touches the water, banks that throw rings back (world/ripples.ts);
+  - fish that burst and glide, their bodies bent in the vertex shader (world/fish.ts);
+  - the frog's breathing and leap, the turtle's bask-slide-swim-climb (frogs.ts, turtles.ts);
+  - water whose froth is carried down it (world/falls.ts).

@@ -56,12 +56,26 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
   - A free camera within 1 m of a person can clip the arms at the near plane.
 - **Bank grass is placed at the mean water level.** In the rains some of it stands in water. In the dry months the exposed beds keep their underwater colour (wet mud and pebbles), never cracked dry ground.
 - **The salt creek's water** has the river's colour. The gher's water is painted on the terrain, so the gher fisherman's net sinks "into the ground".
-- **The cast net** is a family of shapes (bag ↔ bell), not cloth physics. It ignores wind and obstacles, and the cast runs only on its 25 s cycle near the viewer. No fish show in the lifted bag.
+- **The cast net** is a family of shapes (bag ↔ bell), not cloth physics. It ignores wind and obstacles, and the cast runs only on its 25 s cycle near the viewer.
+- **Ripples:**
+  - The simulated patch covers ≈15 m where the camera looks; elsewhere only the analytic rings (rain, nets, the boat) show, and a drop outside the patch is lost.
+  - Nothing floats on the simulated ripples (a few mm): the plants and petals ride `waves.ts` only.
+  - The banks in the patch come from the water's field (4 m texels), so the rings run back off a softened bank.
+- **Creatures:**
+  - Frogs sit only at the water's edge 9–36 m from the camera (small at that distance), never on the lily pads; their croaking has no throat to go with it.
+  - Turtles bask only on the khal's three rocks; their walk off the rock is a slide.
+- **The hill stream:** the ground's 2 m lattice smooths its ledges into steep chutes rather than sheer falls; no spray or mist. Its water is a ribbon (not in the level map). Where the stream and the sluice's spill run below the river's surface, they show through it untinted.
+- **The water's shadow** takes four taps of the key light's map; beyond the map's reach the water is lit.
 - **Petals:**
   - The film's tree stands ≈11 m back from the khal (the banks are kept clear of trees), so its petal is carried ≈7 m out by the scene's held breeze (`windToward`).
   - Only the film's petal ripples the water as it touches. Floating petals hide inside the hero's hull rather than being pushed aside.
   - Lying petals sit on the ground, so tall grass hides many of them.
   - A crown's carpet is laid over ≈0.5 s after it comes within 70 m (unseen: it shows from 38 m).
+- **The mosque:**
+  - It has no interior: its lit doors and windows are glowing panes, brightest low in their middle, with no depth behind them.
+  - The lamps' light (`lampLight`) casts no shadows: what faces a lamp is lit through walls (faintly, its reach is short); what faces away is not. Only three lamps cast light (the hall's spill, the verandah's, the ghat's lantern); the other bulbs only glow.
+  - The kalima needs the Amiri web font; offline a system Arabic face stands in (Traditional Arabic, Arabic Typesetting, Geeza Pro, Segoe UI), shaped correctly but plainer.
+- **The boat's way** leaves the khal for the side khal: the khal's upper reach, its third rock and its mouth into the bil are no longer on her way (seen from the free camera only).
 - **Depth of field** gathers 40 taps a pixel: a fine grain shows in the strongest blur. Rain streaks and other things that write no depth take the blur of what is behind them.
 - **The reapers** cut at the field's edge, but the field never shrinks (crops are a per-plot shader).
 - **The three salt rakers** share one body (`majhi`) in different clothes, and are posed only within 320 m.
@@ -75,6 +89,7 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
   - Touch, pinch and the sound's states were tested in headless Chrome with emulated touch on a phone-sized page.
 - Sound by ear (headless only shows the audio context's state).
 - The paddle splash close up, live, and the date-palm drops (too small to judge in stills).
+- The boat under the sanko was judged in stills and one headless recording: not at full speed on a real GPU, and the paddle's blade against the middle span's trestles not frame by frame (the span leaves ≈1 m beyond the paddle's reach when she is on her line).
 
 ## Backlog (proposed, not yet asked for)
 

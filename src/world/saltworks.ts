@@ -24,7 +24,7 @@ import { patchMaterial } from '../render/patch';
 import { softSpotTexture, weaveTexture } from '../render/textures';
 import { Boatman, type Outfit, type OarPose } from './boatman';
 import { Fisher, type FisherPlace } from './fisher';
-import type { Fish } from './fish';
+import type { Ripples } from './ripples';
 import { SALT_CREEK, WATER_LEVEL, saltLocal, saltPoint, terrainHeight } from './geography';
 import type { BodyDrive } from './paddle';
 import { SALT_FIELD } from './plan';
@@ -344,12 +344,12 @@ export class SaltWorks {
   private readonly gherFisher: Fisher;
   private hut = new Mesh();
 
-  constructor(fish: Fish) {
+  constructor(ripples: Ripples) {
     const rng = new Rng(611);
     this.group.name = 'saltworks';
     this.buildSluice(rng);
     this.buildHut();
-    this.gherFisher = new Fisher(fish, gherStand());
+    this.gherFisher = new Fisher(ripples, gherStand());
     this.gherFisher.group.visible = false;
     this.group.add(this.gherFisher.group);
 
