@@ -212,7 +212,8 @@
   white-space: nowrap;
 }
 
-/* whether the hour is Bangladesh's own now: a soft pulse while it is; a way back to it when it is not */
+/* Live: off in the cinematic morning; on (a red dot's soft pulse) while it is Bangladesh's own date and hour now;
+   a hollow ring when the viewer has taken the clock elsewhere (a press goes back to now) */
 .live {
   flex: none;
   display: inline-flex;
@@ -235,26 +236,30 @@
   background: rgba(236, 211, 168, 0.12);
 }
 .live.on {
-  border-color: transparent;
-  color: var(--ink-dim);
-  cursor: default;
+  border-color: rgba(240, 92, 80, 0.55);
+  background: rgba(240, 92, 80, 0.12);
 }
 .live.on:hover {
-  background: transparent;
+  background: rgba(240, 92, 80, 0.2);
 }
 .live.on i {
-  background: #f0b36a;
+  background: #f05c50;
   animation: live-pulse 2.6s ease-out infinite;
+}
+.live.on.behind i {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px #f05c50;
+  animation: none;
 }
 @keyframes live-pulse {
   0% {
-    box-shadow: 0 0 0 0 rgba(240, 179, 106, 0.55);
+    box-shadow: 0 0 0 0 rgba(240, 92, 80, 0.55);
   }
   70% {
-    box-shadow: 0 0 0 7px rgba(240, 179, 106, 0);
+    box-shadow: 0 0 0 7px rgba(240, 92, 80, 0);
   }
   100% {
-    box-shadow: 0 0 0 0 rgba(240, 179, 106, 0);
+    box-shadow: 0 0 0 0 rgba(240, 92, 80, 0);
   }
 }
 
@@ -866,5 +871,8 @@ body.ui-off #ui-restore:focus-visible {
   #dock,
   #toast {
     transition: opacity 0.2s ease;
+  }
+  .live.on i {
+    animation: none;
   }
 }

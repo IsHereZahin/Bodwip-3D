@@ -78,11 +78,17 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
   - The lamps' light (`lampLight`) casts no shadows: what faces a lamp is lit through walls (faintly, its reach is short); what faces away is not. Only three lamps cast light (the hall's spill, the verandah's, the ghat's lantern); the other bulbs only glow.
   - The kalima needs the Amiri web font; offline a system Arabic face stands in (Traditional Arabic, Arabic Typesetting, Geeza Pro, Segoe UI), shaped correctly but plainer.
 - **The boat's way** leaves the khal for the side khal: the khal's upper reach, its third rock and its mouth into the bil are no longer on her way (seen from the free camera only).
-- **The map's visits:** a place's shots are designed for its usual look: at night they are dark (the mosque's lamps show), and in the rains some low shots over water ride the higher water. A visit's year is set to the boat's new place at once, so the land's season can differ from the view the viewer left (each keeps its own through the dissolve).
+- **The map's visits:** a place's wide views are found from where it is seen, not by the light: some look into the sun at some hours. The hill by the river is too big to see whole from within the land the village keeps; its two shots are from down the river. A place's shots are designed for its usual look: at night they are dark (the mosque's lamps show), and in the rains some low shots over water ride the higher water. A visit's year is set to the boat's new place at once, so the land's season can differ from the view the viewer left (each keeps its own through the dissolve).
 - **The experience:**
-  - The loader's backdrop is one still (the bil at sunset) whatever the hour.
-  - At night the opening flight and the journey are dark, by the user's choice of real time; the flight's first seconds show the world's edge haze from high.
-  - The sights are found once from the village as built; a sight behind a bank's trees is shown as it is (no check that it is in view).
+  - The loader's backdrop is one still (the bil at sunset) whatever the hour; it gives way to the cinematic dawn.
+  - The cinematic morning is worked out the same on every visit (day 266, Sharat, as weighed on 2026-10-07) until the seasons' keys, the flight or the weighing change. Its terms are judgement, written in `planCinematic`; no morning moon passes them on that day, so the moon is a waxing one, down all morning.
+  - The cinematic morning's follow view at the opening lies in the south bank's shade for its first minutes; the flight before it is in full sun.
+  - Live at night is dark, by the user's choice of real time; the flight's first seconds show the world's edge haze from high.
+  - Live's weather is the season's own for today's date, not the weather in Bangladesh now (a weather feed would be a new external request).
+  - The mode is not remembered: every visit opens in the cinematic mode.
+  - The camera's own views (rig/compose.ts) know the ground, the trees' crowns, the palms, the bamboo, the houses, the grand ghat and the bridge (sightlines.ts), as columns; not the bushes, the bananas, the landmarks' own buildings, the people or the moored boats. A shot's weights are judgement, tuned by eye on stills of the journey; left to itself the camera mostly chooses behind her and a little above (≈26 m out, ≈9.5 m up), looking down the water.
+  - The sights' stretches are found once at load from the village as built; which are shown is chosen again as she goes. A sight seen poorly from her way (the mosque, from the khal) gives way to her surroundings.
+  - The sanko is thin bamboo: from her way the camera shows it small.
   - The dock's menus use the Popover API (Chrome 114+, Safari 17+, Firefox 125+); the SVG favicon has a PNG fallback.
 - **Depth of field** gathers 40 taps a pixel: a fine grain shows in the strongest blur. Rain streaks and other things that write no depth take the blur of what is behind them.
 - **The reapers** cut at the field's edge, but the field never shrinks (crops are a per-plot shader).

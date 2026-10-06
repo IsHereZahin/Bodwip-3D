@@ -9,6 +9,8 @@ import { EVENT_NAME, MOON_PHASES, bn, clockLabel, nearestPhase, tithiLabel } fro
 import './controls.css';
 
 export type CameraChoice = 'follow' | 'free' | 'film';
+/** The world's time: the cinematic morning the system chose (the default), or Bangladesh's own date and hour now. */
+export type TimeMode = 'cinematic' | 'live';
 
 /** What the controls ask of the scene. */
 export interface ControlHandlers {
@@ -19,13 +21,13 @@ export interface ControlHandlers {
   /** True while the timeline is being dragged; the clock holds still meanwhile. */
   scrub(active: boolean): void;
   jump(ev: SkyEvent): void;
-  /** Back to Bangladesh's own time now. */
-  now(): void;
+  /** The Live button: on to Bangladesh's own date and hour now (or back to now), off back to the cinematic mode. */
+  live(): void;
   camera(choice: CameraChoice): void;
   view(name: ViewName): void;
   moon(age: number): void;
-  /** A season by index into SEASON_NAMES, or back to the journey's. */
-  season(choice: number | 'journey'): void;
+  /** A season by index into SEASON_NAMES, or back to the mode's own (the journey's, or today's in Live). */
+  season(choice: number | 'own'): void;
   sound(): void;
   /** Opens or closes the map. */
   map(): void;
@@ -35,7 +37,9 @@ export interface ControlHandlers {
   touched(): void;
 }
 
+/** The camera's own composed views first (the default), then the fixed viewpoints round the boat. */
 const VIEW_NAMES: Record<ViewName, string> = {
+  auto: 'সেরা দৃশ্য',
   stern: 'পেছন থেকে',
   boatman: 'মাঝির পাশে',
   bow: 'সামনে থেকে',
@@ -90,10 +94,10 @@ const STEP_KEYS: Record<string, number> = { ArrowRight: 1, ArrowUp: 1, PageUp: 1
 /**
  * The control dock, a thin pane of glass along the foot of the screen with a running stitch along its top: on
  * the left the year's ring of six seasons (the journey's place in it marked) with the hour, the Bangla date and
- * whether the clock is Bangladesh's own now; in the middle the day's timeline with its sunrise, sunset, moonrise
- * and moonset; on the right the camera, the view, the moon, sound, the map, full screen and the rest. The
- * season, the moon, the view and the rest open as small menus above their buttons. It fades away when the
- * pointer rests and comes back when it moves.
+ * the Live button (Bangladesh's own date and hour now, or the cinematic morning); in the middle the day's timeline
+ * with its sunrise, sunset, moonrise and moonset; on the right the camera, the view, the moon, sound, the map, full
+ * screen and the rest. The season, the moon, the view and the rest open as small menus above their buttons. It
+ * fades away when the pointer rests and comes back when it moves.
  */
 export class Controls {
   private readonly dock = $<HTMLElement>('#dock');
@@ -102,6 +106,8 @@ export class Controls {
   private readonly play = $<HTMLButtonElement>('#play');
   private readonly speed = $<HTMLButtonElement>('#speed');
   private readonly live = $<HTMLButtonElement>('#live');
+  /** The season menu's way back to the mode's own season: its words follow the mode. */
+  private readonly ownSeason = $<HTMLElement>('#season-own');
   private readonly range = $<HTMLInputElement>('#tl');
   private readonly sunRow = $<HTMLElement>('#tl-sun');
   private readonly moonRow = $<HTMLElement>('#tl-moon');
@@ -131,7 +137,7 @@ export class Controls {
   private scrubbing = false;
   private idleTimer = 0;
   private film = false;
-  private last = { minute: -1, playing: true, speed: 0, live: false, camera: '', sound: false, sky: -1, phase: -1, moonAge: -1, tithi: '', date: '', season: -1, ring: -1, journey: true, scene: '' };
+  private last = { minute: -1, playing: true, speed: 0, live: '', mode: '', camera: '', sound: false, sky: -1, phase: -1, moonAge: -1, tithi: '', date: '', season: -1, ring: -1, journey: true, scene: '' };
 
   constructor(handlers: ControlHandlers) {
     this.handlers = handlers;
@@ -143,7 +149,7 @@ export class Controls {
 
     this.play.addEventListener('click', use(() => h.togglePlay()));
     this.speed.addEventListener('click', use(() => h.faster()));
-    this.live.addEventListener('click', use(() => h.now()));
+    this.live.addEventListener('click', use(() => h.live()));
     this.sound.addEventListener('click', use(() => h.sound()));
     for (const b of this.cameraButtons) b.addEventListener('click', use(() => h.camera(b.dataset.mode as CameraChoice)));
 
@@ -167,7 +173,7 @@ export class Controls {
       this.seasonItems.push(item);
     });
     const journey = $<HTMLButtonElement>('#season-pop .journey');
-    journey.addEventListener('click', use(() => this.pick(() => h.season('journey'))));
+    journey.addEventListener('click', use(() => this.pick(() => h.season('own'))));
     this.seasonItems.push(journey);
     const moons = $<HTMLElement>('#moon-pop .pop-moons');
     MOON_PHASES.forEach((p, i) => {
@@ -283,9 +289,10 @@ export class Controls {
 
   /**
    * Mirrors the scene's state (and, while the film plays, which of its scenes is showing; `journey`, whether the
-   * season follows the boat's way); touches the page only where something changed.
+   * season is the mode's own rather than one picked; `mode`, cinematic or Live); touches the page only where
+   * something changed.
    */
-  update(clock: Clock, camera: CameraChoice, sound: boolean, journey: boolean, scene?: { index: number; count: number }): void {
+  update(clock: Clock, camera: CameraChoice, sound: boolean, journey: boolean, mode: TimeMode, scene?: { index: number; count: number }): void {
     const l = this.last;
     const film = camera === 'film' && scene ? `${bn(scene.index + 1)} / ${bn(scene.count)}` : '';
     if (film !== l.scene) {
@@ -311,12 +318,24 @@ export class Controls {
       this.speed.textContent = `${bn(clock.speed)}×`;
       this.speed.setAttribute('aria-label', clock.speed === 1 ? 'সময় চলছে আসল গতিতে; দ্রুত করতে চাপুন' : `সময় চলছে আসলের ${bn(clock.speed)} গুণে; বদলাতে চাপুন`);
     }
-    const live = clock.live && camera !== 'film';
+    // Live: off (the cinematic morning, or the film's own world), on (Bangladesh's own date and hour now), or on with
+    // the clock taken elsewhere by the viewer (the day still today's; a press goes back to now)
+    const live = camera === 'film' || mode !== 'live' ? 'off' : clock.live ? 'now' : 'behind';
     if (live !== l.live) {
       l.live = live;
-      this.live.classList.toggle('on', live);
-      this.live.setAttribute('aria-pressed', String(live));
-      this.live.title = live ? 'বাংলাদেশের এই মুহূর্তের সময় চলছে' : 'বাংলাদেশের এই মুহূর্তের সময়ে ফিরুন (0)';
+      this.live.classList.toggle('on', live !== 'off');
+      this.live.classList.toggle('behind', live === 'behind');
+      this.live.setAttribute('aria-pressed', String(live !== 'off'));
+      this.live.title =
+        live === 'now'
+          ? 'লাইভ: বাংলাদেশের এই মুহূর্তের তারিখ আর সময়। বন্ধ করলে সিনেমাটিক দৃশ্যে ফেরে (0)'
+          : live === 'behind'
+            ? 'লাইভ: আজকের তারিখ, তবে সময় সরানো হয়েছে। এই মুহূর্তে ফিরুন (0)'
+            : 'লাইভ: বাংলাদেশের এই মুহূর্তের তারিখ আর সময়ে দেখুন (0)';
+    }
+    if (mode !== l.mode) {
+      l.mode = mode;
+      this.ownSeason.textContent = mode === 'live' ? 'আজকের ঋতু' : 'যাত্রার সাথে ঋতু বদলাক';
     }
     if (camera !== l.camera) {
       l.camera = camera;

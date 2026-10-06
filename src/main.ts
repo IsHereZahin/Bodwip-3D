@@ -8,8 +8,10 @@ import type { SkyEvent, SkyEventKind } from './env/clock';
 import { Environment } from './env/environment';
 import { SEASON_NAMES, YEAR, applySeason, bangladeshTime, banglaDate, makeSeasonState, moonAgeOn, seasonAt, seasonIndex, seasonMiddle } from './env/season';
 import { YearJourney } from './rig/yearJourney';
+import { SUNRISE, morningOn, planCinematic } from './rig/cinematic';
 import { OPENING_SECONDS } from './rig/opening';
 import { findSights } from './rig/showcase';
+import { Sightlines } from './rig/sightlines';
 import { setSunDay } from './env/astro';
 import { Weather, type WeatherChoice } from './env/weather';
 import { Wind, gustAt } from './env/wind';
@@ -25,7 +27,7 @@ import { Rig, VIEWS } from './rig/rig';
 import type { ViewName } from './rig/rig';
 import { EVENT_NOW, bn, clockLabel } from './ui/bangla';
 import { Controls } from './ui/controls';
-import type { CameraChoice } from './ui/controls';
+import type { CameraChoice, TimeMode } from './ui/controls';
 import { Hud } from './ui/hud';
 import { buildBackdrop } from './world/backdrop';
 import { buildHillMist } from './world/hillMist';
@@ -50,7 +52,7 @@ import { Girl } from './world/girl';
 import { cullBeyond, setCullReach, updateCulling } from './render/cull';
 import { buildSky } from './world/sky';
 import { Terrain, meshGround } from './world/terrain';
-import { buildVegetation, crownDetail, treeCrowns } from './world/vegetation';
+import { buildVegetation, crownDetail, palmStems, treeCrowns } from './world/vegetation';
 import { FallingLeaves } from './world/leaves';
 import { HeroPetal, PetalCarpet } from './world/petals';
 import { Fish } from './world/fish';
@@ -85,17 +87,23 @@ const GIRL_SEEN = 160;
 const DRAG_PX = 8;
 /** Where the viewer's choice to mute the sound is remembered. */
 const MUTED_KEY = 'nodi.muted';
-/** The opening minutes stay clear whatever the season (s); then its weather comes. */
+/** The cinematic morning's first minutes stay clear whatever the season (s); then its weather comes. */
 const OPENING_CLEAR_SECONDS = 300;
 /** A chosen season comes on as the year turns to it over this many seconds; a chosen moon waxes or wanes to its phase over this many. */
 const YEAR_TURN_SECONDS = 6;
 const MOON_TURN_SECONDS = 4;
-/** A season, weather or moon the viewer chooses holds this long, then the world eases back to today's. */
+/** A season, weather or moon the viewer chooses holds this long, then the world eases back to the mode's own. */
 const SESSION_MS = 60000;
+/**
+ * A change of mode (cinematic ↔ Live) passes through a moment of dark: down over the first (s), the other world
+ * set at once under it, up over the second. Turned over in the open, the hour would sweep the sun backwards or
+ * through a whole night.
+ */
+const DIP: readonly [number, number] = [0.6, 1.3];
 /** Days in the moon's month. */
 const SYNODIC = 29.530589;
-/** How long the title stays over the opening flight (s). */
-const TITLE_SECONDS = 9;
+/** How long the title stays over the opening flight (s): off before it is half over (the flight is 9 s), so the sun is seen coming up and the land lighting as it comes down. */
+const TITLE_SECONDS = 6;
 /** Untouched this long, the camera turns to watch a sky event by itself. */
 const WATCH_IDLE_MS = 12000;
 /** Milliseconds a frame may spend building the film's next shot ahead of it. */
@@ -115,11 +123,13 @@ const hourOf = (ev: SkyEvent) => (ev.time - Math.floor(ev.time)) * 24;
 const notice = (ev: SkyEvent) => `${EVENT_NOW[ev.kind]} · ${clockLabel(hourOf(ev))}`;
 
 async function main(hud: Hud): Promise<void> {
-  // the loader says when it is in the village and in which season, as it is in Bangladesh now
+  // the site opens in the cinematic mode (the user's direction): the morning the system finds the most beautiful,
+  // weighed over the whole year (rig/cinematic.ts); Live is Bangladesh's own date and hour, at a press. The loader
+  // says which morning it is: its season, its date and the dawn
+  const plan = planCinematic();
   {
-    const now = bangladeshTime();
-    const date = banglaDate(now.day);
-    hud.now(SEASON_NAMES[seasonIndex(now.day)], `${bn(date.date)} ${date.month}`, clockLabel(now.hour));
+    const date = banglaDate(plan.day);
+    hud.now(SEASON_NAMES[seasonIndex(plan.day)], `${bn(date.date)} ${date.month}`, clockLabel(plan.dawn));
   }
   const canvas = document.getElementById('c') as HTMLCanvasElement;
   let renderer: WebGLRenderer;
@@ -287,13 +297,18 @@ async function main(hud: Hud): Promise<void> {
   scene.add(hero.group);
   const life = new Life();
   scene.add(life.group);
-  // Bangladesh's own day, hour and moon now (the user's choice): the clock kept to the wall's (`live`) until the
-  // viewer turns it; the season follows the boat's way round the year from today's (yearJourney.ts)
-  const bdNow = bangladeshTime();
-  const clock = new Clock(bdNow.hour, moonAgeOn(new Date()), bdNow.day);
-  const yearJourney = new YearJourney(bdNow.day);
-  // the moon as it really is: from the day's moon at the start, going on with the clock's days
-  const naturalMoon = { age: clock.moonAge, time: clock.time };
+  // the cinematic morning (the user's direction): the clock at its dawn on its day, with its moon; the sun rises in
+  // the opening's first seconds (`sunrise`, step()), then the clock runs on at the wall's pace, and the season
+  // follows the boat's way round the year from that day (yearJourney.ts). Live (`mode`) is Bangladesh's own date,
+  // hour and moon, the clock kept to the wall's (`clock.live`) until the viewer turns it.
+  let mode: TimeMode = 'cinematic';
+  const clock = new Clock(plan.dawn, plan.moon, plan.day);
+  clock.live = false;
+  const yearJourney = new YearJourney(plan.day);
+  /** The mode's own moon (the cinematic morning's, or the real one in Live): its age at `time`, going on with the clock's days. */
+  const ownMoon = { age: clock.moonAge, time: clock.time };
+  /** The sunrise running: how far into it (s; below 0 it is still to begin), from its dawn's hour to its lit stage's. */
+  let sunrise: { t: number; dawn: number; lit: number } | null = { t: -SUNRISE.from, dawn: plan.dawn, lit: plan.lit };
   const season = makeSeasonState();
   const weather = new Weather();
   weather.clearUntil = OPENING_CLEAR_SECONDS;
@@ -315,6 +330,8 @@ async function main(hud: Hud): Promise<void> {
   const SHADOW_BEST = Math.min(4096, renderer.capabilities.maxTextureSize) >= 4096 && devicePixelRatio <= 1.5 ? 4096 : 2048;
   env.setShadowMapSize(SHADOW_BEST);
   const rig = new Rig(camera, canvas);
+  // the views it composes left to itself are made in the sky and the season as they are
+  rig.sky = { sun: env.sunDir, moon: env.moonDir, season };
 
   // ---- the film tour's stage: what its scenes set in the world (season, hour, moon, weather, the boat,
   // the birds) and read from it; the viewer's own world is kept and put back after ----
@@ -361,6 +378,8 @@ async function main(hud: Hud): Promise<void> {
     },
     save() {
       finishTurns();
+      // (a sunrise still running is the viewer's world's: it is risen when the film gives it back)
+      finishSunrise();
       kept = {
         time: clock.time,
         day: clock.dayOfYear,
@@ -474,8 +493,9 @@ async function main(hud: Hud): Promise<void> {
     },
   };
   const director = new Director(tourScenes(ghats), stage);
-  // what the camera turns aside to show along her way, left to itself
-  rig.setSights(findSights(ghats));
+  // what the camera shows along her way left to itself, and what hides what from it
+  const sightlines = new Sightlines(treeCrowns(), palmStems(), huts);
+  rig.setSights(findSights(ghats, sightlines), sightlines);
 
   // ---- the shot the film is leaving, drawn each frame of a dissolve beneath the one coming in, in its own
   // world: the shared uniforms (the light, the fog, the season, the weather, the water), the lights, the sky,
@@ -692,7 +712,8 @@ async function main(hud: Hud): Promise<void> {
     if (director.active) setFilm(false);
     rig.setMode(choice);
   };
-  const viewNames = Object.keys(VIEWS) as ViewName[];
+  // the composed views first: the camera's own, until the viewer picks another
+  const viewNames: ViewName[] = ['auto', ...(Object.keys(VIEWS) as ViewName[])];
   let viewIndex = 0;
   const setView = (name: ViewName) => {
     noteInput();
@@ -704,20 +725,38 @@ async function main(hud: Hud): Promise<void> {
 
   // ---- time ----
   let scrubbing = false;
-  /** Back to Bangladesh's own time now, running with the wall's clock. */
-  const goLive = () => {
+  /** Bangladesh's own hour now, the clock running with the wall's (Live). */
+  const keepToWall = () => {
     clock.speed = SPEEDS[0];
     clock.playing = true;
     clock.live = true;
     clock.follow(bangladeshTime().hour);
   };
-  /** Steps the clock's pace; round to real time, it is the wall's own again. */
+  /** The viewer takes the clock (its timeline, pace or pause, a sky event): it is theirs, no longer kept to the wall's or rising. */
+  const takeClock = () => {
+    clock.live = false;
+    sunrise = null;
+  };
+  /** Steps the clock's pace; in Live, round to real time, it is the wall's own again. */
   const stepSpeed = (dir: 1 | -1, wrap: boolean) => {
     const n = SPEEDS.length;
     const i = SPEEDS.indexOf(clock.speed) + dir;
     clock.speed = SPEEDS[wrap ? (i + n) % n : clamp(i, 0, n - 1)];
-    if (clock.speed === SPEEDS[0]) goLive();
-    else clock.live = false;
+    if (clock.speed === SPEEDS[0] && mode === 'live') keepToWall();
+    else takeClock();
+  };
+  /** The sunrise's hour now: from its dawn up to its lit stage over `SUNRISE.seconds`, eased; then the clock runs on from there. */
+  const riseSun = (dt: number) => {
+    if (!sunrise) return;
+    sunrise.t += dt;
+    clock.setHour(sunrise.dawn + (sunrise.lit - sunrise.dawn) * smooth(clamp(sunrise.t / SUNRISE.seconds, 0, 1)));
+    if (sunrise.t >= SUNRISE.seconds) sunrise = null;
+  };
+  /** The sunrise done at once (the film starts over it): the sun at its lit stage. */
+  const finishSunrise = () => {
+    if (!sunrise) return;
+    clock.setHour(sunrise.lit);
+    sunrise = null;
   };
 
   // ---- sky events: announce each one, and turn to watch it when asked or when nobody is steering ----
@@ -737,15 +776,16 @@ async function main(hud: Hud): Promise<void> {
       ev = again;
     }
     // (an event jumped to is watched in the sky's time-lapse: in real time a sunset takes the best part of an hour)
+    takeClock();
     clock.jumpTo(ev);
-    clock.live = false;
     if (clock.speed < LAPSE) clock.speed = LAPSE;
     look(ev);
     hud.toast(notice(ev), null);
   };
   const followSky = (now: number) => {
-    // the film tour shows the sky's events itself, in its own time
-    if (director.active) {
+    // the film tour shows the sky's events itself, in its own time; the cinematic morning's sunrise is the opening's
+    // own, and a change of mode is no moment to turn to the sky
+    if (director.active || sunrise || dip) {
       watch.event = null;
       watch.asked = false;
       rig.watch = null;
@@ -766,19 +806,21 @@ async function main(hud: Hud): Promise<void> {
     rig.watch = watch.event && (watch.asked || idle) ? (isSun(watch.event.kind) ? env.sunDir : env.moonDir) : null;
   };
 
-  // ---- the viewer's environment. The season is the journey's: the year turns as the boat goes on her way
-  // (yearJourney.ts). A chosen season comes as the year turns to it over a few seconds (the sun's path, the
-  // light, the land, the trees, the crops, the river all following the days as they roll by), a chosen moon
-  // waxes or wanes to its phase. Each holds for a minute; then the world eases back to the journey's season,
-  // the season's weather and the real moon.
+  // ---- the viewer's environment. The season is the mode's own: in the cinematic mode the journey's, the year
+  // turning as the boat goes on her way (yearJourney.ts); in Live today's. A chosen season comes as the year turns
+  // to it over a few seconds (the sun's path, the light, the land, the trees, the crops, the river all following
+  // the days as they roll by), a chosen moon waxes or wanes to its phase. Each holds for a minute; then the world
+  // eases back to the mode's own season, the season's weather and the mode's own moon.
   const smooth = (x: number) => x * x * (3 - 2 * x);
   const wrap = (x: number, n: number) => ((x % n) + n) % n;
   /** The short way round the year from day `a` to day `b`. */
   const yearsWay = (a: number, b: number) => wrap(b - a + YEAR / 2, YEAR) - YEAR / 2;
   /** The day of the year where the boat is on her way. */
   const journeyDay = () => yearJourney.dayAt(rig.progress * JOURNEY.length);
-  /** Whether the season follows the boat's way (else it holds the clock's day: a chosen season, a still). */
-  let yearOnJourney = true;
+  /** A season held (the viewer's choice, a still's) rather than the mode's own. */
+  let seasonHeld = false;
+  /** Whether the season follows the boat's way: the cinematic mode's own (else it holds the clock's day: Live's today, a chosen season, a still, the film's). */
+  const onJourney = () => mode === 'cinematic' && !seasonHeld && !filming();
   /** The journey's day last frame, to tell her being put elsewhere (the map, the loop) from her going on. */
   let lastJourneyDay = Number.NaN;
   /** The year turning to a day (`to`, or the journey's when null) from `from`, and for how long so far. */
@@ -789,7 +831,7 @@ async function main(hud: Hud): Promise<void> {
   /** The day of the year the land and the sun show now: the turning year's, the journey's or the clock's. */
   const shownDay = () => {
     if (yearTurn) return wrap(yearTurn.from + yearsWay(yearTurn.from, turnTarget(yearTurn)) * smooth(Math.min(1, yearTurn.t / YEAR_TURN_SECONDS)), YEAR);
-    return yearOnJourney && !filming() ? journeyDay() : clock.dayOfYear;
+    return onJourney() ? journeyDay() : clock.dayOfYear;
   };
   /** The day the year is on, or turning to. */
   const aimedDay = () => (yearTurn ? turnTarget(yearTurn) : shownDay());
@@ -798,7 +840,7 @@ async function main(hud: Hud): Promise<void> {
    * timeline and the date read it), and a jump of her place eased over as a turn of the year.
    */
   const followYear = () => {
-    if (!yearOnJourney || filming()) {
+    if (!onJourney()) {
       lastJourneyDay = Number.NaN;
       return;
     }
@@ -830,12 +872,12 @@ async function main(hud: Hud): Promise<void> {
   const startSession = () => {
     sessionUntil = performance.now() + SESSION_MS;
   };
-  /** Turns the year to a season's middle (or back to the journey's); the river eases to its new level. */
-  const chooseSeason = (choice: number | 'journey', session = true) => {
+  /** Turns the year to a season's middle (or back to the mode's own: the journey's, or today's in Live); the river eases to its new level. */
+  const chooseSeason = (choice: number | 'own', session = true) => {
     const from = shownDay();
-    yearOnJourney = choice === 'journey';
-    yearTurn = { from, to: choice === 'journey' ? null : seasonMiddle(choice), t: 0 };
-    if (session && choice !== 'journey') startSession();
+    seasonHeld = choice !== 'own';
+    yearTurn = { from, to: choice !== 'own' ? seasonMiddle(choice) : mode === 'live' ? bangladeshTime().day : null, t: 0 };
+    if (session && choice !== 'own') startSession();
   };
   /** The weather and the wind are the season's own (the user asked for no picker: calm, breeze, wind, drizzle, rain and storm all come as the season brings them). */
   const seasonsWeather = () => {
@@ -848,19 +890,80 @@ async function main(hud: Hud): Promise<void> {
     moonTurn = { from, by: wrap(age - from + SYNODIC / 2, SYNODIC) - SYNODIC / 2, t: 0 };
     if (session) startSession();
   };
-  /** The minute is up: back to the journey's season, the season's weather and the real moon, all eased. */
-  const backToToday = () => {
+  /** The minute is up: back to the mode's own season, the season's weather and the mode's own moon, all eased. */
+  const backToMode = () => {
     sessionUntil = 0;
-    chooseSeason('journey', false);
+    chooseSeason('own', false);
     seasonsWeather();
-    chooseMoon(wrap(naturalMoon.age + (clock.time - naturalMoon.time), SYNODIC), false);
-    hud.toast('যাত্রার ঋতু, আবহাওয়া আর আসল চাঁদে ফিরছে', null);
+    chooseMoon(wrap(ownMoon.age + (clock.time - ownMoon.time), SYNODIC), false);
+    hud.toast(mode === 'live' ? 'আজকের ঋতু, আবহাওয়া আর আসল চাঁদে ফিরছে' : 'যাত্রার ঋতু, আবহাওয়া আর চাঁদে ফিরছে', null);
+  };
+
+  // ---- the mode: the cinematic morning (the default) or Live, Bangladesh's own date and hour now. A change goes
+  // down into a moment of dark and comes up in the other world, set whole under it (DIP) ----
+  let dip: { t: number; to: TimeMode; done: boolean } | null = null;
+  /** The cinematic morning on the day the journey shows where she is: the clock at its dawn, its moon, the sun to rise `after` s on. */
+  const beginSunrise = (after: number) => {
+    const m = morningOn(journeyDay());
+    clock.setDayOfYear(m.day);
+    clock.setHour(m.dawn);
+    clock.setMoonAge(m.moon);
+    sunrise = { t: -after, dawn: m.dawn, lit: m.lit };
+  };
+  /** Sets a mode's whole world at once (under the dip's dark): its day, hour, moon, season, weather and what goes with them. */
+  const setMode = (to: TimeMode) => {
+    mode = to;
+    yearTurn = null;
+    moonTurn = null;
+    sessionUntil = 0;
+    seasonHeld = false;
+    lastJourneyDay = Number.NaN;
+    seasonsWeather();
+    if (to === 'live') {
+      sunrise = null;
+      keepToWall();
+      clock.setDayOfYear(bangladeshTime().day);
+      clock.setMoonAge(moonAgeOn(new Date()));
+      // the season's own weather as it is now: no fair spell held for it
+      weather.clearUntil = 0;
+    } else {
+      clock.live = false;
+      clock.speed = SPEEDS[0];
+      clock.playing = true;
+      // the morning comes again: the sun rising as the dark lifts, the first minutes fair
+      beginSunrise(DIP[1] * 0.5);
+      weather.clearUntil = t + OPENING_CLEAR_SECONDS;
+    }
+    ownMoon.age = clock.moonAge;
+    ownMoon.time = clock.time;
+    watch.event = null;
+    watch.asked = false;
+    // the world as it stands in it, at once: the season, the weather and the wet, the light, his mathal, the
+    // frogs and the turtles where they would be, the shadow
+    setSunDay(shownDay());
+    updateSky(0, true);
+    env.update(clock.hour, clock.moonAge);
+    hero.wantHat(hatWanted());
+    hero.settleHat();
+    frogs.settle(camera.position, frogsOut());
+    turtles.settle(rig.boat.pos, turtlesOut());
+    renderer.shadowMap.needsUpdate = true;
+  };
+  /**
+   * The Live button (and 0), as it shows (controls.ts): off, on to Live; on, back to the cinematic morning; on with
+   * the clock taken elsewhere, back to now. Not while a change is already under way.
+   */
+  const toggleLive = () => {
+    if (dip) return;
+    const shownOn = !filming() && mode === 'live';
+    ownWorld();
+    dip = { t: 0, to: shownOn && clock.live ? 'cinematic' : 'live', done: false };
   };
   const controls = new Controls({
     togglePlay: () => {
       ownWorld();
       clock.playing = !clock.playing;
-      clock.live = false;
+      takeClock();
     },
     faster: () => {
       ownWorld();
@@ -868,7 +971,7 @@ async function main(hud: Hud): Promise<void> {
     },
     seek: (hour) => {
       ownWorld();
-      clock.live = false;
+      takeClock();
       clock.setHour(hour);
     },
     scrub: (active) => {
@@ -885,10 +988,7 @@ async function main(hud: Hud): Promise<void> {
       ownWorld();
       chooseSeason(choice);
     },
-    now: () => {
-      ownWorld();
-      goLive();
-    },
+    live: toggleLive,
     sound: toggleSound,
     map: () => {
       noteInput();
@@ -913,7 +1013,7 @@ async function main(hud: Hud): Promise<void> {
     if (director.active) director.stop(true);
   };
   // the map's places, each shown in its own shots (rig/visits.ts), the boat put on her way short of it
-  const spots = mapSpots();
+  const spots = mapSpots(sightlines);
   const map = new MapPanel(
     {
       visit(id) {
@@ -927,7 +1027,7 @@ async function main(hud: Hud): Promise<void> {
         hud.quiet();
         // the year with the boat where the visit puts her, at once, under its first dissolve (each shot keeps its
         // own look through a dissolve: the viewer's view goes out in the season it had)
-        if (yearOnJourney) {
+        if (onJourney()) {
           yearTurn = null;
           lastJourneyDay = Number.NaN;
           followYear();
@@ -1029,12 +1129,11 @@ async function main(hud: Hud): Promise<void> {
         e.preventDefault();
         ownWorld();
         clock.playing = !clock.playing;
-        clock.live = false;
+        takeClock();
         break;
       case 'Digit0':
       case 'Numpad0':
-        ownWorld();
-        goLive();
+        toggleLive();
         break;
       case 'KeyY':
         ownWorld();
@@ -1071,7 +1170,7 @@ async function main(hud: Hud): Promise<void> {
         setView(viewNames[(viewIndex + 1) % viewNames.length]);
         break;
       case 'KeyR':
-        setView('stern');
+        setView('auto');
         break;
       case 'KeyM':
         toggleSound();
@@ -1141,10 +1240,12 @@ async function main(hud: Hud): Promise<void> {
     t += dt;
     G.uTime.value = t;
     clock.boost = filming() ? scenePace : held.has('KeyT') ? Math.max(1, (40 * LAPSE) / clock.speed) : 1;
-    // kept to Bangladesh's own time, or running at the pace the viewer chose
-    if (clock.live && !filming() && !held.has('KeyT')) clock.follow(bangladeshTime().hour);
+    // the cinematic morning's sun rising, then the clock running on; kept to Bangladesh's own time (Live); or running
+    // at the pace the viewer chose
+    if (sunrise && !filming()) riseSun(dt);
+    else if (clock.live && !filming() && !held.has('KeyT')) clock.follow(bangladeshTime().hour);
     else if (!scrubbing) clock.advance(dt);
-    if (held.has('KeyT')) clock.live = false;
+    if (held.has('KeyT')) takeClock();
     turn(dt);
     followYear();
     updateSky(dt, false);
@@ -1161,6 +1262,7 @@ async function main(hud: Hud): Promise<void> {
     G.uHillCloud.value = Math.max(smoothstep(0.35, 0.9, season.fog) * (0.4 + 0.6 * lowSun), weather.rain * 0.7);
     followSky(performance.now());
     // the boat floats and is paddled by physics; the boatman's weight from last frame trims her
+    rig.directed = director.active;
     rig.update(dt, t, hero.crew);
     const b = rig.boat;
     hero.wantHat(hatWanted());
@@ -1256,11 +1358,22 @@ async function main(hud: Hud): Promise<void> {
     last = now;
     perf.ms += (raw * 1000 - perf.ms) * 0.05;
     const dt = debug.freeze ? 0 : Math.min(raw, 0.05);
+    // a change of mode: down into the dark, the other world set under it, up again
+    let dark = 0;
+    if (dip) {
+      dip.t += Math.min(raw, 0.1);
+      if (!dip.done && dip.t >= DIP[0]) {
+        setMode(dip.to);
+        dip.done = true;
+      }
+      dark = dip.t < DIP[0] ? smooth(dip.t / DIP[0]) : 1 - smooth(Math.min(1, (dip.t - DIP[0]) / DIP[1]));
+      if (dip.t >= DIP[0] + DIP[1]) dip = null;
+    }
     step(dt);
     // the ripples run on with the world, round where the camera looks at the water
     ripples.update(renderer, dt, camera.position, camera.getWorldDirection(rippleView), G.uMirrorLevel.value);
-    if (sessionUntil && now > sessionUntil && !filming()) backToToday();
-    const cut = Math.max(clamp(1 - (now - readyAt) / 2600, 0, 1), clamp(1 - (now - jumpAt) / 900, 0, 1));
+    if (sessionUntil && now > sessionUntil && !filming()) backToMode();
+    const cut = Math.max(clamp(1 - (now - readyAt) / 2600, 0, 1), clamp(1 - (now - jumpAt) / 900, 0, 1), dark);
     // the journey's mist fade belongs to the boat; a free camera elsewhere doesn't see the boat loop
     const loop = rig.mode === 'follow' || director.active ? rig.fade : 0;
     // a dissolve: the shot being left, still moving in its own world, drawn first for this one to melt over
@@ -1280,7 +1393,7 @@ async function main(hud: Hud): Promise<void> {
     // the opening flight has come down to the boat: the hint to the controls
     if (wasFlying && !rig.flying) hud.hintNow();
     wasFlying = rig.flying;
-    controls.update(clock, filming() ? 'film' : rig.mode, soundOn, yearOnJourney && !sessionUntil, filming() ? { index: director.sceneIndex, count: director.sceneCount } : undefined);
+    controls.update(clock, filming() ? 'film' : rig.mode, soundOn, !seasonHeld, mode, filming() ? { index: director.sceneIndex, count: director.sceneCount } : undefined);
     camera.getWorldDirection(forward);
     map.update(rig.boat.pos.x, rig.boat.pos.z, rig.boat.course, t);
 
@@ -1331,6 +1444,8 @@ async function main(hud: Hud): Promise<void> {
       dist?: number;
       /** Turn to the sun or the moon: the follow camera frames it low, as when it rises or sets; the free camera looks straight at it. */
       face?: 'sun' | 'moon';
+      /** The view the camera would compose there by itself (rig/compose.ts), as when the viewer has stopped steering. */
+      compose?: boolean;
       /** Free camera at [x, y, z, yaw, pitch]. */
       free?: [number, number, number, number, number];
       film?: [number, number];
@@ -1352,13 +1467,14 @@ async function main(hud: Hud): Promise<void> {
         ready: true,
         shot(o: ShotOptions) {
           rig.endOpening();
-          // stills set the world at once, and hold it: the hour theirs, not the wall's; the day theirs, or the
-          // journey's where the boat is put
+          // stills set the world at once, and hold it: the hour theirs, not the wall's or a sunrise's; the day
+          // theirs, or the journey's where the boat is put
           yearTurn = null;
           moonTurn = null;
           sessionUntil = 0;
-          clock.live = false;
-          yearOnJourney = false;
+          dip = null;
+          takeClock();
+          seasonHeld = true;
           if (o.day === undefined && o.season === undefined && o.journey !== undefined) clock.setDayOfYear(yearJourney.dayAt(o.journey * JOURNEY.length));
           if (o.moon !== undefined) clock.setMoonAge(o.moon);
           if (o.hour !== undefined) clock.setHour(o.hour);
@@ -1385,6 +1501,8 @@ async function main(hud: Hud): Promise<void> {
             if (o.face) rig.aim(body);
             rig.settle(o);
           }
+          // (after the world is set: it frames by the sun and the season as they are now)
+          if (o.compose && !o.free) rig.composeNow();
           // a still keeps no rain held over from a film shot before it (a film shot holds its own)
           if (!o.film) weather.hold = null;
           const visit = o.visit ? spots.find((s) => s.id === o.visit?.[0]) : undefined;
@@ -1415,8 +1533,19 @@ async function main(hud: Hud): Promise<void> {
         },
         /** Leaves the follow camera to itself from now, as after the viewer has stopped steering (for recordings). */
         letGo: () => rig.lookNow(),
-        /** The sights the camera turns aside to show along her way: where (m and share of the way), what kind, which side. */
-        sights: () => rig.sightList.map((g) => ({ s: Math.round(g.s), share: Math.round((g.s / JOURNEY.length) * 1e4) / 1e4, kind: g.kind, side: g.side, at: [Math.round(g.at.x), Math.round(g.at.z)] })),
+        /** The village's sights along her way (rig/showcase.ts): where each is seen best (m and share of the way), its stretch if it is shown by itself, how well it is seen. */
+        sights: () =>
+          rig.sightList.map((g) => ({
+            name: g.name,
+            s: Math.round(g.s),
+            share: Math.round((g.s / JOURNEY.length) * 1e4) / 1e4,
+            seen: [Math.round(g.seen.from), Math.round(g.seen.to)],
+            stretch: g.shown ? [Math.round(g.from), Math.round(g.to)] : null,
+            best: Math.round(g.best * 100) / 100,
+            at: [Math.round(g.at.x), Math.round(g.at.z)],
+          })),
+        /** What the composed camera is doing: its shot (in her frame), what it is of, and the shot's score term by term. */
+        composition: () => rig.composition,
         /** Puts `count` mats of water hyacinth `ahead` metres in front of the boat, in her path. */
         mats(ahead = 14, count = 3) {
           const b = rig.boat;
@@ -1709,11 +1838,26 @@ async function main(hud: Hud): Promise<void> {
           clock.playing = true;
         },
         /** The environment as shown now: the turning year and moon, the crops, the river, the weather, the session, and the sun against the view. */
+        /** The cinematic morning as chosen (rig/cinematic.ts): its day, dawn, lit stage and moon, and the best days as weighed, term by term. */
+        cinematic() {
+          const r = (v: number) => Math.round(v * 100) / 100;
+          return {
+            day: plan.day,
+            dawn: r(plan.dawn),
+            lit: r(plan.lit),
+            moon: r(plan.moon),
+            ranked: plan.ranked.map((w) => ({ day: w.day, score: r(w.score), ...Object.fromEntries(Object.entries(w.terms).map(([k, v]) => [k, r(v)])) })),
+          };
+        },
         envState() {
           const r = (v: number, k = 100) => Math.round(v * k) / k;
           const fwd = camera.getWorldDirection(new Vector3());
           const sunOff = Math.acos(Math.max(-1, Math.min(1, fwd.dot(env.sunDir)))) * (180 / Math.PI);
           return {
+            mode,
+            live: clock.live,
+            hour: r(clock.hour),
+            rising: sunrise !== null,
             day: r(shownDay(), 10),
             clockDay: clock.dayOfYear,
             moon: r(shownMoon()),

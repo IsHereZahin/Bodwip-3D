@@ -14,15 +14,13 @@ export const SYNODIC_MONTH = 29.53;
 const rightAscension = (lon: number) => Math.atan2(Math.cos(OBLIQUITY) * Math.sin(lon), Math.cos(lon));
 const declination = (lon: number) => Math.asin(Math.sin(OBLIQUITY) * Math.sin(lon));
 
-/** The sun's ecliptic longitude now, and its right ascension and declination from it. */
+/** The sun's ecliptic longitude now, and its declination from it. */
 let sunLongitude = 0;
-let sunRA = 0;
 let sunDec = 0;
 
 /** Puts the sun where it stands on a day of the year (0 = 1 January); the March equinox is about day 79. */
 export function setSunDay(day: number): void {
   sunLongitude = ((day - 79) / 365.2422) * Math.PI * 2;
-  sunRA = rightAscension(sunLongitude);
   sunDec = declination(sunLongitude);
 }
 setSunDay(257);
@@ -56,11 +54,21 @@ export function sunDirectionOn(day: number, hour: number, out: Vector3): Vector3
   return horizonDirection(sunHourAngle(hour), declination(((day - 79) / 365.2422) * Math.PI * 2), out);
 }
 
+/** The moon's direction from the sun's ecliptic longitude `sun` (rad), at `hour` and `age`. */
+function moonFrom(sun: number, hour: number, age: number, out: Vector3): Vector3 {
+  const lon = sun + (age / SYNODIC_MONTH) * Math.PI * 2;
+  const H = sunHourAngle(hour) - (rightAscension(lon) - rightAscension(sun));
+  return horizonDirection(H, declination(lon), out);
+}
+
 /** `age` is days since new moon. The moon's small tilt off the ecliptic is ignored. */
 export function moonDirection(hour: number, age: number, out: Vector3): Vector3 {
-  const lon = sunLongitude + (age / SYNODIC_MONTH) * Math.PI * 2;
-  const H = sunHourAngle(hour) - (rightAscension(lon) - sunRA);
-  return horizonDirection(H, declination(lon), out);
+  return moonFrom(sunLongitude, hour, age, out);
+}
+
+/** The moon's direction on another `day`, leaving the sun's own day as it is (for moments weighed ahead). */
+export function moonDirectionOn(day: number, hour: number, age: number, out: Vector3): Vector3 {
+  return moonFrom(((day - 79) / 365.2422) * Math.PI * 2, hour, age, out);
 }
 
 /** Lit fraction of the moon's face: 0 at new moon, 1 at full. */

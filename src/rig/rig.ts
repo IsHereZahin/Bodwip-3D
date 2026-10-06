@@ -1,11 +1,14 @@
 import { Matrix4, PerspectiveCamera, Quaternion, Vector3 } from 'three';
 import { angleDelta, clamp, damp, lerp, smoothstep } from '../core/mathx';
+import type { SeasonState } from '../env/season';
 import { BoatBody, type Crew } from '../world/boatPhysics';
 import { BRIDGE, JOURNEY, SANKO, bridgeDeck, bridgeFrame, bridgeSoffit, inlandWaterAt, journeyAt, journeyFrame, sankoDeck, sankoFrame, terrainHeight, waterLevelAt, waterwayAt } from '../world/geography';
 import { sankoToWorld } from '../world/sites';
 import { FlyCam } from './flycam';
 import { HANDOFF, OPENING_SECONDS, openingFloor, openingPose, openingSide, wayAt, type RestPlace } from './opening';
-import { sightPose, sightWeight, type Sight } from './showcase';
+import { Composer, narrowScale, type Moment } from './compose';
+import { chooseShown, sightWeight, type Sight } from './showcase';
+import type { Sightlines } from './sightlines';
 
 /** How far along her way the boatman steers for, m. */
 const LOOK_AHEAD = 16;
@@ -22,6 +25,8 @@ const TURN_IDLE = 0.25;
 const TURN_ASKED = 1.6;
 /** Seconds to ease from the free camera back to the boat. */
 const BLEND_SECONDS = 1.4;
+/** How often (s) the sights shown by themselves are chosen again, by what each is worth now. */
+const CHOOSE_SECONDS = 2;
 
 export interface View {
   yaw: number;
@@ -29,20 +34,21 @@ export interface View {
   dist: number;
 }
 
-/** Viewpoints around the boat. The camera rests at the chosen one; `stern` is the default. */
+/** Viewpoints around the boat. Picked, the camera rests at it; otherwise (`auto`, the default) it composes its own views (compose.ts). */
 export const VIEWS = {
   stern: { yaw: 0.32, pitch: 0.12, dist: 14 },
   boatman: { yaw: 1.9, pitch: 0.08, dist: 6.5 },
   bow: { yaw: Math.PI - 0.3, pitch: 0.1, dist: 13 },
   high: { yaw: -1.2, pitch: 0.5, dist: 34 },
 } satisfies Record<string, View>;
-export type ViewName = keyof typeof VIEWS;
+export type ViewName = keyof typeof VIEWS | 'auto';
 
 /**
- * Where the camera rests until the viewer picks a view: low over the water off the boat's quarter, looking down
- * the river past her into the evening light, the banks close either side.
+ * Where the opening flight ends (and the camera rests, should the viewer pick no view and take the camera): low
+ * over the water ahead of her and to the flight's side, looking back at her coming on, her majhi and the morning
+ * behind her (its yaw's sign set by that side: `beginOpening`).
  */
-const OPENING_VIEW: View = { yaw: 0.4, pitch: 0.08, dist: 13 };
+const OPENING_VIEW: View = { yaw: Math.PI - 0.8, pitch: 0.09, dist: 15 };
 
 /**
  * Following the boat under the old bridge, the camera eases down under its arch (or, over the banks, up
@@ -110,6 +116,12 @@ export class Rig {
   mode: CameraMode = 'follow';
   /** A direction to turn toward once nobody is steering (a rising moon, say); null to rest. */
   watch: Vector3 | null = null;
+  /** Left to itself the camera composes its own views (the view `auto`, the default), or rests at the view picked. */
+  auto = true;
+  /** The film or a map place's visit has the camera (main.ts, each frame): the composer only holds its shot. */
+  directed = false;
+  /** The sky and the season the composed views are made in (main.ts sets them once; they change in place). */
+  sky: { sun: Vector3; moon: Vector3; season: SeasonState } | null = null;
 
   private loopT = -1;
   /** How far along her way she is (m), kept while she is too far off it to say. */
@@ -142,10 +154,16 @@ export class Rig {
   private readonly openQuat = new Quaternion();
   private readonly followQuat = new Quaternion();
   private readonly lookAt = new Matrix4();
-  /** The sights along her way the camera turns aside to show when left to itself (showcase.ts). */
+  /** The village's sights along her way (showcase.ts), and the composer of the views left to itself (compose.ts). */
   private sights: readonly Sight[] = [];
-  /** How free the camera is to go to them (0..1): eased up while nobody steers, dropped when someone does. */
-  private showGate = 0;
+  /** What stands where (the trees, the palms, the houses): for the opening flight's floor and the composer. */
+  private lines: Sightlines | null = null;
+  private composer: Composer | null = null;
+  /** Whether the composer has the camera now, and what it is given each frame. */
+  private composing = false;
+  private moment: Moment | null = null;
+  /** Seconds until the sights shown are chosen again. */
+  private choosing = 0;
   private readonly showPos = new Vector3();
   private readonly showLook = new Vector3();
 
@@ -159,7 +177,7 @@ export class Rig {
       element.setPointerCapture(e.pointerId);
       this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       this.dragging = true;
-      this.idle = 0;
+      this.steer();
     });
     element.addEventListener('pointermove', (e) => {
       const prev = this.pointers.get(e.pointerId);
@@ -183,7 +201,7 @@ export class Rig {
         prev.x = e.clientX;
         prev.y = e.clientY;
       }
-      this.idle = 0;
+      this.steer();
     });
     const end = (e: PointerEvent) => {
       this.pointers.delete(e.pointerId);
@@ -197,8 +215,8 @@ export class Rig {
       (e) => {
         e.preventDefault();
         this.endOpening();
+        this.steer();
         this.zoom(Math.exp(e.deltaY * 0.0012));
-        this.idle = 0;
       },
       { passive: false },
     );
@@ -224,6 +242,7 @@ export class Rig {
 
   setMode(mode: CameraMode): void {
     if (mode === this.mode) return;
+    this.composing = false;
     if (mode === 'free') this.fly.startFrom(this.camera);
     else {
       this.fromPos.copy(this.camera.position);
@@ -234,9 +253,16 @@ export class Rig {
     this.idle = 0;
   }
 
-  /** Follows the boat from one of the viewpoints, and rests there from now on. */
+  /** Follows the boat from one of the viewpoints and rests there from now on; or (`auto`) composes its own views again, at once. */
   setView(name: ViewName): void {
     this.setMode('follow');
+    if (name === 'auto') {
+      this.auto = true;
+      this.idle = IDLE_SECONDS;
+      return;
+    }
+    this.steer();
+    this.auto = false;
     this.rest = VIEWS[name];
     this.yawT += angleDelta(this.yawT, this.rest.yaw);
     this.pitchT = this.rest.pitch;
@@ -247,14 +273,18 @@ export class Rig {
   /** Starts the opening flight: from high over the river ahead of her, down over the village's bank to her. */
   beginOpening(): void {
     this.setMode('follow');
-    this.rest = OPENING_VIEW;
-    this.settle(OPENING_VIEW);
+    // it ends on the side it comes down over (+1 her left: a yaw that takes the camera round to her left is negative)
+    const side = openingSide(this.along);
+    this.rest = { ...OPENING_VIEW, yaw: -side * OPENING_VIEW.yaw };
+    this.settle(this.rest);
+    // (left alone from now: settle() holds a still's camera as it is, which would keep the composer from ever
+    // taking over after the flight until the viewer had touched something)
+    this.idle = 0;
     // the follow camera posed once, for where the flight ends
     const b = this.boat;
     this.orbit(b.pos.x, b.pos.z, b.course, 0, b.pos.y + 2.2, 3);
     this.restPlace();
-    const side = openingSide(this.along);
-    this.opening = { t: 0, side, floor: openingFloor(this.along, side, this.restAt, b.pos.y) };
+    this.opening = { t: 0, side, floor: openingFloor(this.along, side, this.restAt, b.pos.y, this.lines) };
   }
 
   /** Where the follow camera is now and what it looks at (orbit() has posed it), in her way's frame at her place (`restAt`). */
@@ -279,14 +309,26 @@ export class Rig {
     this.blend = 0;
   }
 
-  /** The sights along her way, for the camera to show by itself (showcase.ts findSights). */
-  setSights(sights: readonly Sight[]): void {
+  /** The village's sights along her way (showcase.ts findSights), and what hides what, for the views composed left to itself. */
+  setSights(sights: readonly Sight[], lines: Sightlines): void {
     this.sights = sights;
+    this.lines = lines;
+    this.composer = new Composer(lines, this.camera, (pos) => {
+      keepClearOfBridge(pos);
+      keepClearOfSanko(pos);
+    });
   }
 
   /** The sights along her way (for the debug hooks). */
   get sightList(): readonly Sight[] {
     return this.sights;
+  }
+
+  /** What the composer is doing (for the debug hooks): whether it has the camera, its shot, and that shot's score term by term. */
+  get composition(): unknown {
+    const m = this.composer && this.fillMoment();
+    const dir = this.camera.getWorldDirection(new Vector3());
+    return { composing: this.composing, auto: this.auto, along: this.along, pos: this.camera.position.toArray(), dir: dir.toArray(), ...this.composer?.state, now: m ? this.composer?.explain(m) : null };
   }
 
   /** Whether the opening flight is running. */
@@ -296,7 +338,7 @@ export class Rig {
 
   /** The letterbox the opening flight is shot in (0..1): full as it sets off, opening out as it comes down to her. */
   get openingBars(): number {
-    return this.opening ? 1 - smoothstep(OPENING_SECONDS - 7, OPENING_SECONDS - 1, this.opening.t) : 0;
+    return this.opening ? 1 - smoothstep(OPENING_SECONDS * 0.45, OPENING_SECONDS - 0.5, this.opening.t) : 0;
   }
 
   /** Starts turning toward `watch` now, rather than after the camera has sat idle. */
@@ -310,6 +352,7 @@ export class Rig {
     this.along = clamp(t, 0, 1) * JOURNEY.length;
     const p = journeyAt(this.along);
     this.boat.place(p.x, p.z, p.heading);
+    this.choosing = 0;
     this.loopT = -1;
     this.fade = 0;
   }
@@ -351,12 +394,102 @@ export class Rig {
     this.dist = this.distT;
     this.idle = -1e9;
     this.blend = 1;
+    this.composing = false;
+  }
+
+  /** Stands the camera at once where it would compose its view now (for stills; `settle` first). */
+  composeNow(): void {
+    this.choose(true);
+    const m = this.fillMoment();
+    if (!this.composer || !m) return;
+    this.endOpening();
+    this.setMode('follow');
+    this.auto = true;
+    this.idle = IDLE_SECONDS + 1;
+    this.composer.takeFrom(this.camera, m);
+    this.composer.settle(m, this.showPos, this.showLook);
+    this.camera.position.copy(this.showPos);
+    this.camera.lookAt(this.showLook);
+    this.camera.updateMatrixWorld();
+    this.composing = true;
+    this.blend = 1;
+  }
+
+  /**
+   * Someone takes the camera: from a composed view the follow camera takes over where it stands (its orbit set to
+   * that place, turning to her over the rig's blend), so nothing jumps.
+   */
+  private steer(): void {
+    this.idle = 0;
+    if (this.composing) this.stopComposing(!this.directed);
+  }
+
+  /**
+   * The composer lets the camera go; `adopt`: the follow camera's orbit set to where the composed view last stood
+   * (not under the film, whose camera that is not).
+   */
+  private stopComposing(adopt: boolean): void {
+    this.composing = false;
+    if (!adopt) return;
+    const cam = this.showPos;
+    const dx = cam.x - this.target.x;
+    const dy = cam.y - this.target.y;
+    const dz = cam.z - this.target.z;
+    const d = Math.max(Math.hypot(dx, dy, dz), 1e-3);
+    this.dist = this.distT = clamp(d / narrowScale(this.camera), DIST_MIN, DIST_MAX);
+    this.pitch = this.pitchT = clamp(Math.asin(clamp(dy / d, -1, 1)), PITCH_MIN, PITCH_MAX);
+    this.yaw = this.yawT = angleDelta(this.boat.course + Math.PI, Math.atan2(dx, dz));
+    this.fromPos.copy(cam);
+    this.lookAt.lookAt(cam, this.showLook, this.camera.up);
+    this.fromQuat.setFromRotationMatrix(this.lookAt);
+    this.blend = 0;
+  }
+
+  /**
+   * Chooses again which sights are shown by themselves, by what each is worth in the season and the light now; the
+   * one she is with keeps its stretch. `still`: for a still, a stretch she is already in counts from its start.
+   */
+  private choose(still: boolean): void {
+    if (!this.sky) return;
+    this.choosing = CHOOSE_SECONDS;
+    let keep: Sight | null = null;
+    if (!still) for (const s of this.sights) if (sightWeight(s, this.along) > 0) keep = s;
+    const night = 1 - smoothstep(-0.12, 0.05, this.sky.sun.y);
+    chooseShown(this.sights, { season: this.sky.season, night }, keep, still ? -Infinity : this.along);
+  }
+
+  /** What the composer is given now: her place and course, the water under her, the sight whose stretch she is in, the sky. */
+  private fillMoment(): Moment | null {
+    if (!this.sky) return null;
+    const b = this.boat;
+    let sight: Sight | null = null;
+    let share = 0;
+    for (const s of this.sights) {
+      const k = sightWeight(s, this.along);
+      if (k > share) (share = k), (sight = s);
+    }
+    const level = waterLevelAt(b.pos.x, b.pos.z);
+    const m = (this.moment ??= { boat: b.pos, course: 0, water: 0, sight: null, share: 0, sights: this.sights, ...this.sky });
+    m.course = b.course;
+    m.water = Number.isFinite(level) ? level : b.pos.y;
+    m.sight = sight;
+    m.share = share;
+    m.sights = this.sights;
+    return m;
   }
 
   /** Where the camera looks, on the ground some way ahead; the shadow map follows it. */
   focus(out: Vector3): Vector3 {
     if (this.mode === 'free') return this.fly.focus(out);
     const b = this.boat;
+    if (this.composing) {
+      // ahead of the composed view, which may look away from her course
+      const cam = this.camera.position;
+      const dx = this.showLook.x - cam.x;
+      const dz = this.showLook.z - cam.z;
+      const d = Math.hypot(dx, dz) || 1;
+      return out.set(cam.x + (dx / d) * 45, 0, cam.z + (dz / d) * 45);
+    }
     return out.set(b.pos.x + Math.sin(b.course) * 40, 0, b.pos.z + Math.cos(b.course) * 40);
   }
 
@@ -372,8 +505,10 @@ export class Rig {
   /** `crew`: where the boatman's weight is. */
   update(dt: number, t: number, crew: Crew): void {
     const k = this.keys;
-    for (const code of k) if (!MODIFIERS.has(code)) this.idle = 0;
+    for (const code of k) if (!MODIFIERS.has(code)) this.steer();
     if (k.size) this.endOpening();
+    this.choosing -= dt;
+    if (this.choosing <= 0) this.choose(false);
     if (this.mode === 'follow') {
       if (k.has('ArrowLeft')) this.yawT += dt * 1.2;
       if (k.has('ArrowRight')) this.yawT -= dt * 1.2;
@@ -407,19 +542,20 @@ export class Rig {
     // cameras follow where she is going, not the stern's wag with each stroke
     const h = b.course;
 
-    // left alone, the camera turns to watch a sky event, or eases back to its resting view and drifts
-    // slowly there so it never sits still
+    // left alone, the camera turns to watch a sky event; otherwise it composes its own views (or, with a view
+    // picked, eases back to it and drifts slowly there so it never sits still)
     this.idle += dt;
     this.turnRate = damp(this.turnRate, TURN_IDLE, 0.3, dt);
     const idle = this.idle > IDLE_SECONDS;
     if (this.mode === 'free') this.fly.update(dt, k, this.camera, idle ? this.watch : null, this.turnRate);
     else {
+      const compose = this.auto && idle && !this.watch && !this.opening;
       const turn = 1 - Math.exp(-dt * this.turnRate);
       if (idle && this.watch) {
         this.yawT += angleDelta(this.yawT, watchYaw(this.watch, h)) * turn;
         this.pitchT = damp(this.pitchT, WATCH_VIEW.pitch, this.turnRate, dt);
         this.distT = damp(this.distT, WATCH_VIEW.dist, this.turnRate, dt);
-      } else if (idle) {
+      } else if (idle && !compose) {
         const drift = this.rest.yaw + 0.22 * Math.sin(t * 0.035);
         this.yawT += angleDelta(this.yawT, drift) * turn;
         this.pitchT = damp(this.pitchT, this.rest.pitch, 0.25, dt);
@@ -427,7 +563,7 @@ export class Rig {
       }
       this.orbit(b.pos.x, b.pos.z, h, dt, b.pos.y + 2.2, 3);
       if (this.opening) this.flyOpening(dt);
-      else this.showcase(dt, idle && !this.watch);
+      else this.compose(dt, compose);
     }
 
     // ease over from wherever the free camera was
@@ -457,7 +593,10 @@ export class Rig {
     openingPose(o.t, this.along, o.side, this.restAt, this.boat.pos.y, this.target, o.floor, this.openPos, this.openLook);
     this.lookAt.lookAt(this.openPos, this.openLook, this.camera.up);
     this.openQuat.setFromRotationMatrix(this.lookAt);
-    const e = smoothstep(OPENING_SECONDS - HANDOFF, OPENING_SECONDS, o.t);
+    // (a smootherstep: its acceleration too starts from nothing; a smoothstep's set off with a jolt where the
+    // flight's pose still stood well off the follow camera's)
+    const u = clamp((o.t - (OPENING_SECONDS - HANDOFF)) / HANDOFF, 0, 1);
+    const e = u * u * u * (u * (6 * u - 15) + 10);
     const cam = this.camera;
     this.followQuat.copy(cam.quaternion);
     cam.position.lerpVectors(this.openPos, cam.position, e);
@@ -466,30 +605,24 @@ export class Rig {
   }
 
   /**
-   * Left to itself, the camera goes aside to the sight whose stretch of her way she is in, over the follow
-   * camera's pose (orbit() has just posed it), as far as the sight's own easing and the gate allow: so it moves
-   * off her slowly and comes back slowly, and hands back at once when someone takes the camera.
+   * Left to itself (`want`), the composer has the camera: it takes it from the follow camera's pose (orbit() has
+   * just posed it), so the hand-over has no seam, and moves it on its own springs from there. Under the film or a
+   * visit it holds its shot without weighing new ones.
    */
-  private showcase(dt: number, free: boolean): void {
-    this.showGate = damp(this.showGate, free ? 1 : 0, free ? 0.5 : 3, dt);
-    let sight: Sight | null = null;
-    let w = 0;
-    for (const s of this.sights) {
-      const k = sightWeight(s, this.along);
-      if (k > w) (w = k), (sight = s);
+  private compose(dt: number, want: boolean): void {
+    const c = this.composer;
+    const m = c && this.fillMoment();
+    if (!c || !m) return;
+    if (want !== this.composing) {
+      if (want) c.takeFrom(this.camera, m);
+      else this.stopComposing(!this.directed);
+      this.composing = want;
     }
-    const e = w * this.showGate;
-    if (!sight || e < 0.002) return;
-    const b = this.boat;
-    sightPose(sight, b.pos, b.course, this.along, this.target, b.pos.y, this.showPos, this.showLook);
-    this.lookAt.lookAt(this.showPos, this.showLook, this.camera.up);
-    this.openQuat.setFromRotationMatrix(this.lookAt);
+    if (!this.composing) return;
+    c.update(dt, m, this.showPos, this.showLook, !this.directed);
     const cam = this.camera;
-    this.followQuat.copy(cam.quaternion);
-    cam.position.lerp(this.showPos, e);
-    cam.quaternion.slerpQuaternions(this.followQuat, this.openQuat, e);
-    keepClearOfBridge(cam.position);
-    keepClearOfSanko(cam.position);
+    cam.position.copy(this.showPos);
+    cam.lookAt(this.showLook);
     cam.updateMatrixWorld();
   }
 
@@ -512,8 +645,10 @@ export class Rig {
     const fz = Math.cos(h);
     this.target.set(x + fx * ahead, height, z + fz * ahead);
     const back = h + Math.PI + this.yaw;
-    let reach = Math.cos(this.pitch) * this.dist;
-    const rise = Math.sin(this.pitch) * this.dist;
+    // (farther out on a narrow screen, so her majhi at her stern stays in it)
+    const dist = this.dist * narrowScale(this.camera);
+    let reach = Math.cos(this.pitch) * dist;
+    const rise = Math.sin(this.pitch) * dist;
     const cam = this.camera.position;
     if (rise < 9) {
       // pulled in along its line until it is over the water

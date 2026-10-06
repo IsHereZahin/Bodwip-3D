@@ -1,47 +1,60 @@
 import { Vector3 } from 'three';
 import { clamp, lerp, smoothstep } from '../core/mathx';
 import { JOURNEY, journeyAt, terrainHeight, waterwayAt } from '../world/geography';
+import type { Sightlines } from './sightlines';
 
-// The opening flight (the user's direction): before the journey begins, a drone's descent from high over the
-// river well ahead of the boat, looking back up it at her; down over the village's bank (its houses, ghats and
-// groves under it), the river opening out below; out over the open water ahead of her, low, where it lets her come
-// past and turns with her, round to behind her where the follow camera takes over.
+// The opening flight (the user's direction): before the journey begins, a drone's descent from over the river
+// ahead of the boat, looking back up it at her and the sunrise; down over the water, the village's bank beside it,
+// to low over the open water ahead of her and to one side, where it turns a little to frame her coming on, her majhi
+// and the morning behind her, and the follow camera takes over. About nine seconds (2026-10-07: the user found 22 s
+// too long, and asked for 5 to 10): so it sets off nearer and lower than a long flight would, and ends ahead of her
+// rather than going round behind her (that half-turn in so short a time would whip the picture round). The sun
+// comes up as it comes down (rig/cinematic.ts `SUNRISE`).
 //
 // The high part is laid by keys in the way's own frame (along it, out from it), so it bends with the river. The
 // last part goes round her by her bearing from the camera, eased from ahead of her to the follow camera's place:
 // how fast the picture turns is how fast that bearing turns, so it can never whip round, and the camera keeps a
 // few metres out from her way, over the open water, while she comes past. Over all of it lies a floor laid out as
-// it sets off: well over the trees and the palms wherever it is over land or near a bank, risen to in good time
-// and smoothly, so the camera never brushes a crown or catches on one and jumps clear.
+// it sets off: well over the trees, the palms and the houses wherever they stand under or beside its path (where
+// they stand is known: rig/sightlines.ts), risen to in good time and smoothly, so the camera never brushes a crown
+// or catches on one and jumps clear.
 
 /** The flight's length (s); its last `HANDOFF` s ease into the follow camera's pose. */
-export const OPENING_SECONDS = 22;
-export const HANDOFF = 4;
+export const OPENING_SECONDS = 9;
+export const HANDOFF = 2.5;
 /** The share of the flight spent gathering speed (the round eases itself to rest). */
 const SET_OFF = 0.15;
 
 /**
  * The high part's keys: time (s); where the camera is: along the way from the boat (m, ahead +), out from the way
- * (m, toward the flight's side), height over the water (m); where it looks: along the way from the boat (m), and
- * how much it has turned to the boat (0..1).
+ * (m, toward the flight's side), height over the water (m); where it looks: along the way from the boat (m), how
+ * high over the water (m), and how much it has turned to the boat (0..1). It sets off looking up the river to its
+ * horizon, where the cinematic morning's sun rises (rig/cinematic.ts), and tilts down to her as it comes down.
  */
-const KEYS: { t: number; a: number; c: number; h: number; look: number; boat: number }[] = [
-  { t: 0, a: 220, c: 50, h: 92, look: 32, boat: 0 },
-  { t: 4.5, a: 145, c: 45, h: 64, look: 18, boat: 0.15 },
-  { t: 8, a: 90, c: 12, h: 36, look: 6, boat: 0.6 },
+const KEYS: { t: number; a: number; c: number; h: number; look: number; up: number; boat: number }[] = [
+  { t: 0, a: 130, c: 30, h: 56, look: 40, up: 30, boat: 0 },
+  { t: 2.2, a: 85, c: 20, h: 34, look: 22, up: 12, boat: 0.3 },
+  { t: 3.8, a: 52, c: 12, h: 17, look: 8, up: 0, boat: 0.7 },
 ];
 
 /**
  * The round: from `from` s (flight time), when the camera is `ahead` m ahead of what the follow camera looks at
  * and `out` m out from her way (toward the follow camera's side) at `high` m over the water, the bearing turning
- * `rate` rad/s; out at `out` while she comes past, at `side` m over the water once it is beside her.
+ * `rate` rad/s; out at `out` while she comes on, at `side` m over the water once it is beside her.
  */
-const ROUND = { from: 11.5, ahead: 30, out: 6.5, high: 11, side: 4.5, rate: 0.1 };
+const ROUND = { from: 5, ahead: 30, out: 8, high: 9, side: 4.5, rate: 0.1 };
 /** By this bearing (from ahead of her) the round has come down to `ROUND.side`. */
 const DOWN_BY = Math.PI / 3;
 
-/** Over land, or by a bank where the trees lean out over the water, the camera keeps this far over the ground (m): over the tallest crowns and palms. */
+/**
+ * Over land, or by a bank where the trees lean out over the water, the camera keeps this far over the ground (m):
+ * over the tallest crowns and palms (where nothing says where they stand). Where it is known, it keeps `CLEAR` m
+ * over what stands within `AROUND` m of it, and `OPEN` m over open ground (the bushes and the bananas are not known).
+ */
 const CANOPY = 26;
+const CLEAR = 5;
+const AROUND = 6;
+const OPEN = 9;
 /** Over the open water it may come down to this (m over the water): under the follow camera's place. */
 const LOW = 1.5;
 /** Inside the water's edge (m): the bank's trees reach out to the first, the water is open past the second. */
@@ -142,7 +155,8 @@ function roundAt(tau: number, rest: RestPlace, out: { a: number; c: number; h: n
   const u2 = u * u;
   const u3 = u2 * u;
   const bearing = (2 * u3 - 3 * u2 + 1) * BEARING_FROM + (u3 - 2 * u2 + u) * ROUND.rate * d + (3 * u2 - 2 * u3) * end;
-  const behind = smoothstep(Math.PI / 2, end, bearing);
+  // drawn to the follow camera's place: once past her, for a place behind her; on the way to it, for one ahead
+  const behind = end > Math.PI / 2 ? smoothstep(Math.PI / 2, end, bearing) : smoothstep(BEARING_FROM, end, bearing);
   out.c = lerp(ROUND.out, restOut, behind);
   out.a = rest.focus + out.c / Math.tan(bearing);
   out.h = lerp(lerp(ROUND.high, ROUND.side, smoothstep(BEARING_FROM, DOWN_BY, bearing)), rest.h, behind);
@@ -151,12 +165,13 @@ function roundAt(tau: number, rest: RestPlace, out: { a: number; c: number; h: n
 const roundPlace = { a: 0, c: 0, h: 0 };
 
 /** The path's own pose at flight time `tau`, before its floor: place (`pos`, its y the height over the water) and the look's keys. */
-function pathAt(tau: number, along: number, side: number, rest: RestPlace, pos: Vector3): { look: number; boat: number } {
+function pathAt(tau: number, along: number, side: number, rest: RestPlace, pos: Vector3): { look: number; up: number; boat: number } {
   const restSide = rest.c >= 0 ? 1 : -1;
   let a: number;
   let out: number;
   let h: number;
   let look = 0;
+  let up = 0;
   let boat = 1;
   if (tau >= ROUND.from) {
     roundAt(tau, rest, roundPlace);
@@ -170,24 +185,50 @@ function pathAt(tau: number, along: number, side: number, rest: RestPlace, pos: 
     const pace = (-ROUND.out * ROUND.rate) / Math.sin(BEARING_FROM) ** 2;
     let i = 0;
     while (i < last - 1 && time(i + 1) <= tau) i++;
-    const key = (j: number, k: 'a' | 'h' | 'look' | 'boat', at: number) => (j === last ? at : KEYS[j][k]);
+    const key = (j: number, k: 'a' | 'h' | 'look' | 'up' | 'boat', at: number) => (j === last ? at : KEYS[j][k]);
     a = curve((j) => key(j, 'a', rest.focus + ROUND.ahead), last, i, tau, pace, time);
     h = curve((j) => key(j, 'h', ROUND.high), last, i, tau, 0, time);
     look = curve((j) => key(j, 'look', 0), last, i, tau, 0, time);
+    // (the cubic dips a little under its last key on the way to the round's: never below the water)
+    up = Math.max(0, curve((j) => key(j, 'up', 0), last, i, tau, 0, time));
     boat = curve((j) => key(j, 'boat', 1), last, i, tau, 0, time);
     out = curve((j) => (j === last ? ROUND.out * restSide : KEYS[j].c * side), last, i, tau, 0, time);
   }
   const p = wayAt(along + a);
   pos.set(p.x + Math.cos(p.heading) * out, h, p.z - Math.sin(p.heading) * out);
-  return { look, boat };
+  return { look, up, boat };
 }
 
-/** The least height (m) over (x, z): well over the trees on land and by a bank, coming down over the open water. */
-function clearance(x: number, z: number, water: number): number {
+/**
+ * Where the flight looks `t` s in, while it is still between its first two keys (its view there does not depend on
+ * where the follow camera rests), for a boat setting out `along` m on her way at her usual pace, the flight over
+ * `side`: its bearing (rad, x = sin, z = cos) and pitch (rad). For framing what rises in its first seconds.
+ */
+export function highView(t: number, along: number, side: number): { bearing: number; pitch: number } {
+  const at = Math.min(t, KEYS[1].t);
+  const pos = new Vector3();
+  const keys = pathAt(flightTime(at), along + CRUISE * at, side, { a: 0, c: 0, h: 0, focus: 0 }, pos);
+  const q = wayAt(along + CRUISE * at + keys.look);
+  const boat = wayAt(along + CRUISE * at);
+  const k = clamp(keys.boat, 0, 1);
+  const dx = lerp(q.x, boat.x, k) - pos.x;
+  const dz = lerp(q.z, boat.z, k) - pos.z;
+  return { bearing: Math.atan2(dx, dz), pitch: Math.atan2(lerp(keys.up, 0, k) - pos.y, Math.hypot(dx, dz)) };
+}
+
+/**
+ * The least height (m) over (x, z): well over the trees on land and by a bank, coming down over the open water; with
+ * `lines`, over what stands there and round it, low wherever nothing does.
+ */
+function clearance(x: number, z: number, water: number, lines: Sightlines | null): number {
   const ground = Math.max(terrainHeight(x, z), water);
   const w = waterwayAt(x, z);
   const inside = w ? w.half - w.d : -Infinity;
-  return lerp(ground + CANOPY, water + LOW, smoothstep(REACH[0], REACH[1], inside));
+  if (!lines) return lerp(ground + CANOPY, water + LOW, smoothstep(REACH[0], REACH[1], inside));
+  let top = lines.top(x, z);
+  for (let a = 0; a < 6; a++) top = Math.max(top, lines.top(x + Math.sin(a * 1.047) * AROUND, z + Math.cos(a * 1.047) * AROUND));
+  const open = lerp(ground + OPEN, water + LOW, smoothstep(REACH[0], REACH[1], inside));
+  return Math.max(open, top > ground + 0.5 ? top + CLEAR : -Infinity);
 }
 
 /**
@@ -195,14 +236,14 @@ function clearance(x: number, z: number, water: number): number {
  * coming down over `side` and ending at `rest`, the water at `water`: at each moment the least height the camera
  * keeps, risen to a little ahead of what it clears and eased, so it lifts and settles smoothly.
  */
-export function openingFloor(along: number, side: number, rest: RestPlace, water: number): Float32Array {
+export function openingFloor(along: number, side: number, rest: RestPlace, water: number, lines: Sightlines | null = null): Float32Array {
   const n = Math.ceil(OPENING_SECONDS * RATE) + 1;
   const raw = new Float32Array(n);
   const pos = new Vector3();
   for (let i = 0; i < n; i++) {
     const t = i / RATE;
     pathAt(flightTime(t), along + CRUISE * t, side, rest, pos);
-    raw[i] = clearance(pos.x, pos.z, water);
+    raw[i] = clearance(pos.x, pos.z, water, lines);
   }
   // risen to ahead of what it clears, and held until past it (at least as far as it is eased, so the easing never
   // takes it under what it clears)
@@ -250,5 +291,5 @@ export function openingPose(t: number, along: number, side: number, rest: RestPl
   pos.y = Math.max(own, least) + (near * near) / (4 * BLEND);
   const q = wayAt(along + keys.look);
   look.set(q.x, water, q.z).lerp(target, clamp(keys.boat, 0, 1));
-  look.y = lerp(water, target.y, clamp(keys.boat, 0, 1));
+  look.y = lerp(water + keys.up, target.y, clamp(keys.boat, 0, 1));
 }

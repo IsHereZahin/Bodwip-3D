@@ -410,7 +410,7 @@
           <output id="clock" for="tl" aria-live="off">বিকেল ৫:৩০</output>
           <span id="bdate"></span>
         </div>
-        <button id="live" class="live" type="button" title="বাংলাদেশের এই মুহূর্তের সময়ে ফিরুন" aria-pressed="true"><i aria-hidden="true"></i><span>এখন</span></button>
+        <button id="live" class="live" type="button" title="লাইভ: বাংলাদেশের এই মুহূর্তের তারিখ আর সময়ে দেখুন (0)" aria-label="লাইভ" aria-pressed="false"><i aria-hidden="true"></i><span>লাইভ</span></button>
       </div>
 
       <div class="dock-day">
@@ -476,9 +476,9 @@
     <div id="season-pop" class="pop" popover role="menu" aria-label="ঋতু">
       <p class="pop-title">ছয় ঋতু</p>
       <div class="pop-seasons"></div>
-      <button type="button" class="pop-item journey" role="menuitemradio" data-season="journey">
+      <button type="button" class="pop-item journey" role="menuitemradio" data-season="own">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 15c3 2 15 2 18 0M5 12c1.5-4 12.5-4 14 0" /><path d="M12 4v4" /></svg>
-        <span>যাত্রার সাথে ঋতু বদলাক</span>
+        <span id="season-own">যাত্রার সাথে ঋতু বদলাক</span>
       </button>
     </div>
     <div id="moon-pop" class="pop" popover role="menu" aria-label="চাঁদের কলা">
@@ -536,8 +536,8 @@
           <dl>
             <dt>টেনে · <kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></dt><dd>নৌকার চারপাশে ঘোরা</dd>
             <dt>স্ক্রল · পিঞ্চ · <kbd>+</kbd> <kbd>−</kbd></dt><dd>কাছে-দূরে</dd>
-            <dt><kbd>V</kbd></dt><dd>ক্যামেরার কোণ: পেছন, মাঝির পাশ, সামনে, উঁচু</dd>
-            <dt><kbd>R</kbd></dt><dd>শুরুর কোণে ফেরা</dd>
+            <dt><kbd>V</kbd></dt><dd>ক্যামেরার কোণ: সেরা দৃশ্য, পেছন, মাঝির পাশ, সামনে, উঁচু</dd>
+            <dt><kbd>R</kbd></dt><dd>সেরা দৃশ্যে ফেরা (ক্যামেরা নিজে দৃশ্য সাজায়)</dd>
           </dl>
         </section>
         <section>
@@ -555,10 +555,10 @@
           <dl>
             <dt><kbd>Space</kbd></dt><dd>সময় চালু বা থামানো</dd>
             <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>সময়ের গতি কমানো, বাড়ানো (১× মানে আসল সময়)</dd>
-            <dt><kbd>0</kbd></dt><dd>বাংলাদেশের এই মুহূর্তের সময়ে ফেরা</dd>
+            <dt><kbd>0</kbd> · লাইভ</dt><dd>লাইভ চালু: বাংলাদেশের এই মুহূর্তের তারিখ, সময়, ঋতু আর চাঁদ; আবার চাপলে সিনেমাটিক ভোরে ফেরা</dd>
             <dt><kbd>T</kbd> চেপে ধরে</dt><dd>সময় খুব দ্রুত</dd>
             <dt><kbd>N</kbd></dt><dd>পরের সূর্যোদয়, সূর্যাস্ত, চন্দ্রোদয় বা চন্দ্রাস্ত</dd>
-            <dt><kbd>Y</kbd></dt><dd>পরের ঋতু (এক মিনিট পর যাত্রার ঋতুতে ফেরে)</dd>
+            <dt><kbd>Y</kbd></dt><dd>পরের ঋতু (এক মিনিট পর আগের ঋতুতে ফেরে)</dd>
             <dt>বারের চিহ্ন</dt><dd>সেই মুহূর্তে গিয়ে সেদিকে তাকানো</dd>
           </dl>
         </section>
@@ -577,7 +577,7 @@
           </dl>
         </section>
       </div>
-      <p class="help-note">কিছুক্ষণ কিছু না ছুঁলে ক্যামেরা নিজে থেকেই মাঝে মাঝে নৌকা থেকে সরে গিয়ে পথের পাশের ঘাট, বাড়ি, মাঠ আর সেতু দেখায়, সূর্য বা চাঁদের ওঠা-নামার দিকেও ঘুরে যায়। সময় চলে বাংলাদেশের এই মুহূর্তের ঘড়ি ধরে, আর যাত্রার সাথে সাথে ছয় ঋতু ঘুরে আসে।</p>
+      <p class="help-note">কিছুক্ষণ কিছু না ছুঁলে ক্যামেরা নিজে থেকেই মাঝে মাঝে নৌকা থেকে সরে গিয়ে পথের পাশের ঘাট, বাড়ি, মাঠ আর সেতু দেখায়, সূর্য বা চাঁদের ওঠা-নামার দিকেও ঘুরে যায়। শুরুতে গ্রাম দেখা দেয় সারা বছরের মধ্যে বেছে নেওয়া সবচেয়ে সুন্দর ভোরে: সূর্য ওঠে, তারপর ঘড়ি নিজের গতিতে চলে, আর যাত্রার সাথে সাথে ছয় ঋতু ঘুরে আসে। লাইভ চালু করলে বাংলাদেশের এই মুহূর্তের তারিখ, সময়, ঋতু আর চাঁদ।</p>
       <section class="help-sources" aria-labelledby="sources-title">
         <h3 id="sources-title">তথ্যসূত্র</h3>
         <p>গ্রামটি কল্পনায় গড়া: বাংলার নানা গ্রামের নদী, খাল, বিল, বাড়ি আর পথ থেকে নিয়ে এক জায়গায় সাজানো, কোনো একটা আসল জায়গার মানচিত্র নয়। মাটি, গাছ, ঘর আর শব্দ কোডে তৈরি।</p>

@@ -17,7 +17,7 @@ There are no audio files and no map data.
   - `verification.md`: how to check work (headless stills, the `?debug` API, the film's shots, pitfalls).
   - `known-issues.md`: open bugs, accepted limits, what was never verified, the backlog.
 - **The user judges the work by the film and by the seasons.** Check every visual change across the six seasons, and every film change from the film's real camera path, both in stills and live.
-- **The experience opens** at Bangladesh's own date and hour now (the clock kept to the wall's, `Clock.live`) with a drone's flight down to the boat; the season turns with her journey round the year from today's (`rig/yearJourney.ts`); left alone, the camera shows the village along her way (`rig/showcase.ts`).
+- **The experience opens** in the cinematic mode: the most beautiful morning of the year, chosen by weighing every day (`rig/cinematic.ts`), the sun rising in the drone flight's first seconds, then the clock running on at 1×; the season turns with her journey round the year from that day (`rig/yearJourney.ts`). **Live** (the dock's button, `0`) is Bangladesh's own date, hour, season and moon now (`Clock.live`); off again, the cinematic morning returns; left alone, the camera composes its own views of her surroundings and of the village's sights as she passes them (`rig/compose.ts`, `rig/showcase.ts`, `rig/sightlines.ts`; the user's direction of 2026-10-07).
 - **Language:** reply to the user in Bangla (বাংলা) unless they switch. UI copy and captions are in Bangla. `README.md` is the user-facing run guide, in Bangla.
 
 ## Working rules
@@ -71,8 +71,12 @@ There are no audio files and no map data.
 
 ## Invariants and gotchas (each one cost a bug)
 
-- The clock's speeds are multiples of the wall's (`SPEEDS`, 1 = real time); the film's scenes run at `LAPSE`, the old 1× they were shot at. Anything that sets the hour (a scene, a still, a jump, a seek) turns `clock.live` off, or the next frame puts the hour back to Bangladesh's.
-- The season is the journey's (`yearOnJourney`, `followYear` in main.ts) unless a season is picked, the film plays or a still holds it. A still with no `day` takes the journey's day where it puts the boat. A jump of the boat's place eases the year over (`yearTurn` toward the journey's day).
+- `Rig.settle()` (for stills) holds the camera idle at −1e9 so nothing moves it. Anything else that calls it must set `idle` itself: `beginOpening` did not, and after the opening the composer never took the camera until the viewer touched something.
+- The camera's springs (compose.ts `Spring`) hold their acceleration as well as their speed: a critically damped spring set a long way off starts with a jolt (≈10 m/s² as the camera set off for a sight). A blend that hands one moving camera to another eases by a smootherstep, not a smoothstep (the opening's hand-over jolted at 35 m/s²).
+
+- The clock's speeds are multiples of the wall's (`SPEEDS`, 1 = real time); the film's scenes run at `LAPSE`, the old 1× they were shot at. Anything the viewer or a still does to the hour (a jump, a seek, the pace, a pause) goes through `takeClock` (main.ts): it turns `clock.live` off and ends the cinematic sunrise, or the next frame puts the hour back to Bangladesh's or the sunrise's. A film scene turns `clock.live` off itself, and the film's `save` finishes a sunrise first.
+- The season is the mode's own (main.ts `onJourney`, `followYear`): the journey's in the cinematic mode, the clock's day (today's) in Live, unless a season is picked (`seasonHeld`), the film plays or a still holds it. A still with no `day` takes the journey's day where it puts the boat. A jump of the boat's place eases the year over (`yearTurn` toward the journey's day).
+- A change of mode sets its whole world at once under a moment of dark (`DIP`, `setMode`): eased across in the open, the hour would sweep the sun backwards or through a whole night.
 - The opening flight and the sights pose the camera over the follow camera's pose, blending with it (`orbit()` first), never in its place: so the hand back has no seam. Input ends the flight through the rig's own blend.
 - The opening flight (rig/opening.ts) keeps these, each of which made it stick, shake or whip:
   - Its least height is a floor laid out for the whole flight as it sets off and eased in time (`openingFloor`), met by a soft max. A clamp that switched on a threshold (`terrain + (h > 20 ? 22 : 1.6)`) made the drone catch on the bank's trees and jump clear.

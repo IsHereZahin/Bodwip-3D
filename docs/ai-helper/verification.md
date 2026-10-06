@@ -41,6 +41,7 @@ node scripts/headless/shoot.mjs <outDir> --base http://localhost:5173/ --shots '
 | `moon` | The moon's age in days (14.8 is full) |
 | `yaw`, `pitch`, `dist` | The follow camera's orbit |
 | `face` | `'sun'` or `'moon'`: the follow camera frames it low; the free camera looks straight at it |
+| `compose` | The view the camera would compose there by itself (rig/compose.ts), weighed at once and stood at: a still of the camera left alone |
 | `free` | A free camera at `[x, y, z, yaw, pitch]` |
 | `film` | `[i, u]`: shot `i` of the film at `u` 0..1 |
 | `visit` | `[id, i, u]`: a map place's shot `i` at `u` (rig/visits.ts ids: `salt`, `hill`, `kash`, `zamindar`, `ghat`, `bridge`, `mosque`, `graves`, `sanko`, `palms`, `rail`, `bil`); the boat put where its visit puts her |
@@ -64,7 +65,8 @@ node scripts/headless/shoot.mjs <outDir> --base http://localhost:5173/ --shots '
 | `hullWater(seconds = 20)` | Runs the world and measures the hero hull against the water drawn round her: the surface less her waterline down both sides (`gap` min, max, rms; > 0 the water up her side), and the most she heaved, pitched and rolled. In a kalboishakhi (`weather: 'storm'`, `wind` 2.6–3.4) the gap stays within ±0.16 m (her heel), the heave a few cm |
 | `stroke(phase)` | Holds the majhi's stroke at `phase` 0..1 (check at ten phases, side and front) |
 | `people()` | Where the boatman's and the girl's heads are; the salt workers; the boat's heading; `girlYaw`, `umbrella`, `rainy` |
-| `envState()` | The shown day and moon, crop shares, water level, flow, rain, cloud, wind, weather, the session's countdown, the sun's elevation and its angle from the view |
+| `envState()` | The mode (`cinematic`/`live`), whether the clock is kept to the wall's, the hour, whether the sunrise is running (`rising`), the shown day and moon, crop shares, water level, flow, rain, cloud, wind, weather, the session's countdown, the sun's elevation and its angle from the view |
+| `cinematic()` | The cinematic morning as chosen (`day`, `dawn`, `lit`, `moon`) and the best days as weighed, term by term (rig/cinematic.ts) |
 | `info()` | `calls`, `triangles`, `scale`, `ms`, `programs`, `camera`, … |
 | `stats(group?)` | Meshes, instances and triangles per top-level group, or within one group |
 | `hide(name)`/`show(name)` | Toggles every object with that name. Groups include `terrain`, `vegetation`, `villages`, `landmarks`, `banyan`, `bridge`, `roads`, `meadow`, `crops`, `drift`, `ponds`, `bil`, `stones`, `saltworks`, `railway`, `train`, `girl`, `hero-boat`, `fisher`, `harvest`, `khejur`, `life`, `birds`, `songbirds`, `fish`, `leaves`, `rain`, `lightning`, `hill-mist`, `backdrop`, `sky` |
@@ -118,24 +120,28 @@ node scripts/headless/shoot.mjs <outDir> --base http://localhost:5173/ --shots '
   - the sluice from the river: `[-540, 2.8, 141, -0.45, -0.06]` (day 230 and 300 pouring, day 20 shut).
 - **The cast net:** record shots 26–28. The net must show in flight, the water ring as it strikes, the haul's pulls move his whole body and the boat, and the bag come up over the gunwale.
 - **The sanko (shot 22):** stills keep the boat where the scene starts; record it (`shot({ film: [22, 0] })`, `resume()`, a frame every 1.5 s) to see her come up through its middle span, the boatman pass under the walkway and come out before the cut.
-- **The opening and the loader:** load the page without `?debug` hooks firing a still (`scripts`: record from load, a frame every 1–2.5 s): the loader's sun rises, the still gives way to the flight, the mark lifts after ≈9 s, the flight settles behind the boat at 22 s with no jump. Check a phone size (390 × 844) too.
+- **The opening and the loader:** load the page without `?debug` hooks firing a still (`scripts`: record from load, a frame every 1–2.5 s, with `envState()` each frame): the loader's sun rises, the still gives way to the flight, the sun comes up over the river's horizon on one side of the frame between ≈0.6 and ≈8.6 s (`rising`, the sun's elevation from −6° to the lit stage, 7–9°), the land dim at first and lighting as the drone comes down, the mark lifts after ≈3 s and is gone by ≈6 s, the flight settles ahead of the boat at 9 s with no jump, the composer takes the camera from there (`composition().composing` true within a few seconds, with no input), and no sky-event notice shows. Check a phone size (390 × 844) too.
+- **The modes:** after the opening, `document.getElementById('live').click()` in a probe: the screen dips dark and comes up in Bangladesh's own date and hour (`envState()`: `mode` live, `live` true, the day today's); set the timeline (`#tl` value and an `input` event): the button goes hollow (`behind`); a click goes back to now; another click goes back to the cinematic mode, its sunrise again (`rising`). Read the button's class, `aria-pressed` and title, and `#season-own`'s words, at each step.
 - **The opening flight's path:** after any change to rig/opening.ts, run `__river.flight(0.1, 15, 0.5)`:
-  - nothing within 15 m but the hero boat, the drift and the fish under the water (as last measured: no tree within ≈25 m; the boat ≈6 m as she comes past);
-  - the acceleration with no spike (≤ ≈9 m/s²), the speed rising and falling smoothly (≤ ≈21 m/s), the turn ≤ ≈26°/s, the pitch ≥ ≈−30° once low;
-  - ending at the follow camera's height (3.24 m).
+  - nothing within 15 m but the hero boat, the drift, the fish under the water and the songbirds flying round her (as last measured: nothing standing within 10 m);
+  - the speed rising and falling smoothly (≤ ≈25 m/s: it sets off at ≈19 m/s² over its first second, then no spike over ≈18 m/s² as it comes into its turn), the turn ≤ ≈16°/s, the pitch ≥ ≈−20°;
+  - ending at the follow camera's height (≈3.5 m over the water).
 
-  Then take stills along it in daylight: `shot({ hour: 9.5, weather: 'clear' })`, then `flight(999, 1, 999, t)` for t from 1 to 22 s, each held for a screenshot.
-- **The camera left to itself:** `__river.sights()` lists the sights (where, kind, side). Put the boat ≈35 m before one (`shot({ journey })`), `resume()`, `__river.letGo()` (as if the viewer had stopped steering), and record: the camera eases over in ≈6 s, holds with the boat in frame, eases back.
-- **The clock in stills:** `shot()` turns `live` off and holds the day; without `day` it takes the journey's day where it puts the boat.
+  Then take stills along it in daylight: `shot({ hour: 9.5, weather: 'clear' })`, then `flight(999, 1, 999, t)` for t from 0.5 to 9 s, each held for a screenshot. The sunrise does not run in `flight()`: judge it from a recording from load.
+- **The camera left to itself** (rig/compose.ts):
+  - `__river.sights()` lists the sights: name, where each is seen best (`s`, `share` of the way), how well (`best`), its stretch `seen`, and `stretch` if it is shown by itself now (chosen again every 2 s by the season and the hour: take it after a still of the right day and hour).
+  - Stills: `shot({ journey, hour, compose: true })` at sights' `share` and between them; `composition()` gives the shot (`aim`: bearing, dist, high, third), what it is of (`subject`, '' for her surroundings) and its terms (`seen`, `view`, `boat`, `cut`, `light`, `glare`, `content`, `clutter`, `away`…). Look for: the sight framed and seen, her and her majhi in the frame, nothing close in front of the lens, the sun never in the frame's middle. Check a phone size too (390 × 844).
+  - Motion: `shot({ journey })` ≈25 m before a sight's stretch, `resume()`, `letGo()`, and record `composition()` every frame (`pos`, `dir`, `subject`) with a screenshot every few seconds. Over windows of ≈10 frames: the acceleration ≤ ≈2.5 m/s², the turn ≤ ≈15°/s, the speed ≤ ≈6 m/s (as last measured, past the zamindar house to the kash). Frame by frame the numbers are noise: `info().time` is rounded to 0.01 s.
+  - Its cost: ≈1 ms a frame while composing (`BUDGET_MS`), ≈0.12 s at load for the sights.
+- **The clock in stills:** `shot()` turns `live` off, ends a running sunrise and holds the day; without `day` it takes the journey's day where it puts the boat.
 - **The loader's backdrop:** a still of the bil at sunset from this world: `shot({ journey: 0.95, day: 300, hour: 17.15, yaw: 1.7, pitch: 0.04, dist: 34 })` at 1920 × 1080 (`W`/`H`), saved as WebP 1600 × 900 (quality ≈72) to `public/brand/loader.webp`; its tiny inline copy (32 × 18 JPEG, base64) sits in `#load`'s `--ld-blur`.
 - **Rain:** the drops and the splashes show only in motion: judge them from a recording. Close up (`shot` with `free` at 1 m over the water), check the rings, the crowns, the puddles and the wet ground. Compare dry and wet with `rain: 0` and `wet` 0 or 1.
 
 ## The map and its visits
 
 - **The map:** open it (`L`, a `KeyboardEvent` in a probe) after a still, wait a few seconds for its ground to paint, and screenshot; hover a card (`pointerenter`) for its card on the map; check a phone's width too.
-- **Each place's shots:** `shot({ visit: [id, i, u] })` at u 0.15 and 0.85 of each shot; nothing close in front of the lens, the place framed, the caption on the first.
+- **Each place's shots:** `shot({ visit: [id, i, u] })` at u 0.15, 0.5 and 0.85 of each shot (salt, kash, zamindar, ghat, graves, sanko, palms, bil: 5 shots; mosque 4; bridge 3; hill and rail 2); nothing close in front of the lens, the place framed with the land round it, the caption on the first. A contact sheet of all of them shows the repeats and the walls of trees at a glance. A place's wide views are found the first time one is posed (a few tens of ms).
 - **A visit live:** after a still, `resume()`, open the map and click a card; screenshot every 2 s and read `boatState()`: the camera comes back (`info().mode` from `film` to `follow`) with the boat still short of the place's `sync` (the zamindar's ghat at x ≈ −452.6), then she passes it.
-- **The camera left alone:** `shot({ journey })` 30–45 m short of a sight (`sights()`), `resume()`, `letGo()`, a frame every 2.5 s: the camera turns toward the sight with her in the foreground and comes back, never leaving her.
 
 ## Scans of the land
 
@@ -154,6 +160,7 @@ Probes run in the page (`import('/src/…')`, the functions are right though `G`
 - **Git Bash heredocs turn `\\` into `\`.** Write scripts that contain backslashes to a scratch file first.
 - **Python output:** Python here prints with cp1252. Set `PYTHONIOENCODING=utf-8` to print Bangla.
 - **Finding the cost:** use `stats()` and `hide()`/`show()` A/B with `info().ms`. Vegetation's cost is draw calls and alpha-tested overdraw as much as triangles.
+- **Another session editing the tree:** Vite reloads an open page on every save, mid-recording. Block its HMR socket in the page (`Page.addScriptToEvaluateOnNewDocument` with a `WebSocket` stub for the `vite-hmr` protocol), or test a copy of HEAD with only your changes (`git archive HEAD`, junctions to `node_modules` and `public`, a second dev server on another port).
 - **Drive input with CDP:** use `Input.dispatchMouseEvent`/`dispatchKeyEvent` for clicks, drags and keys. A synthetic `PointerEvent` throws in the rig's `setPointerCapture`.
 - **Touch:** emulate a phone with `Emulation.setDeviceMetricsOverride` (`mobile: true`) and `Emulation.setTouchEmulationEnabled`, then send `Input.dispatchTouchEvent` (two points for a pinch).
 - **Sound:** to read the audio context's state, wrap `AudioContext` in a script added before load (`Page.enable`, then `Page.addScriptToEvaluateOnNewDocument`).

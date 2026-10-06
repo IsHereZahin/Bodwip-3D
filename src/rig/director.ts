@@ -160,6 +160,8 @@ export interface Scene {
    * the whole scene.
    */
   shot?: boolean;
+  /** How long (s) it dissolves in over the shot before it, if not the usual (`DISSOLVE`, or `SHOT_DISSOLVE` for a further shot). */
+  dissolve?: number;
   /** Its world; a visit's shots have none (they are seen in the viewer's own). */
   world?: SceneWorld;
   /** Where the boat is on her journey as the scene opens, for scenes in her waters; else she goes on. */
@@ -518,7 +520,7 @@ export class Director {
     this.time = 0;
     if (!scene.shot) this.sceneTime = 0;
     this.boatWas.copy(this.stage.boatPos);
-    this.dissolveFor = scene.shot ? SHOT_DISSOLVE : DISSOLVE;
+    this.dissolveFor = scene.dissolve ?? (scene.shot ? SHOT_DISSOLVE : DISSOLVE);
     // a further shot of the same scene: its world goes on as it is
     if (!scene.shot) {
       if (scene.world) this.stage.set(scene.world);

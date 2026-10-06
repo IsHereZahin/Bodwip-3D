@@ -644,6 +644,18 @@ const CROWNS: Crown[] = [];
 export function treeCrowns(): readonly Crown[] {
   return CROWNS;
 }
+/** The palms' and the bamboo clumps' stands (set when the vegetation is built): what stands in a view, for the camera (rig/sightlines.ts). */
+export interface Stem {
+  x: number;
+  z: number;
+  /** Its top (world, m) and how far its fronds or culms reach round it (m). */
+  top: number;
+  r: number;
+}
+const STEMS: Stem[] = [];
+export function palmStems(): readonly Stem[] {
+  return STEMS;
+}
 export function kashStand(): { x: number; z: number } | null {
   return thickestKash;
 }
@@ -875,6 +887,17 @@ export function buildVegetation(
     [B.garjan, { y: 15.5, r: 3.2, kind: 'garjan' }],
     [B.far, { y: 6.5, r: 5.5, kind: 'far' }],
   ]);
+  // how tall the palms and the bamboo stand (m) and how far their fronds reach (m), at their middling size
+  const stemOf = new Map<Bucket, { h: number; r: number }>([
+    [B.coconut, { h: 12, r: 3.2 }],
+    [B.coconutFar, { h: 12, r: 3.2 }],
+    [B.supari, { h: 15, r: 1.8 }],
+    [B.supariFar, { h: 15, r: 1.8 }],
+    [B.date, { h: 7.5, r: 2.6 }],
+    [B.dateFar, { h: 7.5, r: 2.6 }],
+    [B.tal, { h: 13, r: 3 }],
+    [B.bamboo, { h: 12, r: 3.2 }],
+  ]);
   const put = (b: Bucket, p: Placement) => {
     // out where the land fades away the trees thin out and stop (each one its own chance, so no line shows)
     const out = corridorDistance(p.x, p.z);
@@ -883,6 +906,8 @@ export function buildVegetation(
     const c = crownOf.get(b);
     // these take the spring's red flower where the shader gives it (`seasonal: 'tree'`); the hills' garjan does not
     if (c) CROWNS.push({ x: p.x, y: p.y + c.y * p.s, z: p.z, r: c.r * p.s, blossom: b !== B.garjan, kind: c.kind });
+    const st = stemOf.get(b);
+    if (st) STEMS.push({ x: p.x, z: p.z, top: p.y + st.h * p.s, r: st.r * p.s });
   };
   for (const f of featured) {
     // (the rest of the planting keeps its distance)
