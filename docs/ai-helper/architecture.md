@@ -136,6 +136,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - The hills' forest: tall garjan (`garjan`) over rain trees, mango and akashmoni, with cheap crowns over the hills' backs. The horizon's hills get larger, fewer crowns.
   - Each homestead's grove: bamboo and fruit trees two deep at the back, betel-nut and banana along the sides, coconuts and a date palm at the front corners. Groves fill the gaps within a para.
   - Old trees along the banks' tops, rows of rain trees and akashmoni along the brick road, a few lone palms and trees in the fields, the bil's groves and hijol, the far villages' groves, joba by the houses, and golpata (`nipa`) along the salt creek.
+  - `crownDetail(crown)` fills out one tree's crown for the film's tree in flower (`tour.ts` `blossomTree`): limbs branching twice into twigs to the crown's top, with clusters of leaves on their ends, in the tree's own materials (so it sways and flowers with it). `hasCrownDetail` says which kinds it knows (`CROWN_FORM`). Each `Crown` carries its `kind`.
   - Kash (`kashTuft`) grows in drifts over the char and in stretches along the khals (`kashStand()` for the film). There are grass tufts along every bank near the boat's way, and knee-high flowering bushes (`flowerBush`) along the khals' banks.
   - `onDryLand` and a spatial-hash `Occupancy` keep plants off houses, ways, landmarks and water. Trees near the boat's way or the water show in the mirror.
   - `treeCrowns()` feeds the leaves and the songbirds.
@@ -159,13 +160,21 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - In the tapping season (`SEASON`, late autumn to the end of winter) a tree shows the fresh V cut (`khejurCutTexture`), a bamboo spout and a clay pot. The pot is hung from the afternoon to after sunrise (`HUNG`) and fills through the night, with drops near the camera.
   - `hero` is the film's tree; `cue` fills its pot.
 - `world/leaves.ts`: `FallingLeaves(crowns)`.
-  - Red blossoms fall from the trees in flower. `bloomAt`/`bloomRank` are the CPU twin of the shader's choice of which trees flower.
+  - Red petals fall from the trees in flower. `bloomAt`/`bloomRank` are the CPU twin of the shader's choice of which trees flower.
+  - The petal's shape (`petalGeometry`: a cupped, frilled spoon) and its one material (`petalMaterial`, `petalTexture`) serve every petal: falling, lying, afloat and the film's. `PETAL_TINTS`, `PETAL_WITHERED`, `PETAL_LENGTH`.
   - Yellow and brown leaves fall in the dry months. Each falls at its own pace, carried by `windAt`.
   - A storm strips the trees.
+- `world/petals.ts`:
+  - `PetalCarpet(crowns)`: the petals fallen under each tree in flower near the camera (`REACH`, thinning from `FULL`), in drifts, browning as the flowering goes on. Each crown's carpet is laid a little each frame (`LAY_MS`) from when it comes within reach, and ahead of a cut (`warm`). It is let go past `KEEP`.
+    - A carpet's petals are laid in the order of their rank (the share of the flowering by which each has fallen), so those to show are the first so many.
+    - Those that fall on water float, drifting on the current until they sink (`AFLOAT_LIFE`). A crown near a waterway also has petals gathered in the slack water along its bank (`BANKED`). None float inside the hero's hull.
+  - `HeroPetal`: the film's petal. `aim` picks its bough on the crown's lower edge and a place 2.6–4.2 m out on the water downwind (`INTO`, `CARRIED`), and works out its whole fall (`HERO_FALL`, `SWING`). It swings and tips, tumbles twice, levels out near the water, touches it (the water's `uTouch` ripples) and floats off on the current.
 - `world/songbirds.ts` (small birds on treetops and open ground, flying tree to tree), `world/fish.ts` (`Fish`: schools under the surface, scattering from the boat, an occasional leap with its rings), `world/life.ts` (flocks, motes and fireflies; `birdGeometry`, `FLAP`).
 - `world/fisher.ts`: `Fisher(fish, place)`, a man casting his ঝাঁকি জাল. He stands on a bund (`FisherPlace.ground`, `water`) or, by default, in a dinghy tied to a pole below the khal's mouth (`FISHER_SITE`).
-  - He is the boatman's body (`Boatman`) going through a 19 s cycle (`T`).
-  - The net is a ring-and-spoke mesh laid each frame (`castNetTexture`), drawn before the water.
+  - He is the boatman's body (`Boatman`) going through a 25 s cycle (`T`).
+  - The net is a ring-and-spoke mesh laid each frame (`castNetTexture`). It is drawn after the water while up and before it once sunk.
+  - Each cast is its own (`newCast`: side, reach, spread, spin). He hauls hand over hand, his weight going back with each pull (the dinghy pitching with it), then lifts the gathered bag over the gunwale, dripping (`layDrips`).
+  - The water feels it (`bindWater`, the water shader's `netRings`): rings and a splash as the net strikes, the water stirred as it is hauled, and pattering under the dripping bag. The river fisherman has slot 0, the gher's slot 1.
   - `cue(t)` sets the cycle. He is posed only within 420 m.
 - `world/harvest.ts`: `Harvest(field)`: two reapers (`Reaper`) on the film's field's edge, with sheaves and a stook. They appear only while the season's rice stands ripe.
 - `world/hillMist.ts`: `buildHillMist()`: soft camera-facing banks of cloud over the hills' crowns, thickest on winter mornings (`G.uHillCloud`). They fade out at their feet.
@@ -173,7 +182,12 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - Each strike is a channel 650–1700 m off, built by midpoint displacement with branches. A third stay in the cloud.
   - One to four strokes follow a faint stepped leader. They are drawn as camera-facing `DoubleSide` ribbons.
   - `light` lights the cloud (`G.uLightning`) and a little of the land (`weather.flash`). Thunder comes at the speed of sound (soundscape `thunder(metres)`).
-- `world/rain.ts`: rain streaks round the camera, kept off the area under the girl's umbrella (`uShelter`).
+- `world/rain.ts`: the rain.
+  - Its streaks round the camera, kept off the area under the girl's umbrella (`uShelter`). A lighter rain is fewer drops, not fainter ones.
+  - Where they strike:
+    - `buildRainSplashes()`: crowns of water thrown up from the waters, one instance per cell of the drops' layers within `SPLASH_REACH`. Each shows its cell's drop (GLSL_COMMON `rainDrop`), so a crown rises where the water starts its ring.
+    - `GroundSplashes`: splashes on the land, the ghats and the bridge's deck, at spots drawn round the camera (CPU, `GROUND_RATE`).
+  - `render/glsl.ts` `rainDrop`/`rainRipples` (`RAIN_CELL`): the drops in cells of four sizes, each landing at a fresh place and time every fall, more of them the harder it rains. The finest layer is spray only (crowns, no rings). The water's rings, the puddles' rings and the crowns all read it.
 
 ## The boat and the people
 
@@ -222,6 +236,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
     - The fine one (`FineField`) is refilled round the camera once it strays `FINE.drift` m, `FINE.ms` a frame. The wide one stands in meanwhile.
     - The film readies the next shot's fine field ahead (`warm`) and uploads it to a spare texture (the two take turns as `tField`), so the cut only switches to it.
   - Water at another level than the mirror's reflects the hazy sky. Its sea and ship parts are inert.
+  - `nets` (the cast nets' rings, `netRings`) and `touch` (`uTouch`: a light thing come down on the water, the film's petal) ripple it.
 - `world/sky.ts`: clouds, stars and the moon (`MOON_R`; the phase lit by the sun's real angle).
   - The sun's disc reddens as it sinks.
   - After sunset the clouds toward it are lit crimson from below. environment.ts's `dusk` deepens the low sky.
@@ -243,6 +258,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
 - `render/surfaces.ts`: the photo ground layers (`GROUND_LAYERS`) and the bark.
 - `render/pipeline.ts`: the post chain.
   - MSAA scene, bloom, light shafts, and a composite: ACES, a gentle S-curve and a lifted toe (moody, never murky), vignette, grain, and NaN-safe `sanitize`.
+  - Depth of field for a shot that asks for it (`FrameParams.dof`, from a scene's `focus`): the scene's depth is resolved only then (`resolveDepthBuffer`), and each pixel gathers `DOF_TAPS` neighbours over a thin lens's blur. Bloom follows it.
   - The letterbox with captions.
   - The held frame for dissolves (`toHeld`).
 - `render/reflection.ts`: the planar mirror at half resolution.
@@ -262,7 +278,12 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - `water`: the rivers' rise, full in the rains and Sharat and lowest in spring.
   - `salt`: the salt season. Also crops, colours, rain, wind and blossom.
 - `env/weather.ts`: the season's own weather (`WeatherChoice`: `'auto' | 'clear' | 'drizzle' | 'rain' | 'storm'`; no picker in the UI), wetness and strikes.
-- `env/wind.ts`: one wind (`WIND_MS`; `windAt`/`gustAt` on the CPU, `windGust` in GLSL).
+  - `wet` (0..1) builds toward a level that goes with how hard it rains, faster the harder. It dries slowly.
+  - `render/patch.ts` reads `uWet`: surfaces are soaked through by ½, and puddles stand beyond that.
+  - `hold` is the film's own rain and wet (SceneWorld `rain`/`wet`); the cloud and the wind follow it.
+  - In `render/patch.ts`, rain wets the faces turned up to it most (darker, glossier, a little sky mirrored). The terrain wets by its `aPool` (`world/terrain.ts`: trodden or swept ground and hollows, never slopes) and stands water there. The ways have `puddles`. Standing water is ringed by the drops, and the leaves are knocked by them (`ATM_FLUTTER`).
+  - `audio/soundscape.ts`: the rain's hiss grows faster than the rain, and a downpour's roar (`downpour`) comes in under it.
+- `env/wind.ts`: one wind (`WIND_MS`; `windAt`/`gustAt` on the CPU, `windGust` in GLSL). A film scene may hold its strength (`override`) and the way it blows (`towardOverride`, SceneWorld `windToward`).
 - `env/environment.ts`: light and colour by the sun's elevation (`LOOKS`). It also sets the moonlight and the new-moon glow (`moonE`, `glowE`), `dusk`, and `aimShadow()`.
 
 ## Camera, film and UI
@@ -277,14 +298,20 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - A scene's boat place is its `journey` (set when the scenes are built), so the warm-ahead knows it.
   - A `Scene` with `shot` is a further shot of the one before, cut with `SHOT_DISSOLVE` (0.7 s).
   - A scene's `sweep` drives its own clock (`sweepAt`: a monotone cubic through `[u, hours]` keys); `pace` slows the sky's clock.
+  - A scene's `rain` and `wet` keys (the same kind of curve) drive the weather through it (`Stage.weather`, the weather's `hold`). Each rain scene takes the wet up where the last left it, so the land wets across the movement. Without them, `stage.set` settles the weather at once, and a rain scene opens soaked.
+  - A scene's `focus` (with `aperture`, default `APERTURE`) gives its shot a depth of field (`Director.dof`, `Leaving.dof`).
+  - `begin(stage, at)`: `at` is how far into the scene a still starts (`cue`), so the cues on their own clocks start as far on.
   - `Director.skip(±1)` steps to the previous or next scene.
     - "Previous" restarts the scene once it has run `RESTART` s (3).
     - A skip asked for during a dissolve waits until it ends (`queued`).
     - A skipped scene's caption fades out before the next one's comes up.
     - Stopping the film always takes a full `DISSOLVE`.
-- `rig/tour.ts`: `tourScenes(ghats)`, the film: 22 scenes (28 shots) in five movements.
-  - The movements: a winter morning; spring's blossom and the nor'wester; the rains (with `লাল ছাতা`, seven shots on the bridge); autumn and the harvest; the evening and the night.
-  - Places are found from the village as built: `cropField(crop, day)` (cached, and shared with the reapers), `overField`, `blossomTree()`, `stormHome()`, `talRoad()`/`alongRoad`, `ghats[0]`, `FISHER_SITE`, `gherStand()`, `rakerStations()`, `kashStand()`, `onWay`, `rel`, `facing`, `overOpenWater`.
+- `rig/tour.ts`: `tourScenes(ghats)`, the film: 24 scenes (32 shots) in five movements.
+  - The movements: a winter morning; spring's blossom and the nor'wester; the rains; autumn and the harvest; the evening and the night.
+  - The rains, as the monsoon comes: আষাঢ়ের মেঘ (the cloud gathering, the first drops) → বর্ষার খাল (the rain coming on, the mathal put on) → আষাঢ়ের ধারা (the downpour on the village's ghat, the land soaking, thunder) → লাল ছাতা (seven shots on the bridge, steady rain) → the gher and the aman (easing) → শাপলা বিল (after it, still wet).
+  - Places are found from the village as built: `cropField(crop, day)` (cached, and shared with the reapers), `overField`, `blossomTree()` (exported and picked once: main.ts gives it its fuller crown and its petal), `stormHome()`, `talRoad()`/`alongRoad`, `ghats[0]`, `FISHER_SITE`, `gherStand()`, `rakerStations()`, `kashStand()`, `onWay`, `rel`, `facing`, `overOpenWater`.
+  - বসন্তের রং (`PETAL_SHOT`, `PETAL_LETS_GO`): `petalOpening` (low on the water near the far bank, the sun well to the side) and `petalPose` (in toward the petal, rising to meet it as it comes out under the crown, then following it down at arm's length, kept over the water by `overWater`). Its breeze is held blowing from the tree out over the water (`windToward`), and its focus is drawn from the tree to the petal.
+  - জেলের জাল: three shots (wide 16 m off, medium, close).
   - Heights over the water are measured from the season's surface (`surface()`).
   - Scenes cue what moves in them through the `Stage`: the train, the casts, lightning, `bareheaded`, `sap`. They read `girlHead`/`girlYaw`/`sapTree` to frame those.
 - `ui/`:
@@ -323,7 +350,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
 | Opening time, idle times, picks' hold and turn times | `main.ts` → `OPENING_BEFORE_SUNSET`, `FILM_IDLE_MS`, `SESSION_MS`, `YEAR_TURN_SECONDS`, `MOON_TURN_SECONDS` |
 | Each season's values (water, crops, colours, rain, wind, salt) | `env/season.ts` → `KEYS` |
 | How seasons look on plants and fields | `render/patch.ts` (`seasonal`, the paddy part) |
-| Rain, storms, wetness | `env/weather.ts`; streaks `world/rain.ts` |
+| Rain, storms, wetness | `env/weather.ts`; streaks and splashes `world/rain.ts`; drops `render/glsl.ts` → `RAIN_CELL`, `rainDrop`; wet and puddles `render/patch.ts` (`uWet`, `ATM_PUDDLES`), `world/terrain.ts` (`aPool`) |
 | Wind strength and gusts | `env/wind.ts` → `WIND_MS`, `windGust`/`gustAt` |
 | Waves | `world/waves.ts` → `FETCH`, `heightFor`, `peakFor`, `SHAPES`, `QUARTERS`, `STEEPEST`, `BUILD`, `FADE`, `SHELTERED` |
 | Water's clarity | `render/glsl.ts` → `underwater()` |
@@ -345,7 +372,8 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
 | Distance culling | `main.ts` → `cullBeyond(...)`; `render/cull.ts`; cells `render/instancing.ts` |
 | Water level map | `world/water.ts` → `LEVEL_CELL`, `LEVEL_SPREAD`, `SPREAD_BELOW` |
 | Train frequency | `world/railway.ts` → `EVERY` |
-| Bloom, grade, letterbox | `render/pipeline.ts` |
+| Bloom, grade, letterbox, depth of field | `render/pipeline.ts`; a shot's focus `rig/tour.ts` (`focus`, `aperture`) |
+| Fallen petals, the film's petal | `world/petals.ts` → `PER_CROWN`, `REACH`, `BANKED`, `HERO_FALL`, `SWING`, `INTO`, `CARRIED`; the petal's shape `world/leaves.ts` |
 | Textures | `render/textures.ts` |
 | Sound | `audio/soundscape.ts` |
 | UI markup and copy | `index.html`, `ui/controls.ts`, `ui/bangla.ts` |

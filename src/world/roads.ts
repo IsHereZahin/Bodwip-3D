@@ -407,5 +407,6 @@ function roadMaterial(): MeshStandardMaterial {
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
   });
-  return patchMaterial(m, { grime: 0.3 });
+  // (water stands on the ways after rain has gone on a while)
+  return patchMaterial(m, { grime: 0.3, puddles: true });
 }

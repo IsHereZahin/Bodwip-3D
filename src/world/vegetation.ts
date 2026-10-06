@@ -1,5 +1,5 @@
-import { BufferGeometry, DoubleSide, Group, Matrix4, MeshStandardMaterial, SphereGeometry, Vector2, Vector3 } from 'three';
-import type { Texture } from 'three';
+import { BufferGeometry, DoubleSide, Group, Matrix4, Mesh, MeshStandardMaterial, SphereGeometry, Vector2, Vector3 } from 'three';
+import type { Material, Texture } from 'three';
 import { LAYER_NO_REFLECT } from '../core/globals';
 import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
@@ -532,6 +532,112 @@ export interface Crown {
   z: number;
   r: number;
   blossom: boolean;
+  /** Which tree it is. */
+  kind: 'mango' | 'rain' | 'akashmoni' | 'garjan' | 'far' | 'banyan';
+}
+
+/** The trees' own wood and leaves, kept for `crownDetail` (set when the vegetation is built). */
+let treeMats: { wood: Material; leaf: Partial<Record<Crown['kind'], Material>>; bark: RGB } | null = null;
+
+/**
+ * How each kind's crown sits on its tree (as `broadleaf` builds them): how far below the crown's middle its trunk
+ * ends (× its reach), how flat it is, and its leaf cards' size (× its reach).
+ */
+const CROWN_FORM: Partial<Record<Crown['kind'], { base: number; flat: number; card: number }>> = {
+  rain: { base: 0.27, flat: 0.5, card: 1.35 / 6.7 },
+  mango: { base: 0.5, flat: 0.85, card: 1.1 / 4.1 },
+  akashmoni: { base: 0.58, flat: 1.0, card: 1.0 / 3.7 },
+};
+
+/** Whether `crownDetail` knows how to fill out this tree's crown. */
+export function hasCrownDetail(c: Crown): boolean {
+  return CROWN_FORM[c.kind] !== undefined;
+}
+
+/**
+ * More of a tree's crown, for the film's near look up into one in flower (tour.ts blossomTree): its limbs
+ * dividing into branches and the branches into twigs out to the top of the crown, each its own way (never
+ * symmetric), and clusters of leaves (and, in spring, its flowers) on the twigs' ends filling the crown's top.
+ * The common tree's crown is its lobes' cards round a few limbs, open at the top seen from under it. Built round
+ * the tree's own root with its own materials, so it sways and flowers with it. Null for a kind it does not know.
+ */
+export function crownDetail(c: Crown): Group | null {
+  const form = CROWN_FORM[c.kind];
+  const leaf = treeMats?.leaf[c.kind];
+  if (!treeMats || !form || !leaf) return null;
+  const rng = new Rng(Math.floor(Math.abs(c.x * 7.31 + c.z * 3.17)) + 11);
+  const ground = terrainHeight(c.x, c.z);
+  const R = c.r;
+  const middle = new Vector3(0, c.y - ground, 0);
+  const base = middle.clone().setY(middle.y - form.base * R);
+  const wood = new MeshBuilder();
+  const leaves = new MeshBuilder();
+  const tmp = new Vector3();
+  // inside the crown: an ellipsoid round its middle, squashed by its flatness
+  const inside = (p: Vector3, k: number) => {
+    const dx = p.x / (R * k);
+    const dy = (p.y - middle.y) / (R * form.flat * 1.15 * k);
+    const dz = p.z / (R * k);
+    const e = Math.hypot(dx, dy, dz);
+    if (e > 1) p.set(middle.x + (p.x - middle.x) / e, middle.y + (p.y - middle.y) / e, middle.z + (p.z - middle.z) / e);
+    return p;
+  };
+  const ends: { p: Vector3; dir: Vector3 }[] = [];
+  const grow = (from: Vector3, dir: Vector3, len: number, r0: number, depth: number): void => {
+    const to = inside(from.clone().addScaledVector(dir, len), 0.92);
+    const mid = from.clone().lerp(to, 0.5).add(tmp.set(rng.range(-0.12, 0.12), rng.range(0, 0.14), rng.range(-0.12, 0.12)).multiplyScalar(len));
+    taperedTube(wood, [from.clone(), mid, to], [r0, r0 * 0.8, r0 * 0.6], depth === 0 ? 6 : depth === 1 ? 5 : 4, treeMats!.bark, 2);
+    const way = to.clone().sub(from).normalize();
+    if (depth >= 2) {
+      ends.push({ p: to, dir: way });
+      return;
+    }
+    const n = rng.int(2, 3);
+    for (let k = 0; k < n; k++) {
+      const d = way.clone().add(randomUnit(rng, tmp).multiplyScalar(0.75));
+      d.y = Math.abs(d.y) * 0.7 + 0.3;
+      grow(to, d.normalize(), len * rng.range(0.55, 0.75), r0 * 0.58, depth + 1);
+    }
+  };
+  // the limbs out from the trunk's top, unevenly spaced and raised, the longest toward the open side
+  const limbs = rng.int(4, 6);
+  const a0 = rng.range(0, Math.PI * 2);
+  for (let i = 0; i < limbs; i++) {
+    const az = a0 + (i / limbs) * Math.PI * 2 + rng.range(-0.45, 0.45);
+    const el = rng.range(0.35, 0.95) * (form.flat < 0.7 ? 0.8 : 1.1);
+    const dir = new Vector3(Math.cos(az) * Math.cos(el), Math.sin(el), Math.sin(az) * Math.cos(el));
+    grow(base, dir, R * rng.range(0.42, 0.6), 0.024 * R, 0);
+  }
+  // a cluster of leaves (in spring, flowers) on each twig's end, turned out and up, the crown's top filled
+  const size = form.card * R;
+  const right = new Vector3();
+  const up = new Vector3();
+  for (const e of ends) {
+    for (let k = 0; k < 4; k++) {
+      const p = e.p.clone().add(randomUnit(rng, tmp).multiplyScalar(size * 0.45));
+      const n = p.clone().sub(middle).normalize().multiplyScalar(0.6).add(e.dir.clone().multiplyScalar(0.4));
+      n.y += 0.35;
+      n.normalize();
+      const facing = n.clone().add(randomUnit(rng, tmp).multiplyScalar(0.6)).normalize();
+      right.crossVectors(facing, Math.abs(facing.y) < 0.95 ? UP : new Vector3(1, 0, 0)).normalize().applyAxisAngle(facing, rng.range(0, Math.PI));
+      up.crossVectors(right, facing).normalize();
+      const s = size * rng.range(0.75, 1.15);
+      // a little darker within, the light on the top
+      const ao = 0.55 + 0.45 * smoothstep(-0.2, 0.6, (p.y - middle.y) / (R * form.flat));
+      card(leaves, p, right.clone().multiplyScalar(s), up.clone().multiplyScalar(s), n, scaleRgb(WHITE, ao * rng.range(0.88, 1.08)));
+    }
+  }
+  const g = new Group();
+  g.name = 'crown-detail';
+  g.position.set(c.x, ground, c.z);
+  const branches = new Mesh(wood.build(), treeMats.wood);
+  const tufts = new Mesh(leaves.build(), leaf);
+  for (const m of [branches, tufts]) {
+    m.castShadow = true;
+    m.receiveShadow = true;
+  }
+  g.add(branches, tufts);
+  return g;
 }
 /** Every broadleaf crown (set when the vegetation is built), the banyan's among them: the falling leaves come from them (world/leaves.ts). */
 const CROWNS: Crown[] = [];
@@ -696,6 +802,7 @@ export function buildVegetation(
     grass: leafMat({ map: tex.grass }, 0.15, 0.8),
     akashmoni: leafMat(tex.akashmoni, 0.3, 6, 0.8, 'tree'),
   };
+  treeMats = { wood: woodMat, leaf: { mango: mats.mango, rain: mats.rain, akashmoni: mats.akashmoni }, bark: barkTint };
 
   // a shape or two per species (each is a draw call in every slab it stands in); instances vary them by yaw and scale
   const variants = <T>(n: number, make: (r: Rng) => T): T[] => Array.from({ length: n }, (_, i) => make(new Rng(100 + i * 31)));
@@ -761,12 +868,12 @@ export function buildVegetation(
     tal: bucket(tals, mats.fan, palmWood),
   };
   // where each broadleaf's crown sits over its foot (as `broadleaf` builds them, at their middling size), for the falling leaves
-  const crownOf = new Map<Bucket, { y: number; r: number }>([
-    [B.mango, { y: 5.2, r: 4.1 }],
-    [B.rain, { y: 6.8, r: 6.7 }],
-    [B.akashmoni, { y: 6.4, r: 3.7 }],
-    [B.garjan, { y: 15.5, r: 3.2 }],
-    [B.far, { y: 6.5, r: 5.5 }],
+  const crownOf = new Map<Bucket, { y: number; r: number; kind: Crown['kind'] }>([
+    [B.mango, { y: 5.2, r: 4.1, kind: 'mango' }],
+    [B.rain, { y: 6.8, r: 6.7, kind: 'rain' }],
+    [B.akashmoni, { y: 6.4, r: 3.7, kind: 'akashmoni' }],
+    [B.garjan, { y: 15.5, r: 3.2, kind: 'garjan' }],
+    [B.far, { y: 6.5, r: 5.5, kind: 'far' }],
   ]);
   const put = (b: Bucket, p: Placement) => {
     // out where the land fades away the trees thin out and stop (each one its own chance, so no line shows)
@@ -775,7 +882,7 @@ export function buildVegetation(
     b.items[rng.int(0, b.items.length - 1)].push(p);
     const c = crownOf.get(b);
     // these take the spring's red flower where the shader gives it (`seasonal: 'tree'`); the hills' garjan does not
-    if (c) CROWNS.push({ x: p.x, y: p.y + c.y * p.s, z: p.z, r: c.r * p.s, blossom: b !== B.garjan });
+    if (c) CROWNS.push({ x: p.x, y: p.y + c.y * p.s, z: p.z, r: c.r * p.s, blossom: b !== B.garjan, kind: c.kind });
   };
   for (const f of featured) put(B[f.kind], { x: f.x, y: terrainHeight(f.x, f.z) - 0.15, z: f.z, ry: f.ry, s: f.s });
 
@@ -1160,7 +1267,7 @@ export function buildVegetation(
   );
 
   // the banyan's crown too (world/banyan.ts builds it)
-  CROWNS.push({ x: BANYAN.x, y: terrainHeight(BANYAN.x, BANYAN.z) + 11, z: BANYAN.z, r: BANYAN.crown, blossom: false });
+  CROWNS.push({ x: BANYAN.x, y: terrainHeight(BANYAN.x, BANYAN.z) + 11, z: BANYAN.z, r: BANYAN.crown, blossom: false, kind: 'banyan' });
 
   return group;
 }

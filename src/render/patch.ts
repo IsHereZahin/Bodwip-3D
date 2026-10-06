@@ -17,6 +17,8 @@ export interface PatchOptions {
   grime?: number;
   /** Darkens and glosses what stands in the water near its surface (stones at the water's edge, posts): a wet band. */
   wetline?: boolean;
+  /** Water stands on its flat once the rain has gone on (the ways): puddles mirroring the sky, ringed by the drops. */
+  puddles?: boolean;
   /** Paddy plots, wet banks and riverbed caustics, driven by the terrain's `aZone` attribute. */
   terrain?: boolean;
   /** Photo ground layers blended by the terrain's `aSplat` weights (needs `terrain`). */
@@ -109,12 +111,16 @@ vAtmRoot = root;
   // the leaves: a quick small shiver, each its own; streaming and flickering in a storm
   float fp = dot(position, vec3(3.1, 2.3, 2.7)) + seed * 40.0;
   atmW.xyz += vec3(sin(t * (8.0 + 5.0 * seed) + fp), 0.6 * sin(t * 11.0 + fp * 1.7), cos(t * (7.0 + 4.0 * seed2) + fp)) * (0.012 + 0.03 * strong + 0.02 * storm) * bk * ATM_WIND * 4.0;
+  // and beaten by the rain: each leaf knocked down and springing back as the drops strike it, in a downpour hard
+  float knock = max(0.0, sin(t * (17.0 + 9.0 * seed2) + fp * 2.3)) * max(0.0, sin(t * 2.1 + fp));
+  atmW.y -= knock * uRain * uRain * 0.035 * bk * ATM_WIND * 4.0;
   #endif
 }
 #endif
 vAtmWorld = atmW.xyz;
 #ifdef ATM_TERRAIN
 vZone = aZone;
+vPool = aPool;
 #endif
 #ifdef ATM_SPLAT
 vSplat = aSplat;
@@ -191,8 +197,16 @@ vec3 splatDetail = vec3(1.0);
 
 const COLOR_EXTRA = /* glsl */ `
 float atmWet = 0.0;
-// how much of the ground is open water that mirrors the sky (brine in the salt pans, flooded plots)
+// how much of the ground is open water that mirrors the sky (brine in the salt pans, flooded plots, puddles)
 float atmBrine = 0.0;
+// how much of it is a puddle the rain has left (it rings as the drops strike it)
+float atmPuddle = 0.0;
+// the face's world normal, for how the rain falls on it
+#ifdef FLAT_SHADED
+vec3 atmN = vec3(0.0, 1.0, 0.0);
+#else
+vec3 atmN = inverseTransformDirection(vNormal, viewMatrix);
+#endif
 #ifdef ATM_SEASONAL
 {
   #if ATM_SEASONAL == 3
@@ -222,9 +236,29 @@ float atmBrine = 0.0;
 diffuseColor.rgb *= 1.0 + ATM_GRIME * ((fbm3(vAtmWorld.xz * 0.35 + vAtmWorld.y * 0.25) - 0.5) * 1.3 + (vnoise(vAtmWorld.xz * 3.1 + vAtmWorld.y * 2.0) - 0.5) * 0.45);
 #endif
 #ifndef ATM_TERRAIN
-// after rain everything is darker and glistens
-atmWet = uWet * 0.4;
-diffuseColor.rgb *= mix(1.0, 0.8, atmWet);
+{
+  // rain wets what it falls on: the faces turned up to it soonest and most (roofs, decks, the ways, leaves), the
+  // walls less; wet, a surface is darker and glossier, and one turned up mirrors a little of the sky
+  #ifdef ATM_FLUTTER
+  float atmUp = abs(atmN.y);
+  #else
+  float atmUp = max(atmN.y, 0.0);
+  #endif
+  atmWet = smoothstep(0.0, 0.5, uWet) * (0.35 + 0.65 * atmUp);
+  diffuseColor.rgb *= mix(1.0, 0.7, atmWet);
+  atmBrine = max(atmBrine, atmWet * atmUp * atmUp * 0.16);
+  #ifdef ATM_PUDDLES
+  // water standing on the flat once the rain has gone on, in the dips (a noise of them), more as it goes on
+  float pud = smoothstep(0.45, 1.0, uWet);
+  if (pud > 0.0) {
+    float blob = vnoise(vAtmWorld.xz * 0.75 + 3.7) * 0.65 + vnoise(vAtmWorld.xz * 2.4) * 0.35;
+    atmPuddle = smoothstep(1.0 - 0.32 * pud, 1.09 - 0.32 * pud, blob) * smoothstep(0.93, 0.99, atmN.y);
+    atmWet = max(atmWet, atmPuddle);
+    atmBrine = max(atmBrine, atmPuddle * 0.85);
+    diffuseColor.rgb *= mix(1.0, 0.6, atmPuddle);
+  }
+  #endif
+}
 #endif
 #ifdef ATM_WETLINE
 {
@@ -387,7 +421,19 @@ ${SPLAT_COLOR}
   vec3 wetLv = waterLevels(vAtmWorld.xz);
   float tideTop = max(uTideHigh, uWaterLevel);
   float shore = wetLv.g > 0.5 ? smoothstep(tideTop + 0.35, tideTop - 0.05, vAtmWorld.y) : smoothstep(wetLv.r + 0.6, wetLv.r + 0.05, vAtmWorld.y);
-  atmWet = max(max(shore, plotWater * 0.85), uWet * 0.55);
+  // rain wets the ground unevenly: the trodden earth and the hollows soonest and most (vPool, world/terrain.ts),
+  // a slope drains; once it has rained on a while water stands in them, more as it goes on
+  float lie = clamp(vPool, 0.0, 1.0);
+  float level = smoothstep(0.86, 0.98, atmN.y);
+  float soak = smoothstep(0.0, 0.5, uWet) * (0.4 + 0.6 * max(lie, level * 0.55));
+  float pud = smoothstep(0.45, 1.0, uWet);
+  if (pud > 0.0) {
+    float blob = vnoise(vAtmWorld.xz * 0.7 + 1.3) * 0.6 + vnoise(vAtmWorld.xz * 2.3 + 7.1) * 0.4;
+    atmPuddle = smoothstep(1.22 - 0.42 * pud, 1.32 - 0.42 * pud, blob * 0.7 + lie * 0.5) * level;
+  }
+  atmWet = max(max(shore, plotWater * 0.85), max(soak * 0.85, atmPuddle));
+  atmBrine = max(atmBrine, atmPuddle * 0.9);
+  diffuseColor.rgb *= mix(1.0, 0.6, atmPuddle);
   // the mud the tide has just left keeps a film of water that mirrors the sky
   if (wetLv.g > 0.5) atmBrine = max(atmBrine, shore * smoothstep(uWaterLevel + 0.02, uWaterLevel + 0.3, vAtmWorld.y) * 0.6);
   diffuseColor.rgb *= mix(1.0, 0.55, atmWet);
@@ -425,13 +471,24 @@ const TRANSLUCENCY = /* glsl */ `
   outgoingLight += diffuseColor.rgb * vec3(1.0, 0.36, 0.2) * uKeyColor * scatter * ATM_SKIN;
 }
 #endif
-#ifdef ATM_TERRAIN
-// still water standing on the ground (brine in the pans, flooded plots) mirrors the sky, more so at a grazing look
+// still water standing on a surface (brine in the pans, flooded plots, puddles, the film of rain on a roof)
+// mirrors the sky, more so at a grazing look; in the rain the drops ring it, white for an instant where they strike
 if (atmBrine > 0.01 && uReflPass < 0.5) {
   vec3 toEye = normalize(uCamPos - vAtmWorld);
   float fres = 0.02 + 0.98 * pow(1.0 - max(toEye.y, 0.0), 5.0);
-  outgoingLight = mix(outgoingLight, hazeColor(reflect(-toEye, vec3(0.0, 1.0, 0.0))), clamp(fres * 0.9 + 0.08, 0.0, 1.0) * atmBrine);
+  vec3 still = vec3(0.0, 1.0, 0.0);
+  float splash = 0.0;
+  if (uRain > 0.01 && atmBrine > 0.3) {
+    vec3 rr = rainRipples(vAtmWorld.xz, uRain);
+    still = normalize(vec3(-rr.x * 2.5, 1.0, -rr.y * 2.5));
+    splash = rr.z;
+  }
+  // (a puddle mirrors less of the sky than open water: the banks, trees and houses round it shut much of it out)
+  vec3 sky = hazeColor(reflect(-toEye, still)) * (1.0 - 0.45 * atmPuddle);
+  outgoingLight = mix(outgoingLight, sky, clamp(fres * 0.9 + 0.08 - 0.05 * atmPuddle, 0.0, 1.0) * atmBrine);
+  outgoingLight += (uFogColor * 1.2 + 0.05) * splash * 0.5 * atmBrine;
 }
+#ifdef ATM_TERRAIN
 // sunlight focused by the ripples into a moving net of caustics on the shallow bed
 float causticLevel = waterSurface(vAtmWorld.xz);
 if (vAtmWorld.y < causticLevel - 0.02 && uReflPass < 0.5) {
@@ -458,6 +515,7 @@ export function patchMaterial<T extends Material>(material: T, options: PatchOpt
   if (options.skin) defines.ATM_SKIN = options.skin.toFixed(3);
   if (options.grime) defines.ATM_GRIME = options.grime.toFixed(3);
   if (options.wetline) defines.ATM_WETLINE = '';
+  if (options.puddles) defines.ATM_PUDDLES = '';
   if (options.terrain) defines.ATM_TERRAIN = '';
   if (options.terrain && options.splat) defines.ATM_SPLAT = '';
   if (options.seasonal) defines.ATM_SEASONAL = options.seasonal === 'leaf' ? '1' : options.seasonal === 'tree' ? '2' : '3';
@@ -473,7 +531,7 @@ export function patchMaterial<T extends Material>(material: T, options: PatchOpt
 
   material.onBeforeCompile = (shader) => {
     Object.assign(shader.uniforms, G, options.vertex?.uniforms ?? {}, splatUniforms);
-    const terrainPars = options.terrain ? 'attribute float aZone;\nvarying float vZone;\n' : '';
+    const terrainPars = options.terrain ? 'attribute float aZone;\nattribute float aPool;\nvarying float vZone;\nvarying float vPool;\n' : '';
     const splatVertPars = splat ? 'attribute vec4 aSplat;\nvarying vec4 vSplat;\n' : '';
     shader.vertexShader =
       GLSL_COMMON +
@@ -498,7 +556,7 @@ export function patchMaterial<T extends Material>(material: T, options: PatchOpt
       GLSL_COMMON +
       'varying vec3 vAtmWorld;\n' +
       (options.seasonal ? 'varying vec3 vAtmRoot;\n' : '') +
-      (options.terrain ? 'varying float vZone;\n' : '') +
+      (options.terrain ? 'varying float vZone;\nvarying float vPool;\n' : '') +
       splatFragPars +
       frag;
   };

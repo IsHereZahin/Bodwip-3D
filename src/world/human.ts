@@ -214,7 +214,14 @@ export function radiusAt(map: RadiusMap, y: number, th: number): { r: number; zc
   return { r: r0 * (1 - t) + r1 * t, zc: map.zc[k] * (1 - t) + map.zc[k + 1] * t };
 }
 
-/** The ellipse round a radius map's row at height `y` holding all of its skin: middle (z), half-width and half-depth. */
+/**
+ * The smallest ellipse (squared to the body) round a radius map's row at height `y` holding all of its skin:
+ * middle (z), half-width and half-depth. Clothes are sized from it, so it must hug the body: a body's section is
+ * no ellipse (the buttocks stand out behind the hips), and an ellipse first fitted to the widest and deepest
+ * points then grown until it held them all came out up to 18% too wide round the hips (every lungi and skirt
+ * looked inflated at the waist). So the half-width and the middle are searched for the least area that still
+ * holds every point.
+ */
 export function enclosing(map: RadiusMap, y: number): { zc: number; a: number; b: number } {
   let xMax = 0;
   let front = 0;
@@ -231,14 +238,18 @@ export function enclosing(map: RadiusMap, y: number): { zc: number; a: number; b
     front = Math.max(front, z);
     back = Math.max(back, -z);
   }
-  const zc = zc0 + (front - back) / 2;
-  let a = xMax;
-  let b = (front + back) / 2;
-  let worst = 1;
-  for (const [x, z] of pts) worst = Math.max(worst, Math.hypot(x / a, (z + zc0 - zc) / b));
-  a *= worst;
-  b *= worst;
-  return { zc, a, b };
+  let best = { zc: zc0 + (front - back) / 2, a: Infinity, b: Infinity };
+  for (let grow = 0; grow <= 0.4; grow += 0.005) {
+    const a = xMax * (1 + grow);
+    for (let dz = -0.03; dz <= 0.03; dz += 0.0025) {
+      const c = (front - back) / 2 + dz;
+      // the least half-depth holding every point at this half-width and middle
+      let b = 0;
+      for (const [x, z] of pts) b = Math.max(b, Math.abs(z - c) / Math.sqrt(Math.max(1e-6, 1 - (x / a) ** 2)));
+      if (a * b < best.a * best.b) best = { zc: zc0 + c, a, b };
+    }
+  }
+  return best;
 }
 
 /** The materials of the parts the clothes make (by part name: 'vest', 'blouse'). */

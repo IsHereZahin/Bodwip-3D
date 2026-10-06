@@ -22,6 +22,8 @@ export interface SceneWorld {
   weather: WeatherChoice;
   /** Wind strength held for the scene, or null for the weather's own. */
   wind: number | null;
+  /** The way the wind blows toward, held for the scene (radians, as env/wind.ts has it), or the season's own if absent. */
+  windToward?: number;
   /**
    * How fast the sky's clock runs in the scene, times its own pace (1 if absent). Away from a rise or a set it
    * runs 0.1 h a second, a time-lapse no camera on the moon could hold through a shot.
@@ -33,6 +35,14 @@ export interface SceneWorld {
    * smooth monotone curve, slow where the keys crowd (the sun on the horizon) and never stopping.
    */
   sweep?: readonly (readonly [number, number])[];
+  /**
+   * The rain through the scene (0..1), as `[u, rain]` keys passed through as a sweep's are, and how wet the land is
+   * (0..1: soaked through by ½, puddles beyond): the film's own weather, so a scene can show the rain coming on,
+   * a downpour, its easing, and the land wetting as it goes (each scene takes the wet up where the last left it).
+   * Without them the `weather` choice rules and the land is as wet as it would be.
+   */
+  rain?: readonly (readonly [number, number])[];
+  wet?: readonly (readonly [number, number])[];
 }
 
 const SWEEP_D: number[] = [];
@@ -74,10 +84,24 @@ export function sweepAt(keys: readonly (readonly [number, number])[], u: number)
   return (2 * t3 - 3 * t2 + 1) * keys[k][1] + (t3 - 2 * t2 + t) * span * m[k] + (-2 * t3 + 3 * t2) * keys[k + 1][1] + (t3 - t2) * span * m[k + 1];
 }
 
+/** The film's petal's way (world/petals.ts HeroPetal): `tau` is seconds after it lets go of its bough. */
+export interface PetalWay {
+  /** Where it leaves its bough, and where it comes down on the water. */
+  readonly from: Vector3;
+  readonly to: Vector3;
+  /** Seconds from its bough to the water. */
+  readonly fall: number;
+  at(tau: number, out: Vector3): Vector3;
+  /** Its way without its swing from side to side. */
+  slowAt(tau: number, out: Vector3): Vector3;
+}
+
 /** What the tour may do to the world, and read from it (main.ts provides it). */
 export interface Stage {
   /** Sets the world for a scene, at once (the water's level, the weather, the waves and all). */
   set(world: SceneWorld): void;
+  /** The film's own rain and wet now (0..1 each; see SceneWorld.rain). */
+  weather(rain: number, wet: number): void;
   /** Keeps the viewer's world, to put back after the tour. */
   save(): void;
   restore(): void;
@@ -107,6 +131,9 @@ export interface Stage {
   /** The date palm the film climbs (world/khejur.ts): its foot, its tapping cut, its pot's mouth, the way the cut faces; and the shot of its sap begun. */
   readonly sapTree: { readonly foot: Vector3; readonly cut: Vector3; readonly mouth: Vector3; readonly out: Vector3 };
   sap(): void;
+  /** The film's petal over the khal (tour.ts blossomTree), and its letting go `at` s into its fall (negative: so long before it lets go). */
+  readonly petal: PetalWay;
+  dropPetal(at: number): void;
   readonly sunDir: Vector3;
   readonly moonDir: Vector3;
   /**
@@ -134,17 +161,38 @@ export interface Scene {
   world: SceneWorld;
   /** Where the boat is on her journey as the scene opens, for scenes in her waters; else she goes on. */
   journey?: number;
-  /** Once, as the scene opens and after its world is set: cue the birds or the train. */
-  begin?(stage: Stage): void;
+  /**
+   * Once, as the scene opens and after its world is set: cue the birds or the train. `at`: seconds into the scene
+   * it opens at (0 as the film plays; a still cued partway through starts there, its cues as far on).
+   */
+  begin?(stage: Stage, at: number): void;
   /** The camera at `u` (0..1 through the scene): where it is and what it looks at. */
   pose(u: number, stage: Stage, pos: Vector3, look: Vector3): void;
+  /**
+   * A shot with a shallow depth of field: the distance in focus at `u` (m), the camera at `eye` (posed by `pose`
+   * first). Without it the whole frame is sharp.
+   */
+  focus?(u: number, stage: Stage, eye: Vector3): number;
+  /** How open the lens is (with `focus`): the far distance is blurred over this share of the frame's height times 1 m over the focus. Default `APERTURE`. */
+  aperture?: number;
 }
+
+/** The lens for a shot (render/pipeline.ts): the distance in focus (m), and how open it is (`Scene.aperture`; 0: all sharp). */
+export interface Dof {
+  focus: number;
+  aperture: number;
+}
+
+/** A close shot's lens: focused 1.2 m off, the far distance blurred over 1% of the frame's height. */
+const APERTURE = 0.012;
 
 /** What main.ts draws for the shot being left, each frame of a dissolve. */
 export interface Leaving {
   readonly camera: PerspectiveCamera;
   /** Where the boat is in that shot, if the shot coming in has moved her elsewhere; else null (she is where she is). */
   readonly boat: Vector3 | null;
+  /** Its lens. */
+  readonly dof: Dof;
 }
 
 /** Seconds a dissolve takes between scenes, and between the shots of one scene. */
@@ -191,6 +239,8 @@ export class Director {
   dissolve = 0;
   /** What the current shot looks at; the shadow map and the wildlife follow it. */
   readonly focus = new Vector3();
+  /** The current shot's lens. */
+  readonly dof: Dof = { focus: 10, aperture: 0 };
 
   private playing = false;
   private index = 0;
@@ -211,7 +261,7 @@ export class Director {
   private readonly ghost: Stage;
   private readonly ghostPos = new Vector3();
   private readonly outCamera = new PerspectiveCamera();
-  private readonly leavingView: { camera: PerspectiveCamera; boat: Vector3 | null };
+  private readonly leavingView: { camera: PerspectiveCamera; boat: Vector3 | null; dof: Dof };
   /** The viewer's camera as it moves, for leaving it moving. */
   private readonly viewPos = new Vector3();
   private readonly viewVel = new Vector3();
@@ -242,7 +292,7 @@ export class Director {
       sunDir: { get: () => self.out?.sun ?? stage.sunDir },
       moonDir: { get: () => self.out?.moon ?? stage.moonDir },
     }) as Stage;
-    this.leavingView = { camera: this.outCamera, boat: null };
+    this.leavingView = { camera: this.outCamera, boat: null, dof: { focus: 10, aperture: 0 } };
   }
 
   /** The tour is on. */
@@ -369,6 +419,7 @@ export class Director {
       this.captionAlpha = scene.caption ? clamp(Math.min((this.time - 1.2) / 0.9, (scene.seconds - 1.6 - this.time) / 0.9), 0, 1) : 0;
     }
     if (scene.world.sweep && !scene.shot) this.stage.sweep(sweepAt(scene.world.sweep, clamp(this.time / scene.seconds, 0, 1)));
+    if (!scene.shot) this.rainAt(scene.world, clamp(this.time / scene.seconds, 0, 1));
     // the last seconds: build the next shot's places ahead, a little each frame
     if (this.time > scene.seconds - WARM_AHEAD && !this.aheadDone) {
       this.ahead ??= this.pathOf(this.scenes[(this.index + 1) % this.scenes.length], true);
@@ -381,12 +432,12 @@ export class Director {
     this.finishLeaving();
     this.playing = true;
     const i = ((index % this.scenes.length) + this.scenes.length) % this.scenes.length;
-    // a later shot of a scene: the scene opened, and the boat on as far as she would have come by then
+    // a later shot of a scene: the scene opened (its cues as far on), and the boat on as far as she would have come by then
     const first = this.firstShot(i);
-    this.enter(first);
+    let elapsed = this.scenes[i].seconds * clamp(u, 0, 1);
+    for (let k = first; k < i; k++) elapsed += this.scenes[k].seconds;
+    this.enter(first, elapsed);
     if (i !== first) {
-      let elapsed = this.scenes[i].seconds * clamp(u, 0, 1);
-      for (let k = first; k < i; k++) elapsed += this.scenes[k].seconds;
       const opening = this.scenes[first].journey;
       if (opening !== undefined) this.stage.placeBoat(Math.min(1, opening + (elapsed * CRUISE) / JOURNEY.length));
       this.index = i;
@@ -394,13 +445,19 @@ export class Director {
     const scene = this.scenes[this.index];
     this.time = scene.seconds * clamp(u, 0, 1);
     if (scene.world.sweep && !scene.shot) this.stage.sweep(sweepAt(scene.world.sweep, clamp(u, 0, 1)));
+    if (!scene.shot) this.rainAt(scene.world, clamp(u, 0, 1));
     this.letterbox = 1;
     this.frameCamera(scene, 0, camera);
     this.caption = scene.caption;
     this.captionAlpha = scene.caption ? 1 : 0;
   }
 
-  private enter(index: number): void {
+  /** A scene's own rain and wet at `u` through it, if it has them. */
+  private rainAt(world: SceneWorld, u: number): void {
+    if (world.rain) this.stage.weather(sweepAt(world.rain, u), world.wet ? sweepAt(world.wet, u) : 0);
+  }
+
+  private enter(index: number, at = 0): void {
     const scene = this.scenes[index];
     this.index = index;
     this.time = 0;
@@ -412,7 +469,7 @@ export class Director {
       this.stage.set(scene.world);
       if (scene.journey !== undefined) this.stage.placeBoat(scene.journey);
     }
-    scene.begin?.(this.stage);
+    scene.begin?.(this.stage, at);
     // the shot being left keeps the boat where it had her if this one put her elsewhere (by its journey or in its
     // `begin`: the sunset's and the kash's do), or it would lose her and show her hole in the water
     if (this.out) this.out.moved = Math.hypot(this.stage.boatPos.x - this.boatWas.x, this.stage.boatPos.z - this.boatWas.z) > 0.5;
@@ -504,6 +561,7 @@ export class Director {
     this.ghostPos.copy(o.boat).addScaledVector(o.boatVel, o.since);
     if (o.scene) {
       o.scene.pose(1, this.ghost, this.pos, this.look);
+      this.lens(o.scene, 1, this.ghost, this.pos, this.leavingView.dof);
       this.pos.addScaledVector(o.vPos, carry);
       this.look.addScaledVector(o.vLook, carry);
       this.pos.x += Math.sin(t * 0.37) * 0.05;
@@ -514,8 +572,15 @@ export class Director {
     } else {
       cam.position.copy(o.pos).addScaledVector(o.vPos, carry);
       cam.quaternion.copy(o.quat);
+      this.leavingView.dof.aperture = 0;
     }
     cam.updateMatrixWorld();
+  }
+
+  /** A shot's lens at `u`, its camera at `eye`. */
+  private lens(scene: Scene, u: number, stage: Stage, eye: Vector3, out: Dof): void {
+    out.aperture = scene.focus ? (scene.aperture ?? APERTURE) : 0;
+    if (scene.focus) out.focus = Math.max(0.3, scene.focus(u, stage, eye));
   }
 
   /**
@@ -543,6 +608,7 @@ export class Director {
   private frameCamera(scene: Scene, t: number, camera: PerspectiveCamera): void {
     const u = clamp(this.time / scene.seconds, 0, 1);
     scene.pose(u, this.stage, this.pos, this.look);
+    this.lens(scene, u, this.stage, this.pos, this.dof);
     this.pos.x += Math.sin(t * 0.37) * 0.05;
     this.pos.y += Math.sin(t * 0.53) * 0.035;
     this.pos.y = Math.max(this.pos.y, Math.max(terrainHeight(this.pos.x, this.pos.z), waterLevelAt(this.pos.x, this.pos.z)) + 0.6);

@@ -57,6 +57,12 @@ These are the user's decisions that still bind the work, and the reasons for the
   - Nothing is shown just because it is pretty.
   - Salt comes from sea water, so the salt field has its own saline creek, not the fresh river.
 - **Weather** is the season's own. The user asked for no weather picker (`B` and the menu were removed).
+- **Rain must be felt in the world, not laid over it** (2026-10-06).
+  - Drops ring and splash the water, unevenly and never in a repeating pattern.
+  - The land wets as the rain goes on, never all at once: the ways, the yards and the hollows first, slopes and high ground less.
+  - Wet ground is darker and a little glossy. Puddles stand where water collects.
+  - Roofs, decks, wood and leaves look wet.
+  - A heavier rain means more of everything: drops, rings, splashes, wetness, wind, mist and sound.
 - **Picks:** the world starts at today's date. A picked season or moon holds for one minute (`SESSION_MS`), then eases back to today. The year turns as a time-lapse, and every change is smooth.
 
 ## The film (what the user judges the work by)
@@ -71,6 +77,14 @@ These are the user's decisions that still bind the work, and the reasons for the
 - **Sky events:** sunrise, sunset and moonrise are seen happening over a few seconds (sweeps). The sunset ends in a deep red sky.
 - **Navigation:** previous/next scene buttons and keys while the film plays.
 - **"লাল ছাতা":** the girl on the bridge watches the majhi pass, across several shots: wide → her → tracking the boat → her crossing → over her shoulder → the boat gone → her reaction.
+- **"বসন্তের রং" follows one petal** (2026-10-06):
+  - The shot runs: wide (the tree, the khal, petals already afloat) → in toward the water → one petal letting go and followed as it swings and tumbles down → touching the water with a small ripple → floating.
+  - It is one continuous move with a depth of field and a focus pull, and the petal is never cut or jumped.
+  - Petals lie thick under trees in flower, in drifts, with no repeated pattern. The film's tree has a full crown with natural, uneven branches to its top.
+- **"জেলের জাল":** a wide shot that shows his boat clearly, then medium and close shots of the net (2026-10-06). The water answers the net: it strikes with rings and a splash, is stirred as he hauls, and drips under the lifted bag. He hauls with his whole body, from his hands to the boat under his feet.
+- **The monsoon is told as it comes** (2026-10-06):
+  - The order: the Asharh cloud gathering, then the rain beginning, then a heavy Asharh downpour, with the land wetting all the while. After that the rain eases, and the land is left wet.
+  - It may run longer than the other seasons, and the rain must not be one loop throughout.
 - **Verify every scene from its real camera path** (see verification.md). Pop-in, clipping, freezes, black artefacts and murky darkness are bugs.
 
 ## People

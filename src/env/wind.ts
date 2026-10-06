@@ -32,6 +32,8 @@ export interface WindSetting {
 export class Wind {
   /** Held strength chosen by the viewer, or null to follow the season and the weather. */
   override: number | null = null;
+  /** Held way it blows toward (a film's scene), or null for the season's. */
+  towardOverride: number | null = null;
   strength = 0.75;
   gusts = 0.5;
   // autumn's easterly, until the season says otherwise
@@ -46,7 +48,7 @@ export class Wind {
     // a held wind (the viewer's choice) freshens or eases over some seconds, not in an instant
     this.strength += (target - this.strength) * (this.override !== null ? 1 - Math.exp(-dt / 6) : k);
     this.gusts += (want.gusts - this.gusts) * k;
-    let d = want.angle + 0.18 * Math.sin(t * 0.013) - this.angle;
+    let d = (this.towardOverride ?? want.angle) + 0.18 * Math.sin(t * 0.013) - this.angle;
     d = Math.atan2(Math.sin(d), Math.cos(d));
     this.angle += d * k;
     const speed = FRONT_SPEED + FRONT_SPEED_PER * this.strength;

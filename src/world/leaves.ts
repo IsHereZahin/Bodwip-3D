@@ -1,10 +1,11 @@
-import { BufferAttribute, BufferGeometry, Color, DoubleSide, InstancedBufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Quaternion, Vector3 } from 'three';
+import { BufferAttribute, BufferGeometry, Color, DoubleSide, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Quaternion, Vector3 } from 'three';
 import { G, LAYER_NO_REFLECT } from '../core/globals';
-import { smoothstep } from '../core/mathx';
+import { clamp, smoothstep } from '../core/mathx';
 import { glslHash12 } from '../core/noise';
 import { Rng } from '../core/rng';
 import { gustAt, windAt } from '../env/wind';
 import { patchMaterial } from '../render/patch';
+import { petalTexture } from '../render/textures';
 import { terrainHeight, waterLevelAt, waterwayAt } from './geography';
 import type { Crown } from './vegetation';
 
@@ -29,7 +30,17 @@ const AFLOAT: [number, number] = [28, 60];
 /** Side of the cells the crowns are filed in (m). */
 const CELL = 40;
 
-const PETALS = [new Color('#d8401a'), new Color('#e8641e'), new Color('#c22a16'), new Color('#ef8a2a')];
+/** The petals' tints over their texture's scarlet: as it is, more orange, deeper, a little rosier. */
+export const PETAL_TINTS: readonly (readonly [number, number, number])[] = [
+  [1, 1, 1],
+  [1.04, 1.24, 1.08],
+  [0.86, 0.76, 0.76],
+  [1, 0.9, 0.96],
+];
+/** A petal's tint once it has lain a few days, browning. */
+export const PETAL_WITHERED: readonly [number, number, number] = [0.56, 0.42, 0.36];
+/** How long a petal is (m): the krishnachura's are 5–7 cm. */
+export const PETAL_LENGTH: readonly [number, number] = [0.055, 0.08];
 const DRY = [new Color('#c9a23a'), new Color('#b07a2a'), new Color('#8a5a26'), new Color('#d6b54a')];
 const GREEN = [new Color('#5d7a2c'), new Color('#6f8a34'), new Color('#4c6a26')];
 
@@ -54,8 +65,52 @@ function leafGeometry(): BufferGeometry {
   return g;
 }
 
+/**
+ * A petal, `rows` × `cols` quads: 1 m long along +z from its narrow claw (z −½) to its round tip, its face up (+y),
+ * cupped (its sides raised), its rim frilled and the blade a little curled; scaled down per petal. Mapped for
+ * `petalTexture` (the claw at v 0).
+ */
+export function petalGeometry(rows: number, cols: number): BufferGeometry {
+  const pos: number[] = [];
+  const uv: number[] = [];
+  const index: number[] = [];
+  for (let i = 0; i <= rows; i++) {
+    const t = i / rows;
+    const along = clamp((t - 0.05) / 0.95, 0, 1);
+    const half = 0.05 + 0.37 * Math.sin(Math.PI * along ** 0.8) ** 0.6 * smoothstep(0, 0.45, t);
+    for (let j = 0; j <= cols; j++) {
+      const s = (j / cols) * 2 - 1;
+      const blade = smoothstep(0.25, 0.6, t);
+      const y = 0.09 * s * s * smoothstep(0.1, 0.5, t) + 0.025 * Math.sin(t * 28 + s * 3) * s ** 4 * blade + 0.08 * (t - 0.3) ** 2;
+      pos.push(s * half, y, t - 0.5);
+      uv.push((s * half) / 0.84 + 0.5, t);
+    }
+  }
+  for (let i = 0; i < rows; i++) {
+    for (let j = 0; j < cols; j++) {
+      const a = i * (cols + 1) + j;
+      const c = a + cols + 1;
+      index.push(a, c, a + 1, a + 1, c, c + 1);
+    }
+  }
+  const g = new BufferGeometry();
+  g.setAttribute('position', new BufferAttribute(new Float32Array(pos), 3));
+  g.setAttribute('uv', new BufferAttribute(new Float32Array(uv), 2));
+  g.setIndex(index);
+  g.computeVertexNormals();
+  return g;
+}
+
+let petalMat: MeshStandardMaterial | null = null;
+
+/** The petals' one material (falling, lying, afloat, the film's): its texture tinted per petal, the low sun glowing through it. */
+export function petalMaterial(): MeshStandardMaterial {
+  petalMat ??= patchMaterial(new MeshStandardMaterial({ map: petalTexture(), side: DoubleSide, roughness: 0.55 }), { translucency: 1.5 });
+  return petalMat;
+}
+
 /** How far a tree at (x, z) is in red flower now, as the shader paints it (render/patch.ts, `ATM_SEASONAL == 2`). */
-function bloomAt(x: number, z: number): number {
+export function bloomAt(x: number, z: number): number {
   return smoothstep(0, 0.06, G.uSeasonA.value.z - bloomRank(x, z));
 }
 
@@ -86,18 +141,23 @@ interface Leaf {
   afloat: boolean;
   /** Lying: seconds left before it withers; NaN while it falls. */
   lying: number;
+  petal: boolean;
   yaw: number;
   rgb: [number, number, number];
 }
 
 export class FallingLeaves {
-  readonly mesh: InstancedMesh;
+  /** The leaves and the petals, each their own mesh. */
+  readonly group = new Group();
+  private readonly mesh: InstancedMesh;
+  private readonly petals: InstancedMesh;
   /** Scratch for each frame's posing (nothing is made there). */
   private readonly scratch = { m: new Matrix4(), q: new Quaternion(), turn: new Quaternion(), scale: new Vector3(), up: new Vector3(0, 1, 0) };
   private readonly leaves: Leaf[] = [];
   private readonly cells = new Map<number, Crown[]>();
   private readonly rng = new Rng(57);
   private readonly colors: InstancedBufferAttribute;
+  private readonly petalColors: InstancedBufferAttribute;
   private readonly wind = { x: 0, z: 0 };
 
   constructor(crowns: readonly Crown[]) {
@@ -117,6 +177,17 @@ export class FallingLeaves {
     this.mesh.castShadow = false;
     this.mesh.receiveShadow = true;
     this.mesh.layers.set(LAYER_NO_REFLECT);
+    this.petals = new InstancedMesh(petalGeometry(5, 4), petalMaterial(), MOST);
+    this.petals.name = 'petals';
+    this.petalColors = new InstancedBufferAttribute(new Float32Array(MOST * 3), 3);
+    this.petals.instanceColor = this.petalColors;
+    this.petals.count = 0;
+    this.petals.frustumCulled = false;
+    this.petals.castShadow = false;
+    this.petals.receiveShadow = true;
+    this.petals.layers.set(LAYER_NO_REFLECT);
+    this.group.name = 'leaves';
+    this.group.add(this.mesh, this.petals);
   }
 
   /** Debug: where the first few leaves are and whether they lie, for checking them. */
@@ -138,24 +209,33 @@ export class FallingLeaves {
     const { m, q, turn, scale, up } = this.scratch;
     const gust = G.uWind.value.z;
     let n = 0;
+    let leafN = 0;
+    let petalN = 0;
     for (let i = 0; i < this.leaves.length; i++) {
       const l = this.leaves[i];
       if (!this.step(l, dt, t, gust) || (!keepFar && Math.hypot(l.p.x - eye.x, l.p.z - eye.z) > LOSE)) continue;
-      this.leaves[n] = l;
+      this.leaves[n++] = l;
       // falling it tumbles; lying it rests flat, turned its own way, withering away at the last
       if (Number.isNaN(l.lying)) q.setFromAxisAngle(l.axis, l.angle);
       else q.setFromAxisAngle(up, l.yaw);
       if (Number.isNaN(l.lying)) q.multiply(turn.setFromAxisAngle(up, l.yaw));
       const fade = Number.isNaN(l.lying) ? 1 : Math.min(1, l.lying);
       m.compose(l.p, q, scale.setScalar(l.size * fade));
-      this.mesh.setMatrixAt(n, m);
-      this.colors.setXYZ(n, l.rgb[0], l.rgb[1], l.rgb[2]);
-      n++;
+      if (l.petal) {
+        this.petals.setMatrixAt(petalN, m);
+        this.petalColors.setXYZ(petalN++, l.rgb[0], l.rgb[1], l.rgb[2]);
+      } else {
+        this.mesh.setMatrixAt(leafN, m);
+        this.colors.setXYZ(leafN++, l.rgb[0], l.rgb[1], l.rgb[2]);
+      }
     }
     this.leaves.length = n;
-    this.mesh.count = n;
+    this.mesh.count = leafN;
+    this.petals.count = petalN;
     this.mesh.instanceMatrix.needsUpdate = true;
+    this.petals.instanceMatrix.needsUpdate = true;
     this.colors.needsUpdate = true;
+    this.petalColors.needsUpdate = true;
   }
 
   /** The crowns near the camera let go of new leaves, by the season and the wind. */
@@ -210,7 +290,8 @@ export class FallingLeaves {
     if (this.leaves.length >= MOST) return;
     const r = this.rng;
     const pick = (list: Color[]) => list[r.int(0, list.length - 1)];
-    const color = petal ? pick(PETALS) : r.next() < 0.3 + 0.6 * dryness ? pick(DRY) : pick(GREEN);
+    const tint = PETAL_TINTS[r.int(0, PETAL_TINTS.length - 1)];
+    const color = petal ? new Color(tint[0], tint[1], tint[2]) : r.next() < 0.3 + 0.6 * dryness ? pick(DRY) : pick(GREEN);
     const shade = r.range(0.8, 1.1);
     const slipAt = r.range(0, Math.PI * 2);
     const floor = this.floorAt(x, z);
@@ -225,12 +306,13 @@ export class FallingLeaves {
       slipA: r.range(0.25, 0.9),
       phase: r.range(0, Math.PI * 2),
       sink: petal ? r.range(0.35, 0.75) : r.range(0.7, 1.5),
-      size: petal ? r.range(0.09, 0.13) : r.range(0.08, 0.14),
+      size: petal ? r.range(PETAL_LENGTH[0], PETAL_LENGTH[1]) : r.range(0.08, 0.14),
       floor: floor.y,
       floorX: x,
       floorZ: z,
       afloat: floor.water,
       lying: Number.NaN,
+      petal,
       yaw: r.range(0, Math.PI * 2),
       rgb: [color.r * shade, color.g * shade, color.b * shade],
     };

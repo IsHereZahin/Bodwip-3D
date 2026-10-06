@@ -190,6 +190,53 @@ float waterSurface(vec2 p) {
   return lv.g > 0.5 ? uWaterLevel : lv.b > 0.5 ? lv.r : -1e4;
 }
 
+// ---- rain on still water (the waters, the puddles, the flooded plots) ----
+// The drops land in cells of three sizes. Each cell's drop falls at a fresh place and size every time (each cell
+// keeps its own period), so no pattern repeats. How many cells are struck goes with how hard it rains (rain,
+// 0..1), and the biggest drops come only in a downpour. One drop at a time per cell, its ring kept inside the cell.
+// A fourth, finer layer is spray only: the many small drops that only splash (world/rain.ts's crowns).
+const vec4 RAIN_CELL = vec4(0.6, 1.0, 1.6, 0.32);
+
+float rainCell(float k) {
+  return k < 0.5 ? RAIN_CELL.x : k < 1.5 ? RAIN_CELL.y : k < 2.5 ? RAIN_CELL.z : RAIN_CELL.w;
+}
+
+// The drop of layer k in cell c now: xy where it struck (m), z how long ago (s), w its size (0..1); w < 0: none.
+vec4 rainDrop(vec2 c, float k, float rain) {
+  float size = rainCell(k);
+  float h = hash12(c + k * 17.31);
+  float period = 0.5 + 0.9 * h;
+  float tt = uTime / period + h * 7.0;
+  float n = floor(tt);
+  float chance = k < 0.5 ? rain : k < 1.5 ? rain * rain * 0.9 : k < 2.5 ? smoothstep(0.55, 1.0, rain) * 0.7 : rain * rain * 0.85;
+  if (hash13(vec3(c, n + k * 3.7)) > chance) return vec4(0.0, 0.0, 0.0, -1.0);
+  vec2 o = vec2(hash13(vec3(c, n + 0.37)), hash13(vec3(c + 5.1, n))) * 0.5 + 0.25;
+  return vec4((c + o) * size, fract(tt) * period, 0.35 + 0.65 * hash13(vec3(c - 2.3, n + 1.7)));
+}
+
+// The rings the drops raise round p: the surface's slope (xy), and the white of a splash where one has just struck (z).
+vec3 rainRipples(vec2 p, float rain) {
+  vec3 r = vec3(0.0);
+  for (int i = 0; i < 3; i++) {
+    float k = float(i);
+    float size = rainCell(k);
+    vec4 d = rainDrop(floor(p / size), k, rain);
+    if (d.w < 0.0) continue;
+    float ph = d.z / (0.5 + 0.4 * d.w);
+    if (ph >= 1.0) continue;
+    vec2 o = p - d.xy;
+    float dist = length(o);
+    // the ring spreads, widening and dying (never past the cell: the drop lands in its middle half); its crest
+    // catches the light a little
+    float x = (dist - ph * size * (0.14 + 0.1 * d.w)) / (0.018 + 0.04 * ph);
+    float fade = (1.0 - ph) * (1.0 - ph) * (0.5 + 0.9 * d.w);
+    float crest = exp(-x * x);
+    r.xy += o / max(dist, 1e-3) * (-2.0 * x * crest) * fade * 0.65;
+    r.z += crest * fade * 0.35 + smoothstep(0.035 + 0.03 * d.w, 0.0, dist) * smoothstep(0.09, 0.0, d.z) * d.w;
+  }
+  return r;
+}
+
 // Seen from above the water, anything under its surface fades into the silty water body with the
 // length of water the eye looks through it; the surface itself adds only reflection, glitter and foam
 vec3 underwater(vec3 col, vec3 wpos) {

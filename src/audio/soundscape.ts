@@ -12,6 +12,8 @@ export class Soundscape {
   private wind: GainNode | null = null;
   private windFilter: BiquadFilterNode | null = null;
   private rain: GainNode | null = null;
+  /** A downpour's roar under the hiss: low and full, only in heavy rain. */
+  private downpour: GainNode | null = null;
   private nextBird = 2;
   private nextCricket = 0;
   /** Thunder on its way (it travels at the speed of sound), to be let fade if the scene changes first. */
@@ -67,6 +69,7 @@ export class Soundscape {
     src.connect(this.windFilter).connect(this.wind).connect(this.master);
     // rain: a bright hiss on the water and the leaves, silent until it rains
     this.rain = this.bed(9000, 1400, 0);
+    this.downpour = this.bed(900, 120, 0);
   }
 
   setMuted(muted: boolean): void {
@@ -241,7 +244,9 @@ export class Soundscape {
     this.lap.gain.setTargetAtTime(0.03 * water, now, 1.5);
     // the wind roars more than it grows: louder and higher as it strengthens
     this.wind.gain.setTargetAtTime(0.008 + 0.018 * wind + 0.012 * wind * wind, now, 1);
-    this.rain.gain.setTargetAtTime(0.09 * rain, now, 1.5);
+    // the hiss grows faster than the rain (a drizzle is soft, a downpour loud), and a roar comes in under it
+    this.rain.gain.setTargetAtTime(0.04 * rain + 0.08 * rain * rain, now, 1.5);
+    if (this.downpour) this.downpour.gain.setTargetAtTime(0.11 * Math.max(0, (rain - 0.45) / 0.55) ** 1.5, now, 2);
     this.windFilter.frequency.setTargetAtTime(280 + 140 * wind + 260 * Math.sin(now * 0.07) ** 2, now, 2);
     if (this.muted || this.hidden) return;
     // the birds keep quiet in the rain and a hard wind, as the songbirds do (they sit still then)

@@ -33,6 +33,11 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
 - **Moonrise:** the moon often starts behind the bank's trees; an event's time is when the moon's centre is on the horizon.
 - **New-moon nights** are dark but readable (`glowE` in `environment.ts`).
 - **Rain** streaks are drawn only within 22 m of the camera. They aren't blocked by geometry, except under the girl's umbrella (`uShelter`).
+- **Where the rain strikes:**
+  - Splashes show on the water, the ground, the ghats and the bridge's deck. None show on roofs, boats or leaves: these only look wet, and the leaves are knocked by the drops.
+  - Puddles mirror only the hazy sky (there is no real reflection), darkened for the surroundings they would show.
+  - Ground under trees and eaves wets like open ground.
+  - The terrain's `aPool` sees a hollow only at its vertex spacing (2 m near the camera), so the finer dips come from a noise.
 - **Lightning** strikes only far off (650–1700 m): no near strikes, ground flashes or trees hit.
 - **What moves casts no shadow:**
   - the hero boat (a soft spot under the majhi stands in);
@@ -51,7 +56,13 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
   - A free camera within 1 m of a person can clip the arms at the near plane.
 - **Bank grass is placed at the mean water level.** In the rains some of it stands in water. In the dry months the exposed beds keep their underwater colour (wet mud and pebbles), never cracked dry ground.
 - **The salt creek's water** has the river's colour. The gher's water is painted on the terrain, so the gher fisherman's net sinks "into the ground".
-- **The cast net** is a family of shapes (bag ↔ bell), not cloth physics. It ignores wind and obstacles, and the cast runs only on its 19 s cycle near the viewer.
+- **The cast net** is a family of shapes (bag ↔ bell), not cloth physics. It ignores wind and obstacles, and the cast runs only on its 25 s cycle near the viewer. No fish show in the lifted bag.
+- **Petals:**
+  - The film's tree stands ≈11 m back from the khal (the banks are kept clear of trees), so its petal is carried ≈7 m out by the scene's held breeze (`windToward`).
+  - Only the film's petal ripples the water as it touches. Floating petals hide inside the hero's hull rather than being pushed aside.
+  - Lying petals sit on the ground, so tall grass hides many of them.
+  - A crown's carpet is laid over ≈0.5 s after it comes within 70 m (unseen: it shows from 38 m).
+- **Depth of field** gathers 40 taps a pixel: a fine grain shows in the strongest blur. Rain streaks and other things that write no depth take the blur of what is behind them.
 - **The reapers** cut at the field's edge, but the field never shrinks (crops are a per-plot shader).
 - **The three salt rakers** share one body (`majhi`) in different clothes, and are posed only within 320 m.
 - **The storm wind** is strong (≈12 m/s mean, gusts doubling), so the boat slows to ≈0.7 m/s.
@@ -71,5 +82,5 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
 - **Vegetation:** distant coconuts read as poles; the far villages' rows; homestead groves' density.
 - **A light, atmosphere, colour and performance pass:** far-tree LOD or impostors; a cheaper terrain shader far off.
 - **Remove the water shader's inert sea, ship and net parts** (`world/water.ts`'s sea mesh and ship waves, `waves.ts` swell/exposure). Do it carefully, with before/after shots.
-- **Depth of field for film close-ups.** It needs a depth texture, because the scene render target is MSAA.
+
 - **Sound:** a koel at dusk, distant boats, more birdsong.

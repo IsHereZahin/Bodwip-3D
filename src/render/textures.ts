@@ -1239,8 +1239,11 @@ export function castNetTexture(): DataTexture {
   const S = 128;
   const N = 6;
   const ctx = paint(S, S, (c) => {
+    // the fine twine between the knots a faint veil, so the spread net reads as one from across the water
+    c.fillStyle = 'rgba(226,220,204,0.1)';
+    c.fillRect(0, 0, S, S);
     c.strokeStyle = 'rgba(232,226,210,1)';
-    c.lineWidth = 2.8;
+    c.lineWidth = 3.4;
     const cell = S / N;
     for (let k = -N; k <= 2 * N; k++) {
       c.beginPath();
@@ -1260,6 +1263,50 @@ export function castNetTexture(): DataTexture {
     }
   });
   return toTexture(ctx, { repeat: true, bleed: true });
+}
+
+/**
+ * A red flower's petal (the krishnachura's, the shimul's), as world/petals.ts maps it: its narrow claw at the
+ * bottom, its blade above. Scarlet, deeper toward the rim, yellowing into the claw with a few pale streaks, fine
+ * veins fanning out from it. Tinted per petal by an instance colour.
+ */
+export function petalTexture(): DataTexture {
+  const S = 128;
+  const rng = new Rng(83);
+  const ctx = paint(S, S, (c) => {
+    const g = c.createRadialGradient(S / 2, S * 1.04, S * 0.02, S / 2, S, S * 1.02);
+    g.addColorStop(0, 'rgb(244,206,112)');
+    g.addColorStop(0.16, 'rgb(234,112,52)');
+    g.addColorStop(0.34, 'rgb(214,44,22)');
+    g.addColorStop(0.85, 'rgb(196,32,18)');
+    g.addColorStop(1, 'rgb(160,22,14)');
+    c.fillStyle = g;
+    c.fillRect(0, 0, S, S);
+    // the veins, fanning from the claw, each a little bent
+    for (let i = 0; i < 30; i++) {
+      const a = -Math.PI / 2 + (i / 29 - 0.5) * 2.4 + rng.range(-0.05, 0.05);
+      const len = S * rng.range(0.8, 1.05);
+      const bend = rng.range(-0.12, 0.12);
+      c.strokeStyle = `rgba(110,8,6,${rng.range(0.1, 0.22).toFixed(3)})`;
+      c.lineWidth = rng.range(0.6, 1.3);
+      c.beginPath();
+      c.moveTo(S / 2, S);
+      c.quadraticCurveTo(S / 2 + Math.cos(a + bend) * len * 0.5, S + Math.sin(a + bend) * len * 0.5, S / 2 + Math.cos(a) * len, S + Math.sin(a) * len);
+      c.stroke();
+    }
+    // the claw's pale streaks
+    for (let i = 0; i < 9; i++) {
+      const a = -Math.PI / 2 + (i / 8 - 0.5) * 1.1;
+      const len = S * rng.range(0.16, 0.3);
+      c.strokeStyle = `rgba(250,236,190,${rng.range(0.25, 0.5).toFixed(3)})`;
+      c.lineWidth = rng.range(1, 2.2);
+      c.beginPath();
+      c.moveTo(S / 2, S);
+      c.lineTo(S / 2 + Math.cos(a) * len, S + Math.sin(a) * len);
+      c.stroke();
+    }
+  });
+  return toTexture(ctx);
 }
 
 /** A soft round shadow, dark in the middle and gone at the rim (alpha only), for contact shadows. */

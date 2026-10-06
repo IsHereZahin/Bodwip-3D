@@ -231,15 +231,18 @@ function patchGeometry(n: Node): BufferGeometry {
   const col = new Float32Array((V + skirt) * 3);
   const zone = new Float32Array(V + skirt);
   const splat = new Float32Array((V + skirt) * 4);
-  const write = (k: number, x: number, y: number, z: number, nx: number, ny: number, nz: number, c: Cover) => {
+  const pool = new Float32Array(V + skirt);
+  const write = (k: number, x: number, y: number, z: number, nx: number, ny: number, nz: number, c: Cover, holds: number) => {
     pos.set([x, y, z], k * 3);
     nrm.set([nx, ny, nz], k * 3);
     col.set(c.color, k * 3);
     zone[k] = c.zone;
     splat.set([c.grass, c.dirt, c.sand, c.pebbles], k * 4);
+    pool[k] = holds;
   };
   const covers: Cover[] = [];
   const normals: [number, number, number][] = [];
+  const holding: number[] = [];
   for (let j = 0; j <= N; j++) {
     for (let i = 0; i <= N; i++) {
       const x = x0 + i * step;
@@ -252,7 +255,12 @@ function patchGeometry(n: Node): BufferGeometry {
       const c = cover(x, z, h);
       covers.push(c);
       normals.push([-dx / l, 1 / l, -dz / l]);
-      write(j * (N + 1) + i, x, h, z, -dx / l, 1 / l, -dz / l, c);
+      // how readily rain stands here: on trodden earth and swept yards (packed hard), in a hollow below its
+      // neighbours, never on a slope it runs off; the paddy holds its own water (the plots' in render/patch.ts)
+      const hollow = (hs[(j + 1) * S + i] + hs[(j + 1) * S + i + 2] + hs[j * S + i + 1] + hs[(j + 2) * S + i + 1]) / 4 - h;
+      const holds = Math.min(1, c.bare * 0.7 + Math.max(0, hollow) * 5) * (1 - smoothstep(0.04, 0.16, Math.hypot(dx, dz))) * (c.zone > 0 ? 0.3 : 1);
+      holding.push(holds);
+      write(j * (N + 1) + i, x, h, z, -dx / l, 1 / l, -dz / l, c, holds);
     }
   }
   // the skirt: each edge vertex again, hung below so a coarser neighbour's edge cannot show a gap
@@ -264,7 +272,7 @@ function patchGeometry(n: Node): BufferGeometry {
   for (let j = N; j >= 0; j--) edge.push(j * (N + 1));
   edge.forEach((v, k) => {
     const n3 = normals[v];
-    write(V + k, pos[v * 3], pos[v * 3 + 1] - drop, pos[v * 3 + 2], n3[0], n3[1], n3[2], covers[v]);
+    write(V + k, pos[v * 3], pos[v * 3 + 1] - drop, pos[v * 3 + 2], n3[0], n3[1], n3[2], covers[v], holding[v]);
   });
   const idx = new Uint32Array(N * N * 6 + edge.length * 6);
   let q = 0;
@@ -302,6 +310,7 @@ function patchGeometry(n: Node): BufferGeometry {
   g.setAttribute('color', new BufferAttribute(col, 3));
   g.setAttribute('aZone', new BufferAttribute(zone, 1));
   g.setAttribute('aSplat', new BufferAttribute(splat, 4));
+  g.setAttribute('aPool', new BufferAttribute(pool, 1));
   g.setIndex(new BufferAttribute(idx.subarray(0, q), 1));
   g.computeBoundingSphere();
   return g;

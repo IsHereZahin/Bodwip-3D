@@ -313,7 +313,8 @@ export function buildVillages(huts: readonly HutPlan[], ghats: readonly Ghat[]):
   boats.setAttribute('aMoor', new BufferAttribute(middles, 3));
   const moored = new Mesh(
     boats,
-    patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), {
+    // (two-sided: her hull's inside is its back face, world/hull.ts)
+    patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85, side: DoubleSide }), {
       grime: 0.35,
       vertex: {
         key: 'moored',

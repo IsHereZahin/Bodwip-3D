@@ -13,7 +13,7 @@ import {
   Vector2,
   Vector3,
 } from 'three';
-import type { BufferGeometry } from 'three';
+import type { BufferGeometry, Vector4 } from 'three';
 import { LAYER_NO_REFLECT } from '../core/globals';
 import { smoothstep } from '../core/mathx';
 import { Rng } from '../core/rng';
@@ -437,6 +437,11 @@ export class SaltWorks {
   }
 
   /** `eye`: the camera; `salt`: the season's salt work (env/season.ts). */
+  /** The water's uniforms for the gher fisherman's net (world/water.ts `nets`). */
+  bindWater(a: Vector4, b: Vector4): void {
+    this.gherFisher.bindWater(a, b);
+  }
+
   /** Puts the gher's fisherman `at` s into his cast. */
   cueGher(at: number): void {
     this.gherFisher.cue(at);
@@ -451,6 +456,7 @@ export class SaltWorks {
     const gher = salt < 0.25;
     this.people.visible = working;
     this.gherFisher.group.visible = gher;
+    if (!gher) this.gherFisher.stillWater();
     this.hut.visible = gher;
     const far = (p: Vector3) => Math.hypot(p.x - F.x, p.z - F.z) > 320;
     if (far(eye) && (!also || far(also))) return;

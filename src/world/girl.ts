@@ -331,6 +331,7 @@ export class Girl {
   private readonly v = new Vector3();
   private readonly v2 = new Vector3();
   private readonly v3 = new Vector3();
+  private readonly v4 = new Vector3();
   private readonly end = new Vector3();
   private readonly pole = new Vector3();
   private readonly wind = new Vector3();
@@ -410,7 +411,7 @@ export class Girl {
     // the skirt: gathered close at her waist into many small folds that open as it falls into soft, crisp
     // flutes, standing out round her and swinging free toward the hem at her ankles
     const e = enclosing(body.data.sections.pelvis, SKIRT_TOP);
-    this.hips = { zc: e.zc, a: e.a + BODICE_OFF + 0.012, b: e.b + BODICE_OFF + 0.012 };
+    this.hips = { zc: e.zc, a: e.a + BODICE_OFF + 0.004, b: e.b + BODICE_OFF + 0.004 };
     this.skirt = new ClothTube(skirtMat, {
       segments: 48,
       rings: 22,
@@ -650,10 +651,18 @@ export class Girl {
 
   /** The skirt's ring at `t` (0 its top at her waist .. 1 its hem at her ankles). */
   private readonly skirtRing = (t: number, out: Ring): Ring => {
+    // gathered at her waist it turns with her hips; below it hangs plumb under its own weight (a hem following a
+    // hip tipped forward a few degrees stood 9 cm out behind her)
+    const plumb = smoothstep(0.05, 0.45, t);
     const ax = this.v.set(1, 0, 0).applyQuaternion(this.pelvisQ);
     const az = this.v2.set(0, 0, 1).applyQuaternion(this.pelvisQ);
-    const h = SKIRT_TOP - t * SKIRT_DROP;
-    out.c.set(0, h, this.hips.zc * (1 - t)).applyQuaternion(this.pelvisQ).add(this.pelvis);
+    ax.y *= 1 - plumb;
+    az.y *= 1 - plumb;
+    ax.normalize();
+    az.normalize();
+    out.c.set(0, SKIRT_TOP, this.hips.zc).applyQuaternion(this.pelvisQ).add(this.pelvis);
+    this.v3.set(0, -t * SKIRT_DROP, -this.hips.zc * t).applyQuaternion(this.pelvisQ);
+    out.c.add(this.v3.lerp(this.v4.set(0, -t * SKIRT_DROP, 0), plumb));
     // lower down it hangs round both legs (over its lining), clear of them, standing out toward the hem
     const legs = smoothstep(0.15, 0.6, t);
     const half = this.hipAt[0].distanceTo(this.hipAt[1]) / 2;

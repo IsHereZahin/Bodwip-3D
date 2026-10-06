@@ -496,10 +496,11 @@ uniform vec4 uBoat;      // x, z, heading, speed through the water
 uniform vec4 uOar;       // the paddle's blade in the boat's frame (x across, z along), how hard it pulls, how deep it is (0..1)
 uniform vec4 uSwirl;     // where the blade last came out (world x, z), seconds since, how hard it had pulled
 ${SHIP_UNIFORMS}
-uniform vec4 uNetA0;     // the lift net nearest the camera: its square's middle (x, z), half its side, its yaw
-uniform vec4 uNetB0;     // ... how hard its rim is cutting the surface, how much water is running out of it
-uniform vec4 uNetA1;     // the next nearest
+uniform vec4 uNetA0;     // the river fisherman's cast net (world/fisher.ts): the middle of what it covers (x, z), its reach, seconds since it struck
+uniform vec4 uNetB0;     // ... the strike's strength, how hard it is being hauled through, how much water is running off it, the cast's seed
+uniform vec4 uNetA1;     // the gher fisherman's
 uniform vec4 uNetB1;
+uniform vec4 uTouch;     // a light thing come down on the water (the film's petal, world/petals.ts): x, z, seconds since, how hard
 uniform vec3 uAmb;
 uniform float uInland;
 varying vec3 vWorld;
@@ -542,40 +543,32 @@ vec2 ripple(vec2 uv) { return texture2D(tNormal, uv).xy * 2.0 - 1.0; }
 
 // rings spreading from raindrops: in each cell of two offset grids a drop lands now and then, and its
 // ring widens and fades (squared by hand: pow() of a negative base is undefined in GLSL)
-vec2 rainRings(vec2 p) {
-  vec2 s = vec2(0.0);
-  for (int i = 0; i < 2; i++) {
-    vec2 q = p * (1.6 + float(i) * 0.9) + float(i) * 7.3;
-    vec2 c = floor(q);
-    float h = hash12(c + float(i) * 13.0);
-    float ph = fract(uTime * (0.9 + h) + h * 7.0);
-    vec2 o = fract(q) - 0.5 - (vec2(hash12(c + 3.1), hash12(c + 5.7)) - 0.5) * 0.6;
-    float d = length(o);
-    float k = (d - ph * 0.45) * 18.0;
-    s += o / max(d, 1e-3) * exp(-k * k) * (1.0 - ph);
-  }
-  return s;
-}
-
-// a lift net: rings spreading from its square's rim as it comes up through the surface or goes in, foam
-// where it cuts the water, and drops pattering inside the square once it is up (separate uniforms rather
-// than an indexed array, which ANGLE runs slowly)
+// a cast net (world/fisher.ts) and the water it stirs, all from where the net is and what it is doing:
+// - struck: its weighted rim hits all round at once, white for a moment where each weight goes in (each its own
+//   splash, so the ring is uneven), sending a train of ripples out over the open water and another in under the
+//   mesh; the twine dimples the surface inside as it sinks;
+// - hauled: the rim drawn in under the surface stirs the water round it, more as he heaves;
+// - lifted: the water pouring and dripping off the bag patters the surface under it.
 void netRings(vec4 na, vec4 nb, vec2 p, inout vec2 slope, inout float foam) {
-  if (nb.x + nb.y < 0.01) return;
+  if (na.z <= 0.0) return;
   vec2 o = p - na.xy;
-  vec2 ax = vec2(cos(na.w), -sin(na.w));
-  vec2 az = vec2(sin(na.w), cos(na.w));
-  vec2 l = vec2(dot(o, ax), dot(o, az));
-  vec2 e = abs(l) - na.z;
-  float edge = length(max(e, 0.0)) + min(max(e.x, e.y), 0.0);
-  float ae = abs(edge);
-  if (ae < 5.0 && nb.x > 0.01) {
-    vec2 nl = edge > 0.0 ? normalize(max(e, 0.0) + 1e-4) * sign(l) : (e.x > e.y ? vec2(sign(l.x), 0.0) : vec2(0.0, sign(l.y)));
-    vec2 nw = (ax * nl.x + az * nl.y) * (edge > 0.0 ? 1.0 : -1.0);
-    slope += nw * cos(ae * 8.0 - uTime * 6.5) * exp(-ae * 0.9) * nb.x * 0.22;
-    foam += nb.x * exp(-ae * 4.0) * 0.35 * smoothstep(0.35, 0.75, vnoise(p * 6.0 + uTime * 2.0));
+  float r = length(o);
+  if (r > na.z + 7.0) return;
+  vec2 dir = o / max(r, 1e-3);
+  float d = r - na.z;
+  float age = na.w;
+  float uneven = 0.55 + 0.9 * vnoise(vec2(atan(o.y, o.x) * 6.0 + nb.w, nb.w * 1.7));
+  if (age < 7.0) {
+    float decay = exp(-age * 0.5) * uneven;
+    float fo = d - age * 0.6;
+    float fi = d + age * 0.45;
+    slope += dir * cos(fo * 10.0) * exp(-fo * fo * 2.5) * 0.4 * decay;
+    if (d < 0.0) slope -= dir * cos(fi * 10.0) * exp(-fi * fi * 3.0) * 0.3 * decay * smoothstep(0.0, 0.6, r);
+    foam += exp(-d * d * 45.0) * nb.x * uneven * smoothstep(0.35, 0.7, vnoise(p * 6.5 + nb.w));
+    if (d < 0.0) slope += (vec2(vnoise(p * 5.0 + age), vnoise(p * 5.0 + 17.0 - age)) - 0.5) * 0.35 * exp(-age * 0.7);
   }
-  if (nb.y > 0.01 && e.x < 0.0 && e.y < 0.0) slope += rainRings(p * 1.4 + 11.0) * nb.y * 0.5;
+  if (nb.y > 0.01) slope += dir * cos(d * 9.0 - uTime * 6.5) * exp(-abs(d) * 1.3) * 0.22 * nb.y;
+  if (nb.z > 0.01 && r < na.z + 0.3) slope += rainRipples(p * 1.6 + nb.w, nb.z).xy * 0.8 * smoothstep(na.z + 0.3, na.z * 0.5, r);
 }
 
 // ---- the boat: fine rings for the shading (her bow wave, wake and the blade's push are boatWake's) ----
@@ -675,8 +668,14 @@ void main() {
     surf += smoothstep(0.09, 0.025, film) * smoothstep(0.0, 0.012, film) * min(open * 1.5, 1.0) * (0.55 + 0.45 * vnoise(wp.xz * 2.0 + uTime * 0.5));
   }
   slope += nB * 0.1 * uWind.z * max(windGust(wp.xz) - 1.0, 0.0) * far;
-  // rain: every drop rings the surface (the chop it raises comes with the waves above)
-  if (uRain > 0.01) slope += rainRings(wp.xz) * uRain * far;
+  // rain: every drop rings the surface where it strikes, its crest catching the light, white for an instant
+  // where it struck (the chop a downpour raises comes with the waves above)
+  float rainWhite = 0.0;
+  if (uRain > 0.01 && dist < 160.0) {
+    vec3 rr = rainRipples(wp.xz, uRain);
+    slope += rr.xy * (0.7 + 0.6 * uRain) * far;
+    rainWhite = rr.z * far;
+  }
   // a strong wind breaks the tops of the waves into whitecaps, streaked downwind, under the gusts
   // (none at all below a fresh breeze, even in its gusts: then the noise is not worth reading)
   float whitecaps = 0.0;
@@ -687,7 +686,7 @@ void main() {
     whitecaps = smoothstep(1.4, 2.6, blow) * smoothstep(0.72, 0.9, crest) * (0.5 + 0.5 * vnoise(wp.xz * 0.15 - uTime * 0.05));
   }
 
-  float foam = whitecaps * 0.6 * running;
+  float foam = whitecaps * 0.6 * running + rainWhite * 0.6;
   // in a strong wind the highest crests break, white for a moment in ragged patches, streaked away downwind
   float crest = smoothstep(0.4, 0.8, vWave / max(uSea.x, 0.02));
   if (crest > 0.0) {
@@ -742,6 +741,17 @@ void main() {
 
   netRings(uNetA0, uNetB0, wp.xz, slope, foam);
   netRings(uNetA1, uNetB1, wp.xz, slope, foam);
+  // a light thing touching the water: a short train of fine ripples spreading from it at a hand's breadth a
+  // second, widening and fading as they go (left out where a pixel is too coarse to draw them)
+  if (uTouch.w > 0.0 && uTouch.z < 5.0) {
+    vec2 td = wp.xz - uTouch.xy;
+    float tr = length(td);
+    float age = uTouch.z;
+    float front = tr - 0.03 - age * 0.24;
+    float spread = 0.035 + age * 0.03;
+    float train = exp(-front * front / (spread * spread)) * exp(-age * 0.8) / (1.0 + tr * 4.0);
+    slope += td / max(tr, 1e-3) * cos(front * 150.0) * train * 0.35 * uTouch.w * smoothstep(0.02, 0.006, footprint);
+  }
 
   // flecks of foam and silt riding the current, thickest in the slack water by the banks (none on still water)
   vec2 fq = vec2(fp.x * 0.9, fp.y * 0.22);
@@ -816,6 +826,8 @@ export interface Water {
   swirl: Vector4;
   /** The rings of the two lift nets nearest the camera. */
   nets: NetRipples;
+  /** A light thing come down on the water: x, z, seconds since, how hard (0: none). */
+  touch: Vector4;
   /** The three nearest moving ships (x, z, heading, speed) and their (half-length, half-beam), world/ships.ts. */
   ships: Vector4[];
   shipSizes: Vector4[];
@@ -835,6 +847,7 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
   const oar = new Vector4();
   const swirl = new Vector4(0, 0, 99, 0);
   const nets: NetRipples = { a: [new Vector4(), new Vector4()], b: [new Vector4(), new Vector4()] };
+  const touch = new Vector4();
   const ships = [new Vector4(), new Vector4(), new Vector4()];
   const shipSizes = [new Vector4(), new Vector4(), new Vector4()];
   const color = new Color();
@@ -855,6 +868,7 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
     uNetB0: { value: nets.b[0] },
     uNetA1: { value: nets.a[1] },
     uNetB1: { value: nets.b[1] },
+    uTouch: { value: touch },
     uShip0: { value: ships[0] },
     uShip1: { value: ships[1] },
     uShip2: { value: ships[2] },
@@ -899,6 +913,7 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
     boat,
     oar,
     swirl,
+    touch,
     nets,
     ships,
     shipSizes,

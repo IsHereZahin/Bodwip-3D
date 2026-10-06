@@ -103,6 +103,7 @@ There are no audio files and no map data.
   - A plot's crop comes from `plotRank`, in GLSL only (the terrain and the crops' vertex shader both read it).
   - A per-plot random rank turned the fields into a checkerboard, and the old bands of turned grids drew seams across them.
 - What a shader decides per tree or per plot that the CPU must also know (which trees flower, which crop a plot holds) has a CPU twin built from `glslHash12`/`glslNoise` (core/noise.ts): `bloomRank` (leaves.ts), `plotCropAt` (crops.ts). Change the shader and its twin together. The salt field's layout has its twin in `saltworks.ts` (`bundLines`, `saltStage`).
+- GLSL_COMMON's `rainDrop` is the one place that decides where and when the drops strike: the water's rings, the puddles' rings and the crowns all read it. Change it, or `RAIN_CELL`, there only (`world/rain.ts` builds its crowns' cells from the same sizes).
 - A season's share of 0 must give none. The blossom's ramp starts at the share; it used to leave ≈5% of the trees red all year.
 - Floating plants keep to the slack water along the banks (`EDGE` in `drift.ts`), and the bil's lilies keep off the boat's way (`routeGap`).
   - A floater with no water to go to waits as NaN. Keep waiting ones out of any spatial hash or neighbour loop: they all hashed to one cell, `collide` went quadratic, and the cut into the kash took ≈1 s. They look for water again on staggered frames (`RETRY`), never all in the same frame.
@@ -113,6 +114,11 @@ There are no audio files and no map data.
 - A detail painted into a tiling texture repeats with it: the plaster texture's fallen patches stood in rows along the bridge's walls as black marks every 3.4 m (the user saw them). Place one-off marks (fallen plaster, stains) as geometry; every plaster is `plasterTexture(seed, { fallen: false })`.
 - Check the winding of every new surface: the water grid's rings and four of the bridge's faces once faced inward and vanished.
   - `taperedTube` in `render/builder.ts` winds its triangles inward (known, not yet fixed project-wide). New single-sided geometry should wind outward; the sanko's bamboo uses a double-sided material.
+  - A hull (`buildHull` in `hull.ts`) winds outward, and its inside is its back face, so every boat's material is two-sided. Wound inward, a dinghy's near side vanished and the hero was lit from within.
+- A body's sections are fitted with the tightest ellipse that holds the skin (`enclosing` in `human.ts`). Scaling both axes by the worst point made every waist 5–18% too wide, and the lungi and the lehenga stood out from the hips (the user saw it on every character).
+- The cast net is drawn after the water while it is above it (`renderOrder` 1) and before it once sunk (−2). Drawn before the water in flight, the water painted over it and the net vanished between the hands and the splash.
+- A scene's `begin(stage, at)` is given the seconds into the scene a still starts at. A cue that runs on its own clock (the casts, the film's petal) starts that far on, or a still shows it at its start.
+- The film's petal follows a way worked out when it is cued (`HeroPetal.aim`). The camera reads that way (`PetalWay.at`, `slowAt`), never the mesh, so a still and the film agree and the warm-ahead can guess the shot.
 - Cloth vertex colours carry shading, so cloth materials need `vertexColors: true`. Anything added with them must have a colour attribute (build it with `MeshBuilder`), or it renders black.
 - `MeshBuilder.add(geometry, matrix, color)` takes one colour per call and ignores a geometry's own colours. Set colours per vertex yourself where they vary (the date-palm pot came out white).
 - Waves that move things must come from `waves.ts` (`waveHeight`/`waveSlope`, `hullWaves` for hulls, and the GLSL twins in shaders), so floating things ride what the eye sees.

@@ -1,4 +1,4 @@
-import { BoxGeometry, BufferAttribute, BufferGeometry, CylinderGeometry, DoubleSide, Group, LatheGeometry, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, PlaneGeometry, Quaternion, Vector2, Vector3 } from 'three';
+import { BoxGeometry, BufferAttribute, BufferGeometry, CylinderGeometry, DoubleSide, Group, LatheGeometry, LineBasicMaterial, LineSegments, Matrix4, Mesh, MeshBasicMaterial, MeshStandardMaterial, PlaneGeometry, Quaternion, Vector2, Vector3, type Vector4 } from 'three';
 import { LAYER_NO_REFLECT } from '../core/globals';
 import { clamp, lerp, smoothstep } from '../core/mathx';
 import { Rng } from '../core/rng';
@@ -20,12 +20,15 @@ import { SHELTERED, waveHeight, waveSlope } from './waves';
 // a fisherman catching fish with a net). His dinghy is tied to a bamboo pole planted in the bed; he stands in
 // her bow with the net gathered over his arm, winds his body round to the right, and swings: the net leaves
 // his hands as a bundle and opens in the air into a wide circle, spinning, its weighted rim dropping first,
-// and falls flat on the water with a ring of splashes. The weights carry the rim down while he holds the line,
-// so it closes over the fish like a bell; he hauls it in hand over hand, the rim drawn together under it,
-// lifts the dripping bag over the bow, lays it in the boat and shakes the catch out, a few silver fish
-// flapping on the boards, and gathers the net for the next cast. His body is the boatman's (human.ts) in his
-// own clothes, his hands on the net's neck or the line (boatman.ts holds); the net is a mesh of rings and
-// spokes laid each frame from where the cast has got to.
+// and falls flat on the water, its weighted rim striking all round in a ring of splashes that sends ripples out
+// over the open water and in under the mesh (the water shader, from `bindWater`'s uniforms: the water moves
+// because the net moved it). The weights carry the rim down while he holds the line, so it closes over the fish
+// like a bell; he hauls it in hand over hand, sitting back into each pull as the dinghy dips her bow, the rim
+// drawn together under the water and stirring it as it comes; draws the bag up out of the water at the bow,
+// water pouring and dripping from it and the fish in its bottom showing, swings it in, lays it in the boat and
+// shakes the catch out, a few silver fish flapping on the boards, and gathers the net for the next cast. No two
+// casts fall quite alike. His body is the boatman's (human.ts) in his own clothes, his hands on the net's neck
+// or the line (boatman.ts holds); the net is a mesh of rings and spokes laid each frame from where the cast has got to.
 
 /** The dinghy: a little shorter and narrower than the boats at the ghats. */
 const DINGHY: HullShape = { len: 5.2, beam: 0.62, keelMid: -0.2, keelRise: 0.55, sheerMid: 0.3, sheerRise: 0.62 };
@@ -40,10 +43,15 @@ const CAST = { reach: 5.6, apex: 1.7 };
 
 /**
  * The cast's moments (s from the cycle's start): holding the net, winding round, the swing and the net's
- * leaving his hands, its landing, taking up the line, hauling (five pulls), the bag lifted out and laid in the
- * boat, the catch shaken out, the net gathered again.
+ * leaving his hands, its landing, taking up the line while it sinks, hauling (six pulls, hand over hand), the bag
+ * drawn up out of the water at the bow (raised), swung in and laid in the boat, the catch shaken out, the net
+ * gathered again.
  */
-const T = { windup: 1.6, swing: 2.9, release: 3.3, through: 3.45, land: 4.6, grab: 5.0, haul: 7.6, pull: 1.0, pulls: 5, raised: 13.4, laid: 14.4, emptied: 15.6, cycle: 19 };
+const T = { windup: 1.6, swing: 2.9, release: 3.3, through: 3.45, land: 4.6, grab: 5.2, haul: 7.8, pull: 1.4, pulls: 6, raised: 18.6, laid: 20.0, emptied: 21.4, cycle: 25 };
+/** When the last pull ends and the bag starts up out of the water. */
+const HAUL_END = T.haul + T.pull * T.pulls;
+/** Drops running off the lifted net. */
+const DRIPS = 56;
 /** The catch: how many fish come up in the net. */
 const CATCH = 5;
 
@@ -129,8 +137,19 @@ export class Fisher {
   private readonly linePos: Float32Array;
   private readonly catchFish: Mesh[] = [];
   private readonly fishSpots: { u: number; v: number; turn: number; beat: number }[] = [];
-  private nextDrip = 0;
   private splashed = false;
+  /** This cast's own: how far off his line (m) and how much further or shorter the net falls, how wide it opens, its spin and seed. */
+  private cast = { side: 0, reach: 0, spread: 1, spin: 0, seed: 0 };
+  private casts = 0;
+  /** How hard he is heaving on the line now (0..1), which dips her bow. */
+  private heave = 0;
+  /** The water the net stirs: the shader's uniforms for it (world/water.ts), once bound. */
+  private water: { a: Vector4; b: Vector4 } | null = null;
+  private readonly drips: LineSegments;
+  private readonly dripPos: Float32Array;
+  private readonly dripVel = new Float32Array(DRIPS);
+  private dripOwed = 0;
+  private readonly dripRng = new Rng(131);
 
   // scratch
   private readonly v = new Vector3();
@@ -216,7 +235,7 @@ export class Fisher {
       patchMaterial(
         // (one pass for both its faces: a veil of twine needs no back-to-front pair, whose second program was first
         // compiled when the net first came into view)
-        new MeshStandardMaterial({ map: castNetTexture(), color: '#c4bba4', vertexColors: true, transparent: true, depthWrite: false, side: DoubleSide, forceSinglePass: true, roughness: 0.8 }),
+        new MeshStandardMaterial({ map: castNetTexture(), color: '#d6cfbb', vertexColors: true, transparent: true, depthWrite: false, side: DoubleSide, forceSinglePass: true, roughness: 0.8 }),
         { translucency: 1.1 },
       ),
     );
@@ -244,11 +263,20 @@ export class Fisher {
     const lineTube = tube(14);
     this.linePos = lineTube.pos;
     this.line = new Mesh(lineTube.g, patchMaterial(new MeshStandardMaterial({ color: '#cbbf9e', roughness: 0.9, side: DoubleSide }), {}));
-    for (const m of [this.rim, this.line]) {
-      m.frustumCulled = false;
-      m.renderOrder = -2;
-    }
+    this.rim.frustumCulled = false;
+    this.rim.renderOrder = -2;
+    // (the line is up out of the water: after it)
+    this.line.frustumCulled = false;
+    this.line.renderOrder = 1;
     this.group.add(this.net, this.rim, this.line);
+    // the drops running off the net as it comes up: short streaks falling to the water
+    this.dripPos = new Float32Array(DRIPS * 6).fill(-1e4);
+    const dripGeo = new BufferGeometry();
+    dripGeo.setAttribute('position', new BufferAttribute(this.dripPos, 3));
+    this.drips = new LineSegments(dripGeo, new LineBasicMaterial({ color: '#dfe7ea', transparent: true, opacity: 0.55, depthWrite: false }));
+    this.drips.frustumCulled = false;
+    this.group.add(this.drips);
+    this.newCast();
 
     // the catch: small silver fish
     const fishMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.3, metalness: 0.35, side: DoubleSide }), {});
@@ -283,7 +311,8 @@ export class Fisher {
     }
     const seat = hullStation(DINGHY, 0.4);
     wood.add(new BoxGeometry(seat.hb * 2 - 0.04, 0.04, 0.22), new Matrix4().makeTranslation(0, seat.sheer - 0.1, (0.4 - 0.5) * DINGHY.len), rgb('#5a4733'));
-    this.boat.add(new Mesh(wood.build(), patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), { grime: 0.35 })));
+    // (two-sided: her hull's inside is its back face, world/hull.ts)
+    this.boat.add(new Mesh(wood.build(), patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85, side: DoubleSide }), { grime: 0.35 })));
     basket.position.set(-0.18, deck, (0.48 - 0.5) * DINGHY.len);
     this.boat.add(basket);
 
@@ -308,6 +337,31 @@ export class Fisher {
   cue(t: number): void {
     this.time = ((t % T.cycle) + T.cycle) % T.cycle;
     this.splashed = this.time > T.land;
+    this.newCast();
+    // where the net left his hands (known from the swing; put in here, for a cue past it)
+    this.boat.updateMatrixWorld(true);
+    this.boat.localToWorld(this.released.copy(this.stance).add(this.v.set(-0.15, 1.6, 0.6)));
+  }
+
+  /** The water's uniforms for the net he casts (world/water.ts `nets`: the middle and reach of what it stirs, and how). */
+  bindWater(a: Vector4, b: Vector4): void {
+    this.water = { a, b };
+  }
+
+  /** Hides what the net stirs (he is not casting where anyone can see). */
+  stillWater(): void {
+    this.water?.a.set(0, 0, 0, 0);
+    this.water?.b.set(0, 0, 0, 0);
+  }
+
+  /** A fresh cast: a little off his line, a little further or shorter, wider or narrower, its own spin. */
+  private newCast(): void {
+    this.casts++;
+    const h = (k: number) => {
+      const x = Math.sin(this.casts * 12.9898 + k * 78.233 + this.site.x * 0.37) * 43758.5453;
+      return x - Math.floor(x);
+    };
+    this.cast = { side: (h(1) - 0.5) * 1.0, reach: (h(2) - 0.5) * 0.7, spread: 0.93 + 0.12 * h(3), spin: h(4) * Math.PI * 2, seed: h(5) * 97 };
   }
 
   /**
@@ -321,6 +375,7 @@ export class Fisher {
     if (this.time >= T.cycle) {
       this.time -= T.cycle;
       this.splashed = false;
+      this.newCast();
     }
     const level = this.site.water ?? WATER_LEVEL + waterRise();
     if (this.afloat) this.floatBoat(t, level);
@@ -336,6 +391,12 @@ export class Fisher {
     this.layNet(t);
     this.layLine();
     this.layCatch(t);
+    this.layDrips(dt, level);
+    // drawn after the water while any of it is up in the air (the water writes its depth: what is under it is
+    // hidden, what is above shows; drawn before it, the water covered the flying net), before it while it lies
+    // sunk, so it shows through the water
+    const up = this.time < T.land || this.time >= HAUL_END;
+    this.net.renderOrder = this.rim.renderOrder = up ? 1 : -2;
   }
 
   /** She rides the sheltered ripples where she lies, and heels a little under his swing and his hauling. */
@@ -348,7 +409,7 @@ export class Fisher {
     // the slopes along her and across her, and his weight (crew is in her frame: x across, z along)
     const along = this.slope.x * s + this.slope.z * c;
     const across = this.slope.x * c - this.slope.z * s;
-    b.rotation.x = Math.atan(along) * 0.8 + this.man.crew.z * 0.02;
+    b.rotation.x = Math.atan(along) * 0.8 + this.man.crew.z * 0.02 + this.heave * 0.018;
     b.rotation.z = -Math.atan(across) * 0.8 - this.man.crew.x * 0.06;
   }
 
@@ -366,6 +427,7 @@ export class Fisher {
     d.lean = 0;
     right.thumb.set(0, 1, 0);
     left.thumb.set(0, 1, 0);
+    this.heave = 0;
     if (t < T.windup || t >= T.emptied) {
       // holding the net gathered on his arms (and gathering it again after the catch), breathing, ready
       const g = t >= T.emptied ? 1 - ease(span(t, T.emptied, T.emptied + 1.5)) : 0;
@@ -413,30 +475,47 @@ export class Fisher {
         d.shift = 0;
         this.bodyPoint(0.0, 1.0 + breathe, 0.42, 0, right.at);
         this.bodyPoint(0.12, 0.98 + breathe, 0.28, 0, left.at);
-      } else if (t < T.haul + T.pull * T.pulls) {
-        // hand over hand: one hand reaches forward down the line and draws it back while the other goes forward
+      } else if (t < HAUL_END) {
+        // hand over hand: each pull one hand, reached forward and down the line out over the bow, draws it back to
+        // his hip while the other goes forward over it for the next. He reaches with his weight forward and
+        // sits back into the draw, knees giving under the heave, his chest turning a little with the pulling arm;
+        // between pulls the net glides on and stops (its crown moves in surges, netAfterThrow)
         const k = (t - T.haul) / T.pull;
         const f = k - Math.floor(k);
         const odd = Math.floor(k) % 2 === 1;
-        const back = ease(span(f, 0, 0.6));
-        const fore = ease(span(f, 0.6, 1));
         const puller = odd ? left : right;
-        const other = odd ? right : left;
+        const reacher = odd ? right : left;
         const ps = odd ? 1 : -1;
-        this.bodyPoint(ps * lerp(0.02, 0.2, back) * (1 - fore), lerp(0.88, 1.12, back) - 0.24 * fore, lerp(0.62, 0.12, back) + 0.5 * fore, 0, puller.at);
-        this.bodyPoint(-ps * lerp(0.2, 0.02, back), lerp(1.12, 0.88, back), lerp(0.12, 0.62, back), 0, other.at);
-        twist = ps * 0.12 * Math.sin(Math.PI * back);
-        d.bend = 0.3 + 0.12 * Math.sin(Math.PI * f);
-        d.crouch = 0.08;
-        d.shift = 0.04;
+        const draw = ease(span(f, 0.08, 0.78));
+        const heave = Math.sin(Math.PI * span(f, 0.08, 0.78));
+        // his body: back with the draw, forward again as the next reach comes (continuous from pull to pull)
+        const back = f < 0.78 ? draw : 1 - ease(span(f, 0.78, 1));
+        this.bodyPoint(ps * lerp(0.06, 0.2, draw), lerp(0.84, 0.97, draw), lerp(0.74, 0.06, draw), 0, puller.at);
+        const go = ease(span(f, 0.05, 0.9));
+        this.bodyPoint(-ps * lerp(0.2, 0.06, go), lerp(0.97, 0.84, go) + 0.12 * Math.sin(Math.PI * go), lerp(0.06, 0.74, go), 0, reacher.at);
+        // (the hand drawing faces down the line, its thumb along it; the reaching one turned over to take it)
+        puller.thumb.set(0, 0.3, 1).normalize();
+        reacher.thumb.set(0, 0.6, 1).normalize();
+        twist = ps * 0.16 * heave;
+        d.bend = 0.42 - 0.32 * back + 0.04 * heave;
+        d.crouch = 0.07 + 0.08 * heave;
+        d.shift = 0.08 - 0.16 * back;
+        this.heave = heave;
       } else if (t < T.raised) {
-        // the bag up over the bow, both hands on its neck
-        const u = ease(span(t, T.haul + T.pull * T.pulls, T.raised));
-        d.bend = lerp(0.35, 0.2, u);
-        d.crouch = 0.06;
-        d.shift = 0.08;
-        this.bodyPoint(-0.08, lerp(0.95, 1.45, u), lerp(0.62, 0.48, u), 0, right.at);
-        this.bodyPoint(0.08, lerp(0.95, 1.45, u), lerp(0.62, 0.48, u), 0, left.at);
+        // the bag drawn up out of the water at the bow, hand over hand straight up, gathering the net into his
+        // hands as it comes: he straightens and leans back against its weight
+        const u = ease(span(t, HAUL_END, T.raised));
+        const k = (t - HAUL_END) / 0.6;
+        const f = k - Math.floor(k);
+        const odd = Math.floor(k) % 2 === 1;
+        const lift = ease(span(f, 0.1, 0.8));
+        const high = lerp(0.95, 1.4, u);
+        this.bodyPoint(-0.09, high + (odd ? 0.08 * lift : 0.08 * (1 - lift)), lerp(0.66, 0.5, u), 0, right.at);
+        this.bodyPoint(0.09, high + (odd ? 0.08 * (1 - lift) : 0.08 * lift), lerp(0.66, 0.5, u), 0, left.at);
+        d.bend = lerp(0.38, 0.12, u);
+        d.crouch = lerp(0.12, 0.07, u);
+        d.shift = lerp(0.06, -0.04, u);
+        this.heave = 0.5 * (1 - u);
       } else {
         // swung in to his left and laid on the boards, then shaken so the catch falls out
         const u = ease(span(t, T.raised, T.laid));
@@ -471,20 +550,20 @@ export class Fisher {
       this.open = 1 - Math.pow(1 - smoothstep(0.02, 0.7, f), 2);
       this.cup = lerp(0.45, 0.2, f);
       this.length = NET.length;
-      this.spin = 2.4 * (1 - Math.pow(1 - f, 2));
+      this.spin = this.cast.spin + 2.4 * (1 - Math.pow(1 - f, 2));
       this.lean = 0.65 * (1 - f);
+      this.say(0, 0, 0, 0, 0, 0, 0);
       return;
     }
     if (!this.splashed) {
-      // it falls on the water: a ring of splashes round its rim
+      // it falls on the water: its weighted rim strikes all round at once (the water shader rings it out from there)
       this.splashed = true;
       this.bed = terrainHeight(out.x, out.z);
-      this.fish.ring(this.v.copy(out).setY(level), NET.radius * 2.2);
-      this.fish.ring(this.v.copy(out).setY(level), NET.radius * 1.2);
     }
+    const R = NET.radius * this.cast.spread;
+    const age = t - T.land;
     this.lean = 0;
-    this.spin = 2.4;
-    const haulEnd = T.haul + T.pull * T.pulls;
+    this.spin = this.cast.spin + 2.4;
     if (t < T.haul) {
       // the weights carry the rim down; the crown stays near the surface on the line
       const u = ease(span(t, T.land, T.haul));
@@ -492,50 +571,115 @@ export class Fisher {
       this.open = lerp(1, 0.88, u);
       this.cup = lerp(0.2, Math.min(1.6, level - this.bed - 0.1), u);
       this.length = NET.length;
+      this.say(out.x, out.z, R * this.open, age, 1 - span(age, 0, 1.6), 0, 0);
       return;
     }
     // the bow, where he draws the crown to and lifts it out
     const bow = this.boat.localToWorld(this.v2.set(0, 0, this.afloat ? DINGHY.len * 0.5 + 0.2 : 0.9));
-    if (t < haulEnd) {
-      // each pull draws it a step nearer, the rim closing under it first; the last lifts the crown clear
+    if (t < HAUL_END) {
+      // each pull draws it a surge nearer (gliding on a little, then stopping), the rim closing under it first,
+      // dragging under the surface; it comes up to it as it reaches the bow
       const k = (t - T.haul) / T.pull;
-      const steps = Math.floor(k) + ease(span(k - Math.floor(k), 0, 0.6));
+      const steps = Math.floor(k) + ease(span(k - Math.floor(k), 0.08, 0.85));
       const near = steps / T.pulls;
       this.crown.lerpVectors(out, bow, near);
-      this.crown.y = level - 0.05 + 0.75 * smoothstep(0.75, 1, near);
-      this.open = lerp(0.88, 0, ease(span(t, T.haul, T.haul + 2.2)));
-      this.cup = Math.min(1.6, level - this.bed - 0.1);
+      this.crown.y = level - 0.05 + 0.15 * smoothstep(0.85, 1, near);
+      this.open = lerp(0.88, 0, ease(span(t, T.haul, T.haul + 3.2)));
+      this.cup = lerp(Math.min(1.6, level - this.bed - 0.1), 0.9, smoothstep(0.5, 1, near));
       this.length = NET.length;
-      if (near > 0.8) this.drip(t, level);
+      this.say(this.crown.x, this.crown.z, Math.max(0.45, R * this.open), age, 0, 0.35 + 0.65 * this.heave, 0);
       return;
     }
-    // lifted: the crown between his hands, the full bag hanging below it, shorter as it is laid on the boards
+    if (t < T.raised) {
+      // drawn up at the bow: the crown rising between his hands, the net gathered into them as it comes, so the
+      // bag below it rises out of the water, pouring
+      const [right, left] = this.pose.holds;
+      this.hands.addVectors(right.at, left.at).multiplyScalar(0.5);
+      this.boat.localToWorld(this.v.copy(this.hands));
+      const u = ease(span(t, HAUL_END, T.raised));
+      this.crown.lerpVectors(this.v2.setY(level + 0.15), this.v, u);
+      this.crown.y -= 0.04;
+      this.open = 0;
+      this.cup = 0;
+      this.length = lerp(NET.length, 1.0, u);
+      const out = Math.max(0, this.crown.y - level) / this.length;
+      this.say(this.crown.x, this.crown.z, 0.4, 99, 0, 0.3 * (1 - u), Math.min(1, out * 1.5));
+      return;
+    }
+    // swung in: the crown between his hands, the bag hanging below it, shorter as it is laid on the boards
     const [right, left] = this.pose.holds;
     this.hands.addVectors(right.at, left.at).multiplyScalar(0.5);
     this.boat.localToWorld(this.crown.copy(this.hands)).y -= 0.04;
     this.open = 0;
     this.cup = 0;
     const floor = this.boat.position.y + this.stance.y;
-    this.length = clamp(this.crown.y - floor - 0.05, 0.25, NET.length * 0.8);
-    if (t < T.raised) this.drip(t, level);
+    this.length = clamp(this.crown.y - floor - 0.05, 0.25, 1.0);
+    // the last of the water running off it over the side as it swings in
+    const over = 1 - span(t, T.raised, T.raised + 0.9);
+    this.say(this.crown.x, this.crown.z, 0.4, 99, 0, 0, over * 0.6);
+  }
+
+  /**
+   * Tells the water what the net is doing to it: where (the middle and reach of what it covers), how long since it
+   * struck (s), the strike's strength, how hard it is being hauled through, how much water is running off it.
+   */
+  private say(x: number, z: number, reach: number, age: number, strike: number, pull: number, pour: number): void {
+    if (!this.water) return;
+    this.water.a.set(x, z, reach, age);
+    this.water.b.set(strike, pull, pour, this.cast.seed);
+  }
+
+  /** Drops running off the net while it is up out of the water: from its lower part, falling to the surface. */
+  private layDrips(dt: number, level: number): void {
+    const t = this.time;
+    const pouring = t >= HAUL_END && t < T.raised + 1.2 && this.afloat;
+    const pos = this.dripPos;
+    this.drips.visible = pouring || this.dripVel.some((v) => v !== 0);
+    if (!this.drips.visible) return;
+    if (pouring) this.dripOwed += dt * 70 * (1 - 0.6 * span(t, T.raised, T.raised + 1.2));
+    for (let i = 0; i < DRIPS; i++) {
+      const o = i * 6;
+      if (this.dripVel[i] === 0) {
+        if (this.dripOwed < 1) continue;
+        // from a knot in the lower half of the bag, if it is out of the water
+        const ring = Math.floor(this.dripRng.range(NET.rings * 0.45, NET.rings + 0.99));
+        const k = (ring * NET.spokes + Math.floor(this.dripRng.range(0, NET.spokes))) * 3;
+        if (this.netPos[k + 1] < level + 0.03) continue;
+        this.dripOwed--;
+        pos[o] = pos[o + 3] = this.netPos[k];
+        pos[o + 1] = this.netPos[k + 1];
+        pos[o + 2] = pos[o + 5] = this.netPos[k + 2];
+        this.dripVel[i] = -0.2;
+        continue;
+      }
+      this.dripVel[i] -= 9.81 * dt;
+      pos[o + 1] += this.dripVel[i] * dt;
+      // a streak back up along its fall
+      pos[o + 4] = pos[o + 1] + Math.min(0.09, 0.02 + Math.abs(this.dripVel[i]) * 0.012);
+      if (pos[o + 1] <= level) {
+        // into the water (its patter is the water shader's, under the bag; now and then a ring of its own)
+        if (this.dripRng.next() < 0.25) this.fish.ring(this.v.set(pos[o], level, pos[o + 2]), this.dripRng.range(0.35, 0.7));
+        this.dripVel[i] = 0;
+        pos[o + 1] = pos[o + 4] = -1e4;
+      }
+    }
+    this.dripOwed = Math.min(this.dripOwed, 4);
+    this.drips.geometry.attributes.position.needsUpdate = true;
   }
 
   /** Where the net falls: ahead of his feet, along her bow. */
   private landingPoint(level: number): Vector3 {
-    this.landing.set(Math.sin(this.site.yaw), 0, Math.cos(this.site.yaw)).multiplyScalar(CAST.reach + (this.afloat ? DINGHY.len * (STAND_AT - 0.5) : 0));
+    const fx = Math.sin(this.site.yaw);
+    const fz = Math.cos(this.site.yaw);
+    const reach = CAST.reach + this.cast.reach + (this.afloat ? DINGHY.len * (STAND_AT - 0.5) : 0);
+    // (this cast's own: a little off his line, across it)
+    this.landing.set(fx * reach + fz * this.cast.side, 0, fz * reach - fx * this.cast.side);
     return this.landing.add(this.v.set(this.site.x, level, this.site.z));
-  }
-
-  /** Water running out of the lifted net: small rings under it now and then. */
-  private drip(t: number, level: number): void {
-    if (t < this.nextDrip && t > this.nextDrip - 1) return;
-    this.nextDrip = t + 0.3;
-    this.fish.ring(this.v.copy(this.crown).setY(level), 0.9);
   }
 
   /** Lays the net's rings and spokes for its state now, and its weighted rim. */
   private layNet(t: number): void {
-    const R = NET.radius;
+    const R = NET.radius * this.cast.spread;
     const pos = this.netPos;
     const flying = this.lean > 0.001;
     // the lean: the spread net tilts back toward him in the air, about the line across his throw
@@ -545,14 +689,18 @@ export class Fisher {
     for (let i = 0; i <= NET.rings; i++) {
       const r = i / NET.rings;
       // gathered it hangs as a bag from its crown; spread it is a shallow bell, its rim lowest
-      const bagR = 0.04 + 0.15 * Math.sin(Math.PI * Math.min(r, 0.96)) * (0.6 + 0.4 * this.length / NET.length) + 0.04 * r;
+      // gathered it hangs as a sack from his hands, narrow at the top, full low down where the leads (drawn
+      // together under it) and the fish weigh it; spread it is a shallow bell, its rim lowest
+      const bagR = 0.025 + 0.17 * Math.pow(r, 1.3) * (1 - 0.45 * smoothstep(0.86, 1, r)) * (0.65 + 0.35 * this.length / NET.length);
       const rho = lerp(bagR, R * r * (1 - 0.1 * this.cup / 1.6), this.open);
       const h0 = lerp(-this.length * r, -this.cup * Math.pow(r, 1.6), this.open);
       for (let j = 0; j < NET.spokes; j++) {
         const a = (j / NET.spokes) * Math.PI * 2 + this.spin;
         // the twine ripples a little as it flies, and hangs unevenly in the bag
         const wob = flying ? 0.07 * Math.sin(3 * a + 7 * r - t * 9) * r : 0.03 * Math.sin(5 * a + 3 * r) * r * (1 - this.open);
-        this.v.set(Math.cos(a) * rho, h0 + wob, Math.sin(a) * rho);
+        // bunched, the twine folds unevenly round it
+        const fold = 1 + (1 - this.open) * (0.28 * Math.sin(3 * a + 5 * r + this.cast.seed) + 0.16 * Math.sin(7 * a - 3 * r));
+        this.v.set(Math.cos(a) * rho * fold, h0 + wob, Math.sin(a) * rho * fold);
         if (flying) this.v.applyQuaternion(this.q);
         this.v.add(this.crown);
         // never through the bed, nor (sunk or in the bag over the bow) far into the boat
@@ -573,7 +721,7 @@ export class Fisher {
       const k = (base + (j % NET.spokes)) * 3;
       for (let c = 0; c < 3; c++) {
         const a = (c / 3) * Math.PI * 2;
-        this.rimPos.set([pos[k] + Math.cos(a) * 0.016, pos[k + 1] + Math.sin(a) * 0.016, pos[k + 2]], (j * 3 + c) * 3);
+        this.rimPos.set([pos[k] + Math.cos(a) * 0.021, pos[k + 1] + Math.sin(a) * 0.021, pos[k + 2]], (j * 3 + c) * 3);
       }
     }
     this.rim.geometry.attributes.position.needsUpdate = true;
@@ -582,11 +730,14 @@ export class Fisher {
   /** The hand line from his left hand to the crown: slack while it flies out, taut as he hauls; coiled on his wrist otherwise. */
   private layLine(): void {
     const t = this.time;
-    const shown = t >= T.release && t < T.haul + T.pull * T.pulls;
+    const shown = t >= T.release && t < HAUL_END;
     this.line.visible = shown;
     if (!shown) return;
-    const hand = this.boat.localToWorld(this.v2.copy(this.pose.holds[1].at));
-    const sag = t < T.land ? 0.5 : t < T.haul ? 0.25 : 0.04;
+    // (hauling, it runs through the hand furthest out along it, taut while he heaves and easing between pulls)
+    const [right, left] = this.pose.holds;
+    const lead = t >= T.haul && right.at.z > left.at.z ? right : left;
+    const hand = this.boat.localToWorld(this.v2.copy(lead.at));
+    const sag = t < T.land ? 0.5 : t < T.haul ? 0.25 : 0.12 - 0.1 * this.heave;
     const n = 14;
     for (let i = 0; i < n; i++) {
       const f = i / (n - 1);
@@ -603,8 +754,7 @@ export class Fisher {
   /** The fish: in the bottom of the bag as it comes up, then on the boards, flapping, till they go in the basket. */
   private layCatch(t: number): void {
     const time = this.time;
-    const haulEnd = T.haul + T.pull * T.pulls;
-    const inBag = time > haulEnd - 1.2 && time < T.laid + 0.4;
+    const inBag = time > HAUL_END - 1.2 && time < T.laid + 0.4;
     const onBoards = time >= T.laid + 0.4 && time < T.cycle - 0.4;
     this.catchFish.forEach((m, i) => {
       const spot = this.fishSpots[i];

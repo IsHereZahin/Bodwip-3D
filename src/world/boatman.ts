@@ -45,9 +45,9 @@ const FEET = [
 ] as const;
 /** The lungi from its top to the hips, on the pelvis: [t, height from spine05's head, ease over the skin]. */
 const LUNGI_TOP: readonly (readonly [number, number, number])[] = [
-  [0.0, 0.065, 0.02],
-  [0.1, 0.04, 0.021],
-  [0.2, -0.025, 0.024],
+  [0.0, 0.065, 0.012],
+  [0.1, 0.04, 0.013],
+  [0.2, -0.025, 0.015],
 ];
 const LUNGI_HIPS = 0.2;
 /** The gamchha over his right shoulder: where it lies (round the shoulder, front over the top to the back) and which particles that holds. */

@@ -85,11 +85,14 @@ export function buildHull(b: MeshBuilder, shape: HullShape, colors: { tar: RGB; 
       b.vertex(p, n, z * 0.45, up * 1.6, c);
     }
   }
+  // wound to face outward, as her normals do (wound inward, her outside was a back face: the near side of a
+  // boat drawn one-sided vanished, and a two-sided one was lit as if from within); her inside is the back face,
+  // so a boat's material must be two-sided
   for (let i = 0; i < S; i++) {
     for (let j = 0; j < A; j++) {
       const a = start + i * (A + 1) + j;
       const c = a + A + 1;
-      b.quad(a, c, c + 1, a + 1);
+      b.quad(a, a + 1, c + 1, c);
     }
   }
 }

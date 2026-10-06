@@ -1,10 +1,10 @@
 import { Vector3 } from 'three';
-import { angleDelta, lerp, smoothstep } from '../core/mathx';
+import { angleDelta, clamp, lerp, smoothstep } from '../core/mathx';
 import { sunDirectionOn } from '../env/astro';
 import { makeSeasonState, seasonAt } from '../env/season';
 import { plotCropAt } from '../world/crops';
 import { FISHER_SITE } from '../world/fisher';
-import { BIL, BRIDGE, HOMESTEAD_MOUNDS, JOURNEY, SALT_CREEK, WATER_LEVEL, bridgeDeck, bridgeFrame, bridgeToWorld, corridorDistance, journeyAt, journeyFrame, journeyHalfWidth, landUse, saltPoint, shapePoint, terrainHeight, waterLevelAt, waterRise } from '../world/geography';
+import { BIL, BRIDGE, HOMESTEAD_MOUNDS, JOURNEY, SALT_CREEK, WATER_LEVEL, bridgeDeck, bridgeFrame, bridgeToWorld, corridorDistance, journeyAt, journeyFrame, journeyHalfWidth, landUse, saltPoint, shapePoint, terrainHeight, waterLevelAt, waterRise, waterwayAt } from '../world/geography';
 import { bloomRank } from '../world/leaves';
 import { LILY_PONDS } from '../world/ponds';
 import { SALT_FIELD, type Pt } from '../world/plan';
@@ -12,10 +12,10 @@ import { RAIL_LENGTH, TRAIN_SPEED, railAt } from '../world/railway';
 import { roadLines } from '../world/roads';
 import { gherStand, rakerStations } from '../world/saltworks';
 import { groundAt } from '../world/terrain';
-import { kashStand, treeCrowns } from '../world/vegetation';
+import { hasCrownDetail, kashStand, treeCrowns, type Crown } from '../world/vegetation';
 import type { Ghat } from '../world/village';
 import { bilPoint } from '../world/waterways';
-import type { Scene, SceneWorld, Stage } from './director';
+import type { PetalWay, Scene, SceneWorld, Stage } from './director';
 
 // The film tour: a year in the village round its young majhi, as a short film would tell it. A winter dawn
 // rising over the misty khal, the date palms' sap dripping into its pots, the young majhi paddling down the river
@@ -96,6 +96,7 @@ const alongOf = (p: Vector3) => journeyFrame(p.x, p.z)?.s ?? 0;
 
 const tmpA = new Vector3();
 const tmpB = new Vector3();
+const tmpC = new Vector3();
 
 /** A point relative to the boat: `a` m ahead, `s` m to her starboard (+x), `h` m above the water. */
 function rel(stage: Stage, a: number, s: number, h: number, out: Vector3): Vector3 {
@@ -189,21 +190,34 @@ function overField(f: { s: number; side: 1 | -1; edge: number }, u: number, heig
   look.set(lx, terrainHeight(lx, lz) + 0.4, lz);
 }
 
+/** The tree in red flower the film looks at, and the point of the boat's way nearest it (`s`, `side`). */
+export interface Blossom {
+  s: number;
+  side: 1 | -1;
+  crown: Vector3;
+  r: number;
+  /** Its crown, if one stands there (none in flower by the water: a point by the bank). */
+  tree: Crown | null;
+}
+let blossomPicked: Blossom | null = null;
+
 /**
- * The tree in red flower to stand under: of the crowns spring has in flower (bloomRank, leaves.ts), the biggest
- * within a few metres of the water by the boat's way, the khal's narrow water preferred. Where its crown is,
- * and the point of the way nearest it (`s`, `side`).
+ * The tree in red flower whose petal the film follows down to the water: of the crowns spring has in flower
+ * early (bloomRank, leaves.ts), the biggest whose crown reaches out over the water by the boat's way, the
+ * khal's narrow water preferred (picked once, when the trees stand; main.ts gives it its fuller crown).
  */
-function blossomTree(): { s: number; side: 1 | -1; crown: Vector3; r: number } {
-  let best = { score: -Infinity, s: JOURNEY.turn + 200, side: 1 as 1 | -1, crown: new Vector3(), r: 4 };
+export function blossomTree(): Blossom {
+  if (blossomPicked) return blossomPicked;
+  let best: Blossom & { score: number } = { score: -Infinity, s: JOURNEY.turn + 200, side: 1, crown: new Vector3(), r: 4, tree: null };
   for (const c of treeCrowns()) {
-    if (!c.blossom || bloomRank(c.x, c.z) > 0.28 || Math.hypot(c.x - BRIDGE.x, c.z - BRIDGE.z) < 45) continue;
+    if (!c.blossom || !hasCrownDetail(c) || bloomRank(c.x, c.z) > 0.28 || Math.hypot(c.x - BRIDGE.x, c.z - BRIDGE.z) < 45) continue;
     const f = journeyFrame(c.x, c.z);
     if (!f || f.s < JOURNEY.opening + 60 || f.s > JOURNEY.head - 40) continue;
     const near = f.d - journeyHalfWidth(f.s);
     if (near > 15) continue;
-    const score = c.r - near * 0.25 + (f.s > JOURNEY.turn ? 1.5 : 0);
-    if (score > best.score) best = { score, s: f.s, side: f.side as 1 | -1, crown: new Vector3(c.x, c.y, c.z), r: c.r };
+    // a crown standing back from the bank lets its petals fall on the land
+    const score = c.r - near * 0.25 - Math.max(0, near - 0.45 * c.r) * 1.5 + (f.s > JOURNEY.turn ? 1.5 : 0);
+    if (score > best.score) best = { score, s: f.s, side: f.side, crown: new Vector3(c.x, c.y, c.z), r: c.r, tree: c };
   }
   if (!Number.isFinite(best.score)) {
     // none in flower near the water: the bank's trees where the way passes, looked up into all the same
@@ -212,7 +226,77 @@ function blossomTree(): { s: number; side: 1 | -1; crown: Vector3; r: number } {
     best.crown.set(p.x + Math.cos(p.heading) * out, 0, p.z - Math.sin(p.heading) * out);
     best.crown.y = terrainHeight(best.crown.x, best.crown.z) + 6;
   }
+  blossomPicked = best;
   return best;
+}
+
+/** The petal's shot: how long it runs, and how far into it the petal lets go (s). */
+const PETAL_SHOT = 23;
+const PETAL_LETS_GO = 6;
+
+/**
+ * Where the petal's shot opens: low on the water near its far bank, upstream or down of where the petal comes
+ * down, whichever has the low sun well to the side (so the petals glow but the sun stays out of the frame); and
+ * what it looks at (the bank under the tree, the water before it filling the frame's foot).
+ */
+function petalOpening(petal: PetalWay, crown: Vector3, sun: Vector3, pos: Vector3, look: Vector3): void {
+  const L = petal.to;
+  const water = L.y;
+  look.copy(L).lerp(crown, 0.35).setY(water + 2.6);
+  const w = waterwayAt(L.x, L.z);
+  if (!w) {
+    pos.set(2 * L.x - crown.x, water + 1.9, 2 * L.z - crown.z);
+    return;
+  }
+  const { way, s, side } = w;
+  const sl = Math.hypot(sun.x, sun.z) || 1;
+  let best = -Infinity;
+  for (const dir of [1, -1]) {
+    const at = s + 6 * dir;
+    const p = way.beside(at, side, -(way.half(at) - 4));
+    const vx = look.x - p.x;
+    const vz = look.z - p.z;
+    const score = -Math.abs((vx * sun.x + vz * sun.z) / ((Math.hypot(vx, vz) || 1) * sl) - 0.3);
+    if (score > best) {
+      best = score;
+      pos.set(p.x, water + 1.9, p.z);
+    }
+  }
+}
+
+/** Moves `p` (level) out over the water of the waterway it is by, if it is less than `inset` m out from its bank. */
+function overWater(p: Vector3, inset: number): Vector3 {
+  const w = waterwayAt(p.x, p.z);
+  if (!w || w.d <= w.half - inset) return p;
+  const q = w.way.beside(w.s, w.side, w.half - inset);
+  return p.set(q.x, p.y, q.z);
+}
+
+/**
+ * The petal's shot at `tau` s after it lets go: from the opening (`petalOpening`) in toward it, rising over the
+ * water to meet it as it comes out under the crown (level with it, it shows against the land beyond, not lost in
+ * the red of the crown behind it), then following it down at an arm's length (its way without its swing, so it
+ * swings in the frame) to just over the water to watch it touch, and drawing back a little as it floats off.
+ */
+function petalPose(tau: number, petal: PetalWay, open: Vector3, openLook: Vector3, pos: Vector3, look: Vector3): void {
+  const slow = petal.slowAt(tau, tmpA);
+  const now = petal.at(tau, tmpB);
+  const water = petal.to.y;
+  // the way in: from the opening toward where it comes down
+  let dx = open.x - petal.to.x;
+  let dz = open.z - petal.to.z;
+  const dl = Math.hypot(dx, dz) || 1;
+  dx /= dl;
+  dz /= dl;
+  const end = PETAL_SHOT - PETAL_LETS_GO;
+  const followY = tau < petal.fall ? clamp(slow.y - 0.15, water + 0.62, water + 5.5) : water + lerp(0.62, 0.75, smoothstep(petal.fall + 0.5, end, tau));
+  // far enough off while it is above the camera not to look straight up at it; closing in as it nears the water
+  const off = Math.max(lerp(2.4, 0.95, smoothstep(2, petal.fall - 0.3, tau)), (slow.y - followY) * 1.2) + 0.25 * smoothstep(petal.fall + 1, end, tau);
+  const k = ease(smoothstep(-3, 7, tau));
+  // (over the water, never over the bank it falls above)
+  overWater(tmpC.set(slow.x + dx * off, followY, slow.z + dz * off), 1);
+  pos.set(open.x + 0.08 * tau * dz, open.y, open.z - 0.08 * tau * dx).lerp(tmpC, k);
+  look.copy(openLook).lerp(tmpC.copy(slow).lerp(now, 0.5), smoothstep(-0.5, 4.5, tau));
 }
 
 /**
@@ -301,7 +385,10 @@ const SALT_MEN = rakerStations();
 const NIGHT_LIFT = 0.38;
 
 /** The bridge's scene: the rains, an afternoon of drizzle (the girl's umbrella open, the majhi's mathal on). */
-const BRIDGE_WORLD: SceneWorld = { day: 205, hour: 15.6, weather: 'drizzle', wind: 0.5 };
+/** The fisherman's world: an autumn afternoon, the low sun behind the camera, still air. */
+const FISHER_WORLD: SceneWorld = { day: 300, hour: 16.3, weather: 'clear', wind: 0.3 };
+
+const BRIDGE_WORLD: SceneWorld = { day: 205, hour: 15.6, weather: 'rain', wind: 0.5, rain: [[0, 0.5], [1, 0.5]], wet: [[0, 0.96], [1, 0.96]] };
 
 /** A point of the bridge's frame (`bx` along it, `bz` along the khal) `up` m above the khal's water. */
 function onBridgeFrame(bx: number, bz: number, up: number, out: Vector3): Vector3 {
@@ -330,6 +417,14 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
   const aman = cropField(0, 210);
   const ripe = cropField(2, 318);
   const blossom = blossomTree();
+  // the low sun of the petal's afternoon, which its shot keeps to the side and ahead
+  const PETAL_DAY = 75;
+  const PETAL_HOUR = 16.3;
+  const petalSun = sunDirectionOn(PETAL_DAY, PETAL_HOUR, new Vector3());
+  // and its breeze, held blowing from the tree out over the water
+  const petalWay = waterwayAt(blossom.crown.x, blossom.crown.z);
+  const petalMid = petalWay ? petalWay.way.at(petalWay.s) : null;
+  const petalWind = petalMid ? Math.atan2(petalMid.x - blossom.crown.x, petalMid.z - blossom.crown.z) : undefined;
   const storm = stormHome();
   const road = talRoad();
   // the kash where it stands thickest on the bank, and the boat 40 m short of it coming up the khal
@@ -511,23 +606,27 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
     // ---------- the turning year ----------
     {
       caption: 'বসন্তের রং',
-      seconds: 14,
-      world: { day: 75, hour: 16.3, weather: 'clear', wind: 0.75 },
-      // on the water under a tree in red flower: up into its crown against the sky, its petals coming down past
-      // the lens, then down with them to the water where they float away on the current
-      pose: (u, _s, pos, look) => {
-        const s = blossom.s + lerp(-4, 2, u);
-        onWay(s, blossom.side * journeyHalfWidth(s) * 0.45, lerp(1.3, 1.7, u), pos);
-        a.copy(blossom.crown).setY(blossom.crown.y + 0.5);
-        // down to the water of the khal ahead, where the fallen petals float off on the current
-        onWay(s + 9, blossom.side * journeyHalfWidth(s) * 0.2, 0, b);
-        look.copy(a).lerp(b, smoothstep(0.35, 1, u) * 0.8);
+      seconds: PETAL_SHOT,
+      world: { day: PETAL_DAY, hour: PETAL_HOUR, weather: 'clear', wind: 0.35, windToward: petalWind },
+      // a tree in red flower over the khal, its fallen petals on the bank and afloat below it, from across the
+      // water; then in toward it as one petal lets go, following it down as it swings and tumbles in the breeze,
+      // over the water as it touches with a ring, and drawing back as it floats off among the others. The lens
+      // draws its focus from the tree to the petal as the camera comes in
+      begin: (s, at) => s.dropPetal(at - PETAL_LETS_GO),
+      pose: (u, s, pos, look) => {
+        petalOpening(s.petal, blossom.crown, petalSun, a, b);
+        petalPose(u * PETAL_SHOT - PETAL_LETS_GO, s.petal, a, b, pos, look);
+      },
+      focus: (u, s, eye) => {
+        const tau = u * PETAL_SHOT - PETAL_LETS_GO;
+        petalOpening(s.petal, blossom.crown, petalSun, a, b);
+        return lerp(eye.distanceTo(b), eye.distanceTo(s.petal.at(tau, a)), smoothstep(0, 5, tau));
       },
     },
     {
       caption: 'কালবৈশাখী',
       seconds: 15,
-      world: { day: 128, hour: 16.0, weather: 'storm', wind: 2.6 },
+      world: { day: 128, hour: 16.0, weather: 'storm', wind: 2.6, rain: [[0, 0.55], [0.3, 1], [1, 1]], wet: [[0, 0.15], [1, 0.75]] },
       // across the khal from a homestead in the squall: its palms and bamboo thrashing, the rain driving over the
       // water, lightning forking down beyond the trees
       // (the last early enough that its thunder, a few seconds behind it, is heard before the cut)
@@ -539,10 +638,30 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
     },
 
     // ---------- the rains ----------
+    // The monsoon told as it comes: the Asharh cloud gathering over the river and the wind rising before it, the
+    // first drops, the rain coming on as the majhi puts on his mathal, then the Asharh downpour on the village's
+    // ghat, the land darkening and the water standing in it; the steady rain on the bridge, easing over the gher
+    // and the aman, and the bil glistening after it. Each scene takes the wet up where the last left it.
+    {
+      caption: 'আষাঢ়ের মেঘ',
+      seconds: 13,
+      world: { day: 176, hour: 15.2, weather: 'rain', wind: null, rain: [[0, 0], [0.72, 0], [1, 0.1]], wet: [[0, 0.04], [1, 0.05]] },
+      journey: fractionAt(Math.max(60, JOURNEY.turn - 150)),
+      // low over the river ahead of the boat as she comes on, bareheaded in the close air: the cloud heavy and dark
+      // over the village, the wind getting up in the trees, a far flash in the cloud, and at the last the first drops
+      begin: (s) => {
+        s.bareheaded();
+        s.lightning([8.6]);
+      },
+      pose: (u, s, pos, look) => {
+        rel(s, lerp(26, 19, ease(u)), lerp(4.5, 3.2, u), lerp(2.0, 2.8, u), pos);
+        rel(s, 0, 0, 1.4, look).lerp(rel(s, -70, 0, 26, a), lerp(0.34, 0.28, u));
+      },
+    },
     {
       caption: 'বর্ষার খাল',
-      seconds: 14,
-      world: { day: 195, hour: 11.0, weather: 'rain', wind: null },
+      seconds: 15,
+      world: { day: 176, hour: 15.5, weather: 'rain', wind: null, rain: [[0, 0.1], [0.3, 0.22], [1, 0.5]], wet: [[0, 0.06], [1, 0.3]] },
       journey: fractionAt(JOURNEY.bridge + 220),
       // the rain comes on as the majhi paddles up the khal: beside him on the water, he rests his paddle, reaches
       // back for his mathal and puts it on, settles it, and paddles on, the rain hissing on the water round him
@@ -550,6 +669,30 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       pose: (u, s, pos, look) => {
         rel(s, lerp(-1.6, -2.1, u), lerp(-2.7, -2.2, u), lerp(1.8, 1.85, u), pos);
         rel(s, -3.0, 0.15, 1.8, look).lerp(rel(s, 5, 0.5, 1.4, a), 0.08);
+      },
+    },
+    {
+      caption: 'আষাঢ়ের ধারা',
+      seconds: 22,
+      // the Asharh downpour on the village's ghat: low across the water, the drops crowning and ringing it all over,
+      // the banyan streaming, the steps and the paving darkening and the water standing on them as it goes on;
+      // the boat comes through it, the majhi under his mathal; thunder in it, then it eases a little
+      world: { day: 176, hour: 16.0, weather: 'rain', wind: null, rain: [[0, 0.5], [0.3, 0.92], [0.7, 1], [1, 0.82]], wet: [[0, 0.32], [0.45, 0.72], [1, 0.97]] },
+      journey: fractionAt(Math.max(0, hubS - 22)),
+      begin: (s) => s.lightning([7.5, 15.2]),
+      pose: (u, _s, pos, look) => {
+        if (!hub) {
+          onWay(hubS + lerp(-18, -8, u), 0, lerp(1.0, 2.0, u), pos);
+          onWay(hubS, 8, 1.5, look);
+          return;
+        }
+        // from across the water, low over it, rising a little as it goes so the bank's wetting shows
+        const ux = Math.sin(hub.up);
+        const uz = Math.cos(hub.up);
+        const along = lerp(-6, 3, ease(u));
+        const out = Math.min(22, journeyHalfWidth(hubS) * 2 - 4);
+        pos.set(hub.x - ux * out + uz * along, surface() + lerp(0.9, 2.1, ease(u)), hub.z - uz * out - ux * along);
+        look.set(hub.x + ux * 3, surface() + lerp(1.2, 2.2, ease(u)), hub.z + uz * 3);
       },
     },
     // the bridge, in the rain: the girl with her red umbrella sees the majhi coming up the khal, watches him come,
@@ -650,10 +793,10 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
     {
       caption: 'বর্ষার ঘের',
       seconds: 14,
-      world: { day: 205, hour: 15.2, weather: 'drizzle', wind: 0.5 },
+      world: { day: 205, hour: 15.2, weather: 'drizzle', wind: 0.5, rain: [[0, 0.35], [1, 0.26]], wet: [[0, 0.95], [1, 0.93]] },
       // the salt field in the rains, kept as a fish gher: behind a man on its bund as he casts into the old
       // settling pond, the watchman's hut on its bamboo legs, the drizzle on the water
-      begin: (s) => s.gherFisherman(0.6),
+      begin: (s, at) => s.gherFisherman(0.6 + at),
       pose: (u, _s, pos, look) => {
         pos.set(gher.x, (gher.ground ?? 0) + lerp(1.9, 1.6, u), gher.z).addScaledVector(gherFwd, lerp(-5.5, -4, u)).addScaledVector(gherRight, lerp(3.4, 2.4, u));
         look.set(gher.x, (gher.ground ?? 0) + 0.8, gher.z).addScaledVector(gherFwd, lerp(3, 5, u));
@@ -662,7 +805,7 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
     {
       caption: 'ডুবো মাঠে আমন',
       seconds: 13,
-      world: { day: 210, hour: 12.5, weather: 'drizzle', wind: 0.5 },
+      world: { day: 210, hour: 12.5, weather: 'drizzle', wind: 0.5, rain: [[0, 0.24], [1, 0.12]], wet: [[0, 0.92], [1, 0.88]] },
       // low over the young aman standing in the rains' water, then up until the flooded plots lie spread below,
       // mirroring the sky between their bunds
       pose: (u, _s, pos, look) => {
@@ -675,7 +818,7 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
     {
       caption: 'শাপলা বিল',
       seconds: 14,
-      world: { day: 235, hour: 9.2, weather: 'clear', wind: 0.25 },
+      world: { day: 235, hour: 9.2, weather: 'clear', wind: 0.25, rain: [[0, 0], [1, 0]], wet: [[0, 0.72], [1, 0.66]] },
       // low over the lily rafts, drifting across the bil below the hills, the train going by beyond it
       begin: (s) => s.train(BIL_TRAIN - TRAIN_SPEED * 7, true),
       pose: (u, _s, pos, look) => {
@@ -714,16 +857,40 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
     },
     {
       caption: 'জেলের জাল',
-      seconds: 16,
-      world: { day: 300, hour: 16.3, weather: 'clear', wind: 0.3 },
-      // over the shoulder of the young majhi out with his net in his dinghy, the low sun behind: he winds round and
-      // casts, and the net opens toward the far bank into a wide circle catching the light, falls, sinks; he
-      // hauls it in hand over hand and lifts it out
+      seconds: 9.5,
+      world: FISHER_WORLD,
+      // the young majhi out with his net, in three shots as the cast goes (world/fisher.ts T, cued 0.4 s in). Wide,
+      // from along the river with the low sun behind: the dinghy side on at her pole, him in her bow; he winds
+      // round and casts, the net opening toward the far bank into a wide circle catching the light, falling flat,
+      // its rim splashing all round and the rings running out from it
       journey: 0.15,
-      begin: (s) => s.fisherman(0.4),
+      begin: (s, at) => s.fisherman(0.4 + at),
       pose: (u, _s, pos, look) => {
-        pos.copy(fisherAt).addScaledVector(left, lerp(6.5, 5, u)).addScaledVector(fwd, lerp(-4.5, -3.2, u)).setY(surface() + lerp(2.5, 2.1, u));
-        look.lerpVectors(fisherAt, netFalls, lerp(0.5, 0.65, u)).setY(surface() + 1.3);
+        pos.copy(fisherAt).addScaledVector(left, 16).addScaledVector(fwd, lerp(0.5, 2.2, u)).setY(surface() + lerp(2.6, 2.3, u));
+        look.lerpVectors(fisherAt, netFalls, 0.42).setY(surface() + 1.1);
+      },
+    },
+    {
+      caption: '',
+      seconds: 9,
+      shot: true,
+      world: FISHER_WORLD,
+      // nearer, abeam of her bow: the hauling, hand over hand, the net coming in under the water, stirring it
+      pose: (u, _s, pos, look) => {
+        pos.copy(fisherAt).addScaledVector(left, lerp(8.5, 7.6, u)).addScaledVector(fwd, lerp(2.6, 1.6, u)).setY(surface() + lerp(1.9, 1.7, u));
+        look.copy(fisherAt).addScaledVector(fwd, lerp(3.2, 1.8, u)).setY(surface() + 0.9);
+      },
+    },
+    {
+      caption: '',
+      seconds: 7,
+      shot: true,
+      world: FISHER_WORLD,
+      // close at her bow: the bag drawn up out of the water, pouring, the fish in it; swung in and shaken out on the
+      // boards
+      pose: (u, _s, pos, look) => {
+        pos.copy(fisherAt).addScaledVector(left, lerp(3.6, 3.2, u)).addScaledVector(fwd, lerp(2.4, 1.8, u)).setY(surface() + lerp(1.35, 1.5, u));
+        look.copy(fisherAt).addScaledVector(fwd, lerp(1.0, 0.1, ease(u))).addScaledVector(left, lerp(0, 0.35, ease(u))).setY(surface() + lerp(1.0, 0.45, ease(u)));
       },
     },
     {

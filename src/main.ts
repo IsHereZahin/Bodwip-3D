@@ -13,10 +13,10 @@ import { Wind, gustAt } from './env/wind';
 import { Pipeline } from './render/pipeline';
 import { loadSurfaces } from './render/surfaces';
 import { setMaxAnisotropy } from './render/textures';
-import { Director, type Leaving, type Stage } from './rig/director';
+import { Director, sweepAt, type Leaving, type Stage } from './rig/director';
 import { MapPanel } from './ui/mapPanel';
 import { WorldLook, type Captured } from './render/snapshot';
-import { cropField, tourScenes } from './rig/tour';
+import { blossomTree, cropField, tourScenes } from './rig/tour';
 import { Rig, VIEWS } from './rig/rig';
 import type { ViewName } from './rig/rig';
 import { EVENT_NOW, clockLabel } from './ui/bangla';
@@ -38,15 +38,16 @@ import { Life } from './world/life';
 import { Crops } from './world/crops';
 import { Meadow } from './world/meadow';
 import { buildPondLife } from './world/ponds';
-import { buildRain } from './world/rain';
+import { GroundSplashes, buildRain, buildRainSplashes } from './world/rain';
 import { buildRoads } from './world/roads';
 import { BRIDGE_CLEARING, bridgeTrees, buildBridge } from './world/bridge';
 import { Girl } from './world/girl';
 import { cullBeyond, setCullReach, updateCulling } from './render/cull';
 import { buildSky } from './world/sky';
 import { Terrain } from './world/terrain';
-import { buildVegetation, treeCrowns } from './world/vegetation';
+import { buildVegetation, crownDetail, treeCrowns } from './world/vegetation';
 import { FallingLeaves } from './world/leaves';
+import { HeroPetal, PetalCarpet } from './world/petals';
 import { Fish } from './world/fish';
 import { Songbirds } from './world/songbirds';
 import { Fisher } from './world/fisher';
@@ -175,14 +176,30 @@ async function main(hud: Hud): Promise<void> {
   cullBeyond(vegetation, 1900);
   // the leaves and petals the trees round the camera let fall (the banyan's too)
   const leaves = new FallingLeaves(treeCrowns());
-  scene.add(leaves.mesh);
+  scene.add(leaves.group);
+  // and those lying under the trees in flower and afloat below them
+  const petalCarpet = new PetalCarpet(treeCrowns());
+  scene.add(petalCarpet.group);
   // the small birds in the trees, and the fish in the water, round the camera
   const songbirds = new Songbirds(treeCrowns());
   scene.add(songbirds.group);
   const fish = new Fish();
   scene.add(fish.group);
+  // the tree in flower over the khal whose petal the film follows down to the water (its ring is the fish's):
+  // its crown filled out with boughs and twigs for the camera under it
+  const blossom = blossomTree();
+  const heroPetal = new HeroPetal(water.touch);
+  heroPetal.aim(blossom.crown, blossom.r);
+  scene.add(heroPetal.mesh);
+  const blossomCrown = blossom.tree ? crownDetail(blossom.tree) : null;
+  if (blossomCrown) {
+    scene.add(blossomCrown);
+    cullBeyond(blossomCrown, 1900);
+  }
   // the fisherman casting his net on the river below the khal's mouth (his net's rings are the fish's)
   const fisher = new Fisher(fish);
+  // the water each casts his net into feels it (the river's and the gher's)
+  fisher.bindWater(water.nets.a[0], water.nets.b[0]);
   scene.add(fisher.group);
   // the aman harvest in Hemanta, on the field the film looks across for it
   const harvest = new Harvest(cropField(2, 318));
@@ -197,6 +214,7 @@ async function main(hud: Hud): Promise<void> {
   scene.add(buildStones());
   // the salt field by where she sets out, and the men raking its salt in the dry months
   const saltWorks = new SaltWorks(fish);
+  saltWorks.bindWater(water.nets.a[1], water.nets.b[1]);
   scene.add(saltWorks.group);
   // the railway across the fields north of the bil, and its train now and then
   scene.add(buildRailway());
@@ -241,6 +259,11 @@ async function main(hud: Hud): Promise<void> {
   const wind = new Wind();
   const rain = buildRain(girl.shelter);
   scene.add(rain);
+  // where the drops strike: crowns thrown up from the water, splashes on the land, the ghats and the bridge
+  const rainCrowns = buildRainSplashes();
+  scene.add(rainCrowns);
+  const groundSplashes = new GroundSplashes();
+  scene.add(groundSplashes.mesh);
   const lightning = new Lightning();
   scene.add(lightning.mesh);
   const env = new Environment(sky, water);
@@ -285,6 +308,9 @@ async function main(hud: Hud): Promise<void> {
       scenePace = world.pace ?? 1;
       weather.choice = world.weather;
       wind.override = world.wind;
+      wind.towardOverride = world.windToward ?? null;
+      // the scene's own rain and wet, as it opens (the director keeps them through it), or the weather's own
+      weather.hold = world.rain ? { rain: sweepAt(world.rain, 0), wet: world.wet ? sweepAt(world.wet, 0) : 0 } : null;
       settleWorld();
       // a new scene: his mathal is as its weather wants it, as if it had been all along
       hero.wantHat(hatWanted());
@@ -315,9 +341,14 @@ async function main(hud: Hud): Promise<void> {
       scenePace = 1;
       weather.choice = kept.weather;
       wind.override = kept.wind;
+      wind.towardOverride = null;
+      weather.hold = null;
       rig.place(kept.journey);
       settleWorld();
       kept = null;
+    },
+    weather(rainNow, wetNow) {
+      weather.hold = { rain: rainNow, wet: wetNow };
     },
     placeBoat: (journey) => rig.place(journey),
     get boatPos() {
@@ -337,6 +368,8 @@ async function main(hud: Hud): Promise<void> {
     bareheaded: () => hero.settleHat(false),
     sap: () => khejur.cue(t),
     sapTree: khejur.hero,
+    petal: heroPetal,
+    dropPetal: (at) => heroPetal.cue(t, at),
     sweep: (hours) => {
       clock.time = sweepFrom + hours / 24;
     },
@@ -366,7 +399,7 @@ async function main(hud: Hud): Promise<void> {
     warm: (points) => {
       const until = performance.now() + WARM_MS;
       let done = true;
-      for (const p of points) done = terrain.warm(p, until) && meadow.warm(p, until) && crops.warm(p, until) && done;
+      for (const p of points) done = terrain.warm(p, until) && meadow.warm(p, until) && crops.warm(p, until) && petalCarpet.warm(p, until) && done;
       // and the water's fine field where the shot opens, last (the wide one stands in till it is ready)
       return water.warm(points[0].x, points[0].z, until) && done;
     },
@@ -454,7 +487,7 @@ async function main(hud: Hud): Promise<void> {
     crops.showHeld(true);
     sky.mesh.position.copy(cam.position);
     updateCulling(cam.position);
-    pipeline.render(renderer, scene, cam, { exposure: env.exposure, fade: 0, fadeColor: BLACK, night: env.night, letterbox: director.letterbox, toHeld: true });
+    pipeline.render(renderer, scene, cam, { exposure: env.exposure, fade: 0, fadeColor: BLACK, night: env.night, letterbox: director.letterbox, toHeld: true, dof: leaving.dof });
     // back to the shot coming in
     worldLook.apply(lookLive);
     env.key.shadow.map = liveShadow;
@@ -962,6 +995,7 @@ async function main(hud: Hud): Promise<void> {
     G.uWet.value = weather.wet;
     G.uRain.value = weather.rain;
     rain.visible = weather.rain > 0.003;
+    rainCrowns.visible = weather.rain > 0.01;
     // the khal drifts down to its sluice faster when the season's runoff is high (the rains), slower in the dry months
     G.uFlowScale.value = season.flow;
     // the clouds drift on the wind
@@ -1016,6 +1050,10 @@ async function main(hud: Hud): Promise<void> {
     drift.update(dt, t, camera.position, b, hero.blade);
     // while a shot dissolves away its falling leaves fall on, though the camera has left them
     leaves.update(dt, t, camera.position, director.leaving !== null);
+    petalCarpet.update(t, camera.position, b.pos, b.heading, leftEye);
+    heroPetal.update(t, camera.position, leftEye);
+    camera.getWorldDirection(forward);
+    groundSplashes.update(dt, t, camera.position, forward, weather.rain);
     songbirds.update(dt, t, camera.position, env.night > 0.5 || weather.rain > 0.5);
     fish.update(dt, t, camera.position, b.pos);
     // the bil's lilies give way to her hull and blade and are drawn back by their stems
@@ -1081,6 +1119,7 @@ async function main(hud: Hud): Promise<void> {
       night: env.night,
       letterbox: director.letterbox,
       dissolve: leaving ? director.dissolve : 0,
+      dof: director.active ? director.dof : undefined,
     });
     hud.setCaption(director.caption, director.captionAlpha, pipeline.bar);
     controls.update(clock, director.active ? 'film' : rig.mode, soundOn, director.active ? { index: director.sceneIndex, count: director.sceneCount } : undefined);
@@ -1140,6 +1179,9 @@ async function main(hud: Hud): Promise<void> {
       weather?: WeatherChoice;
       /** Hold the wind at this strength (null: follow the season again). */
       wind?: number | null;
+      /** Hold the rain (0..1) and how wet the land is (0..1), as a film scene does (after its own, with `film`). */
+      rain?: number;
+      wet?: number;
     }
     const b0 = () => rig.boat;
     Object.assign(window, {
@@ -1177,6 +1219,10 @@ async function main(hud: Hud): Promise<void> {
           }
           if (o.film) director.cue(o.film[0], o.film[1], camera);
           else director.stop(true, false);
+          if (o.rain !== undefined) {
+            weather.hold = { rain: o.rain, wet: o.wet ?? weather.wet };
+            updateSky(0, true);
+          }
           director.letterbox = o.film ? 1 : 0;
           perf.locked = true;
           readyAt = -1e9;
@@ -1187,6 +1233,7 @@ async function main(hud: Hud): Promise<void> {
           terrain.update(camera.position, true);
           water.update(camera.position.x, camera.position.z, true);
           meadow.update(camera.position, true);
+          petalCarpet.update(t, camera.position, b0().pos, b0().heading, null, true);
           crops.update(camera.position, true);
           renderer.shadowMap.needsUpdate = true;
           debug.freeze = true;
@@ -1292,6 +1339,11 @@ async function main(hud: Hud): Promise<void> {
         sapTree() {
           const r = (v: Vector3) => [v.x, v.y, v.z].map((k) => Math.round(k * 1000) / 1000);
           return { foot: r(khejur.hero.foot), cut: r(khejur.hero.cut), mouth: r(khejur.hero.mouth), out: r(khejur.hero.out) };
+        },
+        /** The film's petal: the tree it falls from, where it lets go and comes down, and how long it falls. */
+        petal() {
+          const r = (v: Vector3) => [v.x, v.y, v.z].map((k) => Math.round(k * 100) / 100);
+          return { crown: r(blossom.crown), reach: blossom.r, kind: blossom.tree?.kind ?? null, from: r(heroPetal.from), to: r(heroPetal.to), fall: heroPetal.fall };
         },
         /** Holds the majhi's stroke at `phase` (0..1, the blade going in at 0) for a still of his rowing. */
         stroke(phase: number) {
