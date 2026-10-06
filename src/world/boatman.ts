@@ -188,6 +188,12 @@ export class Boatman {
   readonly hat: Group | null = null;
   /** How much the wind may move his hair (less under the mathal). */
   hairFree = 1;
+  /**
+   * For a man on his feet and walking (the salt farms' people, world/saltHands.ts): where his feet are this
+   * instant and how far each is pitched (his frame; else planted where he stands), his hips' bob and sway, and
+   * what he looks at (his frame; else down the river, as a boatman does). Null: he stands.
+   */
+  gait: { feet: [Vector3, Vector3]; pitch: [number, number]; hips: Vector3; look: Vector3 | null } | null = null;
 
   private readonly stance: Vector3;
   private readonly feet: Vector3[] = [];
@@ -619,6 +625,7 @@ export class Boatman {
     this.e.set(this.balX, 0, this.balZ, 'YXZ');
     this.v.set(0.12 * drive.lean, this.pelvisHeight - crouch, drive.shift).applyEuler(this.e);
     this.pelvis.copy(this.stance).add(this.v);
+    if (this.gait) this.pelvis.add(this.gait.hips);
     this.pelvisQ.setFromEuler(this.e.set(this.balX + 0.04 + 0.35 * bend, 0.4 * drive.twist, this.balZ - 0.3 * drive.lean, 'YXZ'));
 
     // chest: the rest of the bend, the twist and the lean
@@ -674,6 +681,16 @@ export class Boatman {
     // whatever the body and the deck do
     this.headQ.setFromEuler(this.e.set(-tilt.rotX * 0.9 + 0.08 + 0.2 * drive.bend, 0.25 * drive.twist, -tilt.rotZ * 0.9, 'YXZ'));
     this.look.set(0, -1.5, 25).applyQuaternion(this.headQ).add(body.head);
+    const look = this.gait?.look;
+    if (look) {
+      // on his feet he turns his head to what he looks at, as far as a neck turns, and his eyes go the rest
+      const dx = look.x - body.head.x;
+      const dz = look.z - body.head.z;
+      const yaw = Math.max(-0.9, Math.min(0.9, Math.atan2(dx, dz)));
+      const pitch = Math.max(-0.2, Math.min(0.75, -Math.atan2(look.y - body.head.y, Math.hypot(dx, dz)) * 0.75));
+      this.headQ.setFromEuler(this.e.set(pitch, yaw, 0, 'YXZ'));
+      this.look.copy(look);
+    }
     body.setHead(this.headQ, this.look, time);
     // the air past his head, in its own frame, for his loose hair
     this.v.copy(wind).multiplyScalar(this.hairFree).applyQuaternion(this.q.copy(this.headQ).invert());
@@ -683,10 +700,10 @@ export class Boatman {
     for (let i = 0; i < 2; i++) {
       const side = i === 0 ? -1 : 1;
       const hip = body.hip(side, this.hips[i]);
-      const ankle = this.ankles[i].copy(this.feet[i]).addScaledVector(UP, dims.ankle);
+      const ankle = this.ankles[i].copy(this.gait ? this.gait.feet[i] : this.feet[i]).addScaledVector(UP, dims.ankle);
       const pole = this.pole.copy(hip).add(this.v.set(side * 0.25, -0.35, 1).applyQuaternion(this.pelvisQ));
       solveTwoBone(hip, ankle, dims.thigh, dims.shin, pole, this.knees[i], this.end);
-      body.setLeg(side, this.knees[i], this.end, FEET[i][2]);
+      body.setLeg(side, this.knees[i], this.end, this.gait ? FEET[i][2] * 0.3 : FEET[i][2], this.gait ? this.gait.pitch[i] : 0);
       this.shinTop[i].lerpVectors(this.knees[i], this.end, 0.3);
     }
 

@@ -10,14 +10,15 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - Waterways' control points: `RIVER_POINTS` east to west, running on beyond the world both ways; `KHAL_POINTS` from the river's middle north to the bil; `SIDE_KHAL_POINTS` through the fields into the bil's west side; `SALT_CREEK_POINTS`.
   - Sites: `BIL_SPEC`; the journey's ends `JOURNEY_FROM` and `INTO_BIL`; `OPENING_NEAR`; the crossings `BRIDGE_NEAR` and `SANKO_NEAR`; `FISHER_NEAR`.
   - `CHAR`: the sandy inside of the river's broad bend.
-  - `SALT_FIELD`: the salt farm on the river's south bank by where the boat sets out, under the hill. It holds the frame, the size, the sections (settling pond, evaporation beds, crystallizers) and the cells. `render/patch.ts` paints it and `world/saltworks.ts` builds on it, in step.
+  - `SALT_FIELDS`: the salt farms on the river's south bank by where the boat sets out, under the hill, none alike (`SaltFarm`): frame, size, sections (settling pond, evaporation beds, crystallizers) and cells; `dig` (pans below the fields), `rim` (the embankment's crest over them), `bunds` (inner bunds' heights), `rains` (the gher's depth), `grassy`, `seed` (which bed is at which stage), and `work` (`SaltTask`s: rake, carry, inspect, spade, watch, feed, net, by season). `SALT_FIELD` is the creek's farm, the film's. `SALT_BAND`/`SALT_DRAIN`: the farms' water in the level map. `render/patch.ts` paints them, `world/geography.ts` digs them and keeps their water, `world/saltworks.ts` builds on them, in step.
+  - `ZAMINDAR_GROUNDS`: the zamindar house's lawn down to its ghat (kept grass, no paddy). `LOW_WATER`: how far the waters fall at their lowest (the ghats' steps run below it).
   - `KHAL_ROCKS`: the khal's rocks the boat goes round, all on her right, away from the paddle.
   - `HOMESTEADS`: each has an id, a rough place, a `w` × `d` mound, a `face` (or `bank` m back from the nearest water's edge, facing it), a `ghat`, and a `pond` in its own frame.
   - Landmarks: `BANYAN`, `HUB_GHAT`, `TEA_STALL`, `ZAMINDAR` with its pond, `MOSQUE` with its pond.
   - `FAR_GROVES`: the far villages toward every horizon.
   - `HILLS`: steep wooded hills right by the waters (over the river's south bank where the boat sets out, out of the bil's north-east shore, behind the char's kash). Each has `steep`: a grassy foot by the water, then a steep climb. Rounder hills stand on the horizons in the haze.
   - `RAILWAY_POINTS`/`RAILWAY`: the line north of the bil, on its embankment.
-  - `ROADS`: the brick road and the earth paths. Each is either designed points (with the crossings' anchors `'bridge-e'`/`'bridge-w'`/`'sanko-s'`/`'sanko-n'`) or `along` a bank at an offset from the water's edge.
+  - `ROADS`: the brick road and the earth paths. Each is either designed points (with the crossings' anchors `'bridge-e'`/`'bridge-w'`/`'sanko-s'`/`'sanko-n'`) or `along` a bank at an offset from the water's edge. No way crosses a pond, the bil or a waterway but at a crossing (the ways scan, verification.md). The zamindar house's brick walk down to its grand ghat's landing is one of them.
   - `KHEJUR_PATH`/`KHEJUR_ROW`: the field path past the date palms.
 - `world/waterways.ts`: each waterway is a `Waterway`, a Catmull–Rom curve through its points, resampled every 2 m.
   - Along a waterway: `half(s)` and `depth(s)`; `current` in m/s along increasing s; `at(s)`; `frame(x, z)`, which returns `s`, `d` and `side` (+1 is left going along it) within its reach, as a reused object; `beside(s, side, out)`; `line.nearestS`.
@@ -52,13 +53,15 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - The waterways are cut in by `wayGround`: a bed shoaling to the sides, and a bank `bankWidth` wide rising from `EDGE_DEPTH` under the water. The bank is steepest at the water and out of it within a step, broad and low over the char. The bil's bowl is cut in too.
   - Water queries: `waterLevelAt` (`WATER_LEVEL` over the waterways and the bil, a pond's own level, −∞ on dry ground), `inlandWaterAt`, `shoreLevel`, `nearBackwater`, `bankStrip` (a waterway's bank and the strip along its top; plots keep off it), `eachWaterwayPoint` (for the water's level map), `bankAt(x, z)` (the water's edge on the nearest bank, and the way up it).
   - `landUse(x, z)`: the shares of yard, mound, verge, sand, marsh, field, salt and flats. The terrain paints from it and the planting reads it.
-  - Also `HOMESTEAD_MOUNDS`, `PONDS`, `bilMarsh`, `bilDepth`, `routeGap` (the distance from the boat's way) and `onLandmark`. It re-exports `BRIDGE`/`SANKO` and their frames, `WATER_LEVEL`, `JOURNEY` and the journey's functions.
+  - Also `HOMESTEAD_MOUNDS`, `PONDS`, `bilMarsh`, `bilDepth`, `routeGap` (the distance from the boat's way), `onLandmark`, `onMosqueGrounds`/`onZamindarGrounds` (their grass kept short). It re-exports `BRIDGE`/`SANKO` and their frames, `WATER_LEVEL`, `JOURNEY` and the journey's functions.
+  - The zamindar's grand ghat is laid out here (`grandGhat()`, `GRAND_GHAT`: its site on the bank, its steps from ghatFlight.ts), so `onLandmark` keeps the grass, the trees and the stones off its stair and pavilions; landmarks.ts builds it and village.ts moors the house's boat by it.
   - The season's water:
     - `setWaterRise` (called from main.ts each frame, from `season.water`) and `waterRise()`.
     - `meanWaterLevelAt`: the water at its mean level. The maps baked once read it.
     - `waterLevelAt`: where the water stands now (`risenLevel(mean)`, and in the rains out over the banks' foot and the bil's low rim). GLSL `waterLevels` adds `G.uWaterRise` the same way.
-    - The bil keeps a deeper lane along the boat's way from the khal's mouth (`bilLane`), so she can go in when the water is low.
-  - The salt field's ground: `saltLocal`/`saltPoint`/`saltShare`, graded flat a little below the fields. It feeds `landUse().salt` and the terrain's `LOOK.salt` (its zone is below 0); `onLandmark` keeps everything else off it.
+    - The bil keeps a deeper lane along the boat's way from the khal's mouth (`bilLane`), so she can go in when the water is low. It cuts only where it runs; the rim rises slowly from the water to the fields.
+    - The salt farms' water: `setSaltWet` (main.ts each frame, from `season.salt`; `G.uSaltWet` for the shaders). A farm's mean level is its rains' level (`saltRains`); `risenLevel` (and GLSL `waterLevels`) drains a level above `SALT_BAND` by `(1 − wet) × SALT_DRAIN`, so in the salt season only the settling pond keeps water. `shoreLevel` leaves the farms out (their beds are the salt shader's).
+  - The salt farms' ground: `saltLocal`/`saltPoint` (a farm's frame, the creek's by default), `saltFarmAt(x, z, margin)`, `saltShare`, and `saltGround`: the pans dug `dig` below the fields, the settling pond `SETTLING` deeper, the earth embankment round them (crest at `RIM_CREST`, `rim` over the fields) and the feeder ditch along its foot. It feeds `landUse().salt` and the terrain's `LOOK.salt` (its zone is below 0); `onLandmark` keeps everything else off it (an old, `grassy` farm's embankment lets the meadow on).
   - The salt creek's land is its flats: `creekFlats`, `landUse().flats` and the terrain's `LOOK.flats`, which paints grey-brown mud with a thin salt-burnt grass and nothing sown.
 - `world/corridor.ts` and `CORRIDOR` (glsl.ts): the land the village keeps to.
   - `corridorDistance` (geography.ts) is measured from the boat's way (`journeyDistance`) and from the bil's water. Everything is drawn out to `clear` (230 m).
@@ -80,7 +83,8 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - Queries: `roadCover` (trodden ground), `roadEdge` (the brick road's edge; its verges are grass), `onRoad`, `roadLines()` (for the trees along it).
   - A way with `flat` is brick laid on the ground: the hub's paving under the banyan and down onto its ghat's landing, and the mosque's walk to its pond's ghat.
   - Every homestead that no designed way passes gets its own footpath to the nearest way, unless it would cross water. Every homestead with a ghat gets a trodden way from its yard to the ghat's landing (`LANDING` m up from the water). A path crosses the char through its kash.
-  - `buildRoads(ground)` draws the raised road on its crest and the paths laid over the terrain, from one texture atlas (`roadAtlas`), one mesh per 1300 m cell.
+  - `buildRoads(ground)` draws the raised road on its crest and the paths laid over the ground as it is drawn (main.ts passes terrain.ts `meshGround`), from one texture atlas (`roadAtlas`), one mesh per 1300 m cell.
+  - A homestead no designed way passes gets a footpath of its own, out of its yard's open front (and round the mound's side if the way lies behind it), never across water; one with a ghat, a trodden way down to its landing.
   - `core/segmentIndex.ts`: `SegmentIndex` files segments in square cells, to find the nearest one measured against its half-width.
   - `core/mathx.ts`: the shared small maths (`clamp`, `lerp`, `smoothstep`, `damp`, `angleDelta`, `tableAt` for a body's measured sections). Use these rather than local copies.
 
@@ -91,10 +95,11 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - `planGhats()` places the village's ghat below the banyan, then a ghat at each homestead front that has one, at the water's edge of the nearest bank. A `Ghat` has the waterway, `s`, `side`, `up` and `kind` (brick or bamboo).
   - `buildVillages(huts, ghats)` builds:
     - the houses, through `houses.ts`, and haystacks by the mounds' back corners;
-    - brick ghats laid tread by tread on the bank's own slope between low walls. The village's ghat is 5 m wide with a rowak bench each side; each pond's ghat goes down the point the design gives;
+    - brick ghats (`brickGhat`), their steps from ghatFlight.ts, between walls stepping down with them and holding the bank back where it stands higher. The village's ghat is 5 m wide with a rowak bench each side; each pond's ghat goes down the point the design gives;
     - bamboo ghats on posts out over the water;
-    - a boat tied up at every other ghat.
+    - a boat tied up at every other ghat, and the zamindar house's painted boat alongside the bank below its grand ghat (`tieUp`): each with thwarts and a bamboo pole, her own colours (`MeshBuilder.add(…, 'own')`), and her line from her stem to a post on the bank or in the shallows. They ride the water's waves as drawn and swing slowly on their lines about the stem (the `moored` vertex shader: `aMoor` = middle, aground height, and how much each vertex rides with her, 1 on the hull and its share of the way along the line; `aPivot` = her stem).
   - It uses one mesh per material. Tin is barely metallic, because with no environment map a metal reads black.
+- `world/ghatFlight.ts`: a ghat's flight of steps from its site (`GhatSite`) and size (`GhatSpec`): every step the same `RISE`, none shorter than `RUN`, each tread clear of all the ground below it toward the water (the bank's envelope from the bed's deepest point in front of the foot), landings where the bank is gentle, solid masonry where it is steep, on below the lowest water. `ghatPoint`/`ghatLocal` (its frame), `groundOver`. It takes the ground as a parameter, so geography.ts can use it.
 - `world/houses.ts`: `buildHouse(parts, …, style)` builds one house.
   - The plinth (পোতা) runs out as a veranda.
   - Walls are mud with a darker wiped band, or painted tin on a timber frame. There is a two-leaved door, small barred windows with shutters, and veranda posts on stones under a beam.
@@ -105,11 +110,11 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - It has fused stems, eight great limbs, curtains of aerial roots (a few grown into pillars), a 30 m dome of 1500 leaf cards, and a two-stepped plastered platform.
   - Also `BANYAN_CLEARING`.
 - `world/landmarks.ts`: `buildLandmarks()`.
-  - The zamindar house: colonnades, balustrades, cornices, a pediment, green shutters, plaster fallen to the brick in patches, and a peepal on its broken parapet. With it go its grand ghat with two pavilions and its terracotta char-chala temple.
+  - The zamindar house: colonnades, balustrades, cornices, a pediment, green shutters, plaster fallen to the brick in patches, and a peepal on its broken parapet. With it go its grand ghat (geography.ts `grandGhat`: lime-plastered steps as solid blocks into the bank, a broad landing at the top, parapet walls stepping down and holding the bank back, a nosing on each tread, two pavilions on the landing's level) and its terracotta char-chala temple. Its brick walk to the ghat is a way (plan.ts `ROADS`), over its lawn.
   - The mosque (`mosque`, its sizes in `MQ`, its axis `mosqueAxis()`): on a plinth, a whitewashed prayer hall with pilasters, a cornice, a green band and merlons; three pointed doors (the middle one open), arched windows with recessed panels, the mihrab's half-domed niche behind; a large Bengal dome on an arcaded drum and two small ones (`bengalDome`: lotus collar, kalash finial, crescent); corner turrets (`turret`); a verandah of three pointed arches (`arcade`) with its roof and parapet; the kalima over its middle arch; a low forecourt wall with a green coping, the gate's piers and the steps down onto the walk; the azan minaret at the forecourt's corner (a square base with its door, two tapering octagonal stages with slit windows and balconies, loudspeakers, an open kiosk with its dome).
   - The kalima's panel: `inscriptionTexture` (render/textures.ts) writes it right to left in `KALIMA_FONT` (Amiri, loaded by index.html; main.ts waits up to 4 s for it before building).
   - The mosque's ghat (`mosqueGhat`): on its axis where it meets the kept pond, a landing with two benches, solid brick steps down past the lowest water, stepped side walls, and a lamp on a short pillar with a small iron lantern. The village's `pondGhat` skips the kept pond.
-  - The night lights: the mosque's doors and windows glow from within after dark (`arch(..., lit)` into `Parts.glow`, its emissive running along `glowTexture`), bulbs (`lamps`), the lantern's glass (`lanterns`), and up to three lamp lights (`lights`) put into globals.ts `uLamp0..2`. `lampsGlow(night)` sets their glow and colour; `NIGHT_GLOWS` are tracked by main.ts `worldLook`.
+  - The night lights: the mosque's doors and windows glow from within after dark (`arch(..., lit)` into `Parts.glow`, its emissive running along `glowTexture`), bulbs (`lamps`), the lanterns' glass (`lanterns`), and up to four lamp lights (`lights`) put into globals.ts `uLamp0..3`: the hall's, the verandah's, the mosque ghat's lantern and the village ghat's (`hubLantern`: a hurricane lantern hung from a bamboo post at its landing's back corner). `lampsGlow(night)` sets their glow and colour; `NIGHT_GLOWS` are tracked by main.ts `worldLook`.
   - The tea stall.
   - Arches are dark fans under a raised frame (`archOutline`: semicircular, or pointed from two arcs).
 - `world/bridge.ts`: the old humped brick arch over the khal, in the bridge's frame.
@@ -127,12 +132,12 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - The kept pond's pebbles and small stones (`pondPebbles`, `PEBBLE_LOOKS`): few-sided, in drifts by noise, thickest in its shallows along the edge and thin over the deeper bed, off its ghat, on `meshGround`.
   - The khal's rocks (`khalRocks()`): each a boulder on a broader stone.
   - Broken foam where the water meets a stone, laid at the season's level. `nearStone` keeps the grass and the bushes off the stones.
-- `world/saltworks.ts`: `SaltWorks`.
-  - The salt field's bunds (`bundLines`, the twin of the shader's layout), heaps raked up on them (gone in the rains), the gola, and an old heap under black sheeting.
-  - Three men rake the crust (`Raker`: the boatman's body holding a board on a bamboo handle; `rakerStations()`). They are hidden out of the salt season and posed only within 320 m.
-  - The sluice where the creek's water is let in.
-  - In the rains (`salt` < 0.25) the field is kept as a fish gher, with a fisherman casting from the settling pond's bund (`gherStand()`, `cueGher`) and a watchman's hut on bamboo legs.
-  - `saltStage(col, row)` is the shader's stage of a crystallizer bed.
+- `world/saltworks.ts`: `SaltWorks`, every farm of `SALT_FIELDS`.
+  - Each farm's inner bunds (`bundLines(farm)`, the twin of the shader's layout, each its own height between the farm's `bunds`, so the rains drown some), the heaps raked up on them and where the carriers tip theirs (gone in the rains). The embankment round a farm is the ground's (geography.ts), not a bund.
+  - Each farm's people at their `work` (world/saltHands.ts), one crew per farm, its season's group shown (`salt` > 0.5 the salt work, < 0.25 the gher), posed within `POSED` and drawn within `DRAWN` of the farm. The film's three rakers are the creek's farm's (`workers`, `rakerStations()`).
+  - The creek's farm alone has the gola and the old heap under black sheeting, the sluice where the creek's water is let in, the gher's fisherman casting from the settling pond's bund (`gherStand()`, `cueGher`) and the watchman's hut.
+  - `saltStage(col, row, farm)` is the shader's stage of a crystallizer bed (with the farm's `seed`).
+- `world/saltHands.ts`: the people at work on the salt farms, each a `Boatman` body at his own pace and offset (`Hand`): `Raker` (the rake's board drawn through the crust), `Walker` (a carrier with a basket of salt on his head out along the bunds to the heap, tipping it out and back with it empty; or a man looking the beds over, crouching at each stop to feel the water, which rings it), `Spader` (dressing a bed's floor with the kodal: up over the shoulder, struck, the mud drawn back), `Watcher` (hands behind his back, weight shifting, pointing now and then) and `Feeder` (the gher's feed thrown from a bowl, landing as rings). A walker sets `Boatman.gait`: his feet, their pitch, his hips' bob and sway, and what he looks at.
 
 ## Living things
 
@@ -160,7 +165,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - Chunks grow in, are built in front first, and `warm` builds ahead.
   - No grass grows in the water or on the mud above it, on roads, on landmarks or round the ghats.
   - Two sets of meshes exist for the dissolves.
-- `world/drift.ts`: water hyacinth as position-based dynamics on the still fresh water round the viewer: ponds, the bil, and the slack within `EDGE` of the waterways' banks (within 0.4 of a narrow one's half, so the side khal's middle stays the boat's).
+- `world/drift.ts`: water hyacinth as position-based dynamics on the still fresh water round the viewer: ponds, the bil, and the slack within `EDGE` of the waterways' banks (within 0.4 of a narrow one's half, so the side khal's middle stays the boat's); none in the salt creek or the salt farms.
 - `world/ponds.ts`: `LILY_PONDS`, with pads, flowers and reed clumps.
 - `world/bil.ts`: the shapla bil's lilies (pushed aside by the hull and drawn back by their stems; only those near the boat simulate on the CPU), reeds, lotus and egrets.
 - `world/khejur.ts`: `Khejur`, the date palms along `KHEJUR_PATH`.
@@ -180,6 +185,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
 - `world/songbirds.ts` (small birds on treetops and open ground, flying tree to tree), `world/life.ts` (flocks, motes and fireflies; `birdGeometry`, `FLAP`).
 - `world/fish.ts`: `Fish(ripples)`. Each fish swims on its own: a burst of tail beats and a glide, turning through its own momentum, its body bent along its length into the turn and swinging in a wave from head to tail (the vertex shader `SWIM`, per-instance `aSwim`).
   - Puti schools (cohesion, alignment, separation) under the river and the khals, a few rui deeper. They look ahead for the shallows and turn to the deeper side, and scatter from the boat.
+  - The salt farms in the rains have theirs (`stockGhers`, `GHER_STOCK`, within `GHER_REACH`): schools of little sharputi and puti over the drowned beds, turning back from the embankment, rising to sip.
   - Ponds within `POND_REACH` have their own (`stock`): rui and tilapia. The kept pond (the mosque's) has `KEPT_STOCK`: two shoals of little sharputi near the top, a school of red tilapia and one of golden and silver fish (pond schools drift apart to feed and gather again), tilapia alone, and five big rui and katla deep. Pond fish rise now and then to sip the surface.
   - Leaps, sips and sharp turns just under the surface ring the water (`Ripples.drop`). `envMapIntensity` is low: underwater the sky's light reaches them only diffusely.
 - `world/frogs.ts`: `Frogs(ripples)`: frogs at the water's very edge round the camera in the rains (`FIND`, found by walking down a bank to where the water laps), olive skipper frogs and a few monsoon-yellow bullfrogs, breathing. Someone within `SHY` m sends each leaping into the water with a ring. `settle` for stills.
@@ -238,11 +244,11 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - `currentAt` comes from `waterwayAt`.
   - Paddle force acts only during the pull. `PADDLE_MOMENT` balances the J-stroke, so the bow wags a little each stroke.
   - Each stroke's own power (`strokePower`, 0.65 to `MAX_POWER` 2.2) is harder when the last stroke was slow.
-  - Heave, pitch and roll are damped springs to `hullWaves`. Heel stops at `MAX_HEEL`.
+  - Heave, pitch and roll are damped springs to `hullWaves`, at the share of the waves the drawn surface carries where she is (waves.ts `surfaceShare`). Heel stops at `MAX_HEEL` (0.14); the roll is also damped as the square of its rate (`ROLL_EDDY`), so a squall's gust does not swing her past it.
   - She steers for `LOOK_AHEAD` m ahead (rig.ts).
 - `world/waves.ts`: the shared wave field (`waveHeight`, `waveSlope`, `hullWaves`, and their GLSL twins).
   - Waves are built by the wind over `FETCH` (5 km): `heightFor`, `peakFor`, `SHAPES`, and four direction groups (`QUARTERS`). They grow and die over `BUILD`/`FADE` and are capped at `STEEPEST` (`updateSea`).
-  - Still water gets `SHELTERED` (35%).
+  - Still water gets `SHELTERED` (35%); inland water carries `INLAND` (15%) of the waves the fetch would raise; they die out over the last `SHOAL_DEPTH`. `surfaceShare(depth, flow)` is the water shader's own factor: whatever floats (the hero, the moored boats, the fisher's boat, the lilies, the hyacinth, the petals) rides the surface as drawn.
   - Its open-sea and swell parts are inert (`exposureAt` is 0).
 - `world/wake.ts`: the hull's bow and stern swell, the Kelvin wake and the blade's push (GLSL and a CPU twin).
 
@@ -250,7 +256,9 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
 
 - `world/water.ts`: two meshes on one polar grid round the camera (`GRID_SEGMENTS`, `GRID_FAR`, `WATER_BOUNDS`).
   - `mesh` is the sea's and is hidden here; `inland` is every water at its own level.
-  - `levelTexture` covers `WORLD` in `LEVEL_CELL` (6 m) cells. Its r channel is the water's level, carried `LEVEL_SPREAD` cells out over ground no lower than `SPREAD_BELOW` under it; its b channel is where water is.
+  - `levelTexture` covers `WORLD` in `LEVEL_CELL` (6 m) cells. Its r channel is the water's level, carried `LEVEL_SPREAD` cells out over ground no lower than `SPREAD_BELOW` under it; its b channel is where water is. A salt farm's cells and one round them hold its own level as seeds, before any other water's is carried.
+  - The water's hole for the hero hull is cut where the surface meets her as she heaves, pitches and heels (`uBoatHull`, hull.ts `hullHalfWidth`); main.ts sets it with `hullOnWater` (and per shot in `drawLeaving`).
+  - In a strong wind the crests break white, measured against the waves this water carries (`INLAND` on inland water).
   - The field textures (bed and current, from `waterwayAt`) come in a fine one following the camera and a wide one over the world.
     - The fine one (`FineField`) is refilled round the camera once it strays `FINE.drift` m, `FINE.ms` a frame. The wide one stands in meanwhile.
     - The film readies the next shot's fine field ahead (`warm`) and uploads it to a spare texture (the two take turns as `tField`), so the cut only switches to it.
@@ -267,7 +275,8 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - Layers: `LAYER_WATER = 1` and `LAYER_NO_REFLECT = 2` are drawn by the main camera only; the mirror sees layer 0.
   - `G.uWaterLevel`/`uTideHigh` are held at `WATER_LEVEL + season.water`.
   - `uWaterRise` is the season's rise. `uFlowScale` is the season's runoff on the currents and the water's clarity (clear and green in the dry months, silty in the rains, `underwater()`). `uHillCloud` is the cloud on the hills.
-  - `uLamp0..2` / `uLampColor0..2`: the village's lamps after dark (landmarks.ts `lampsGlow`): where each is and its reach, its colour times its strength (black by day).
+  - `uLamp0..3` / `uLampColor0..3`: the village's lamps after dark (landmarks.ts `lampsGlow`): where each is and its reach, its colour times its strength (black by day).
+  - `uSaltWet`: how much of the rains' water stands in the salt farms (geography.ts `setSaltWet`).
 - `render/glsl.ts`: `GLSL_COMMON`. Include it exactly once per shader.
   - Uniforms, hash/noise/fbm, `windGust`.
   - `groundReach`: how far crops and grass are from the camera, with height counting double.
@@ -299,8 +308,8 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
 ## Environment
 
 - `env/astro.ts`: the sun and moon for a local solar hour at latitude 21.6°. The declination comes from the date; the moon walks the ecliptic, and its tilt off it is ignored.
-- `env/clock.ts`: the day speeds through the middles and lingers near each rise and set (`BASE_RATE`, `LINGER`, `WATCH`, `SPEEDS`). `events()` gives the day's events.
-- `env/season.ts`: the six Bangla seasons as key rows (`KEYS`, `SEASON_NAMES`).
+- `env/clock.ts`: sky time. `SPEEDS` are multiples of the wall clock's (1 = real time); faster, the time-lapse speeds through the middles and lingers near each rise and set (`BASE_RATE`, `LINGER`, `WATCH`); `LAPSE` (360) is the film's pace. `live`: kept to Bangladesh's own time (main.ts calls `follow(hour)` each frame) until the viewer turns the clock. `events()` gives the day's events.
+- `env/season.ts`: the six Bangla seasons as key rows (`KEYS`, `SEASON_NAMES`, `SEASON_STARTS`). `bangladeshTime()`: the day of the year and the hour in Bangladesh now (UTC+6).
   - `water`: the rivers' rise, full in the rains and Sharat and lowest in spring.
   - `salt`: the salt season. Also crops, colours, rain, wind and blossom.
 - `env/weather.ts`: the season's own weather (`WeatherChoice`: `'auto' | 'clear' | 'drizzle' | 'rain' | 'storm'`; no picker in the UI), wetness and strikes.
@@ -314,10 +323,18 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
 
 ## Camera, film and UI
 
+- `rig/yearJourney.ts`: `YearJourney(today).dayAt(s)`: the day of the year the land shows with the boat `s` m along her way. From today's season round the year in the calendar's order, a stretch of the way to each season (`STRETCH`: the rains and Sharat longest), each holding its look (`HOLD`, `HOLD_DAYS`) and then turning to the next; back to today's where her way begins anew.
+- `rig/opening.ts`: the opening flight (`OPENING_SECONDS` 22 s), in three parts:
+  - The high part: `KEYS` in the way's own frame (`wayAt`: along it, out from it, height), from high over the river ahead of the boat down over the village's bank (`openingSide`), eased in over `SET_OFF`, interpolated with slopes per second (`curve`).
+  - The round: from `ROUND.from` the bearing of the follow camera's focus (her bow) turns from ahead of her to the follow camera's place (`roundAt`, `RestPlace` given by the rig). The camera stays `ROUND.out` m from her way over the open water while she comes past, comes down to `ROUND.side` by `DOWN_BY`, and comes to rest exactly where the follow camera is.
+  - The floor (`openingFloor`): laid once at the start from `clearance` (`CANOPY` m over land and near a bank, `LOW` over open water past `REACH`), risen to `AHEAD` s early, eased over `SMOOTH`, and met with a soft max (`BLEND`). Its last `HANDOFF` s ease into the follow camera.
+- `rig/showcase.ts`: what the camera turns to by itself along her way, never leaving her (`findSights`: the crossings, the zamindar house, the mosque, the banyans, the bil as she comes into it, ghats, ponds, homesteads, kash, the fisherman, open fields; ranked and `SPACING` apart). A sight's stretch of her way (`STRETCH` per kind, eased over `EASE` m) and its pose (`sightPose`): behind her and away from it, turned toward it past her (`bank` low, `land` higher and farther, `ahead` past her to a crossing), drawn in to stay over her water.
+- `rig/visits.ts`: the map's places (`mapSpots()`: a `Spot` each with its name, a line about it, its sign, its group and its own shots). Each place's shots are `Scene`s with no world (seen in the viewer's own), each move an even `glide` over the ground or the water beneath it; the first carries the boat's place (`journey`): short of the place's `sync` (its part on her way: the zamindar's ghat) by the shots' length, the dissolve back and `LEAD` seconds more at `CRUISE`, so she has not passed it when the camera comes back to her.
 - `rig/rig.ts`: the boat's journey and the camera.
   - She steers for the point `LOOK_AHEAD` m along her way from where `journeyFrame` puts her. Near the end, in the bil, the mist comes down and she is put back at the start (`END_REACH`). She opens at `JOURNEY.opening`.
   - The `follow` orbit (`VIEWS`, `OPENING_VIEW`, `WATCH_VIEW`) is kept over the water near the banks (`overWater`), above the ground and the water, under the bridge's arch (`keepClearOfBridge`), and through the sanko's middle span or over its walkway (`keepClearOfSanko`).
   - `free` is the free camera (`flycam.ts`: `SPEED`, `EDGE`, `CEILING`).
+  - The opening flight (`beginOpening`, `flyOpening`, `openingBars` for its letterbox) and the sights (`setSights`, `showcase`, gated by `showGate` while nobody steers and no sky event is watched) pose the camera over the follow pose, blending with it; input ends the flight (`endOpening`) with the rig's own blend.
 - `rig/director.ts`: the film's engine.
   - Each scene has its own camera move at an even pace. The shot being left goes on moving (`CARRY`) while the next dissolves in over it for `DISSOLVE` s (2.2). The tour starts and ends the same way, from and to the viewer's view (`leaveView`, `leaveScene`).
   - The next shot's places are built a few ms a frame (`WARM_MS`) from `WARM_AHEAD` s (9) before its cut (`Stage.warm`). At the cut, `Stage.prepare` builds the rest of the ground, and the grass and crops within `PREPARE_MS`; their own updates finish them, growing in under the dissolve.
@@ -341,21 +358,23 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - Heights over the water are measured from the season's surface (`surface()`).
   - Scenes cue what moves in them through the `Stage`: the train, the casts, lightning, `bareheaded`, `sap`. They read `girlHead`/`girlYaw`/`sapTree` to frame those.
 - `ui/`:
-  - `controls.ts` (+ `controls.css`): the dock, the timeline, the views and the help. `#film-nav` shows the previous/next scene while the film plays (`visibility: hidden` once it fades, so the keyboard can't reach it). A dropdown gives the keyboard back once a choice is made.
+  - `controls.ts` (+ `controls.css`): the dock, a glass pane with a running stitch along its top: the year's ring (`#season-btn`: six arcs in `SEASON_HUES`, the journey's day marked), the hour and the Bangla date, `#live` (Bangladesh's time now, or the way back to it), the day's timeline with its sky events, the speed, the camera, and the view, moon, sound, map, full screen and more. The season, moon, view and more menus are popovers (`.pop`) placed over the button that opened them (`placePop`, `invoker`), moved by the arrow keys (`menuKeys`); on a phone the view, the moon and the map move into the more menu. `#brand` (the mark, top left) comes and goes with the dock and opens the help. `#film-nav` shows the previous/next scene while the film plays (`visibility: hidden` once it fades, so the keyboard can't reach it).
   - `bangla.ts`: Bangla time, tithi and dates.
-  - `hud.ts`: the loader, the title, notices and captions.
-  - `mapPanel.ts` (+ `map.css`): the map (L). The village is painted from above a few rows a frame. The places (`places()`) can be flown to (`MapActions.fly`) or sailed to (`sail`), and a click on the land goes there (measured inside the canvas's `object-fit: contain` box). The chosen place is marked in the list (`.chosen`).
+  - `hud.ts`: the loader (its sun rises with `progress`, `now()` writes Bangladesh's season, date and hour under it; `ready` lets the still go and lifts the mark after the title's seconds), notices and captions.
+  - The loader itself is inline in `index.html` (it shows before the scripts load): the still `public/brand/loader.webp` (a tiny blurred copy inline under it while it comes), the mark drawn inline, the word set once its face has come.
+  - `mapPanel.ts` (+ `map.css`): the map (L), in the dock's glass with a stitch under its title. The ground is painted from above a few rows a frame (`paintAt`, at `M` m a pixel), its shorelines lightened once all is in; over it, `FINE` times finer, the ways, the boat's way dashed, the waters named, a badge for each place in its group's colour with its sign (`ICONS`, 24 × 24 paths, the same in the list's cards), and the boat with a slow ring. Hovering a badge or a card picks it out and shows its card over the map; a click on either visits the place (`MapActions.visit`: the director's `visit`); a click elsewhere on the village's land looks at it from above (`fly`). The list groups the places (`GROUPS`: on the river, in the village, in the fields).
+  - A visit (main.ts `visit`): the camera the visit comes back to is set to follow her (`rig.followNow`), the director plays the place's shots, and the year is set at once to her new place on the journey (under the first dissolve). The film's own ways (the clock's pace, the turning year, its scene bar, the arrows through its scenes) keep to the film (`filming()`), not to a visit.
   - Input in the film (main.ts):
     - A tap or click only wakes the controls.
     - A drag past `DRAG_PX`, a second finger, the wheel, Esc, or a steering key takes the camera (`takeOver`).
     - The world's own controls leave the film first (`ownWorld`): time, speed, season, moon, the timeline's marks, N, Y, `[` `]` and Space. The viewer's world is put back before the change applies to it.
-    - The film doesn't start by itself while the help or the map is open, or while the pointer moves.
+    - The film starts only from its button or C (the journey is the experience left to itself).
   - Credits are static in `index.html` (`#sources`).
 - `audio/soundscape.ts`: Web Audio only.
   - The sounds: water (louder the nearer the listener is to it), wind (with its gusts), rain, the paddle's splash (by its distance), birds (silent in rain or a hard wind), crickets, frogs (the rains' nights: small frogs' rattles and bullfrogs' croaks), the falling water near (the hill stream, the sluice), thunder.
   - Thunder still on its way is hushed when a scene changes (`hushThunder`).
   - It fades in on the first touch or key, is muted with M or the speaker (remembered as `nodi.muted`), and sleeps while the page is hidden.
-- `main.ts`: the bootstrap; adaptive resolution and the quality tier (`setQuality`); the film's stage; `worldLook`/`drawLeaving` for dissolves; the jump under a moment of dark (`jumpAt`, `readyAround`); every keyboard shortcut; the `?debug` hooks.
+- `main.ts`: the bootstrap; Bangladesh's time and the journey's year (`bdNow`, `yearJourney`, `yearOnJourney`, `followYear`, `goLive`); the opening flight's start; adaptive resolution and the quality tier (`setQuality`); the film's stage; `worldLook`/`drawLeaving` for dissolves; the jump under a moment of dark (`jumpAt`, `readyAround`); every keyboard shortcut; the `?debug` hooks.
   - At load every material is compiled, the hidden ones too.
   - Shader logs are checked only in development (`renderer.debug.checkShaderErrors`): checking one on a program's first use waits for the driver.
 
@@ -369,18 +388,26 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
 
 | What | Where |
 | --- | --- |
-| The layout: waters, homesteads, landmarks, roads, hills, salt field | `world/plan.ts` (check it top-down after) |
+| The layout: waters, homesteads, landmarks, roads, hills, salt farms | `world/plan.ts` (check it top-down after; the ways scan, verification.md) |
+| A salt farm's ground, water, bunds and people | plan.ts `SALT_FIELDS` (`dig`, `rim`, `bunds`, `rains`, `work`); ground geography.ts `saltGround`, `SETTLING`, `RIM_CREST`; paint render/patch.ts; bunds and crews world/saltworks.ts (`POSED`, `DRAWN`); motions world/saltHands.ts (`RAKE`, `STRIDE`, `KODAL`, `KEYS`) |
+| Ghat steps | world/ghatFlight.ts → `RISE`, `RUN`, `CLEAR`; the zamindar's geography.ts `GRAND_GHAT`; the village's village.ts `brickGhat` |
+| Moored boats and their lines | world/village.ts → `tieUp`, `mooredBoat`, `zamindarBoat`, `MOORED_DRAFT`, `SLACK`; their swing and bob in the `moored` vertex shader |
 | Waterway widths, depths, currents; the journey's line | `world/waterways.ts` |
 | Light, exposure, fog and water colour per time of day | `env/environment.ts` → `LOOKS`; moonlight and new-moon glow in `update()` (`moonE`, `glowE`) |
-| Clock speed, lingering near events, when the camera watches | `env/clock.ts` → `BASE_RATE`, `LINGER`, `WATCH`, `SPEEDS` |
+| Clock speed, lingering near events, when the camera watches | `env/clock.ts` → `BASE_RATE`, `LINGER`, `WATCH`, `SPEEDS`, `LAPSE` |
+| The seasons along the journey | `rig/yearJourney.ts` → `STRETCH`, `HOLD`, `HOLD_DAYS` |
+| The opening flight | `rig/opening.ts` → `KEYS`, `ROUND`, `DOWN_BY`, `OPENING_SECONDS`, `SET_OFF`, `HANDOFF`; its floor `CANOPY`, `LOW`, `REACH`, `AHEAD`, `SMOOTH` |
+| What the camera shows by itself | `rig/showcase.ts` → `findSights`, `STRETCH`, `EASE`, `SPACING`, `sightPose` |
+| The map's places and their shots | `rig/visits.ts` → `mapSpots`, `glide`, `LEAD`; the map `ui/mapPanel.ts` → `ICONS`, `GROUPS`, `paintAt`, `drawLines`; `ui/map.css` |
+| The loader, the logo, the icons | `index.html` (`#load`), `ui/hud.ts`; `public/brand/` (`logo.svg`, `favicon.svg`, `loader.webp`); `scripts/brand/icons.mjs` |
 | Opening time, idle times, picks' hold and turn times | `main.ts` → `OPENING_BEFORE_SUNSET`, `FILM_IDLE_MS`, `SESSION_MS`, `YEAR_TURN_SECONDS`, `MOON_TURN_SECONDS` |
 | Each season's values (water, crops, colours, rain, wind, salt) | `env/season.ts` → `KEYS` |
 | How seasons look on plants and fields | `render/patch.ts` (`seasonal`, the paddy part) |
 | Rain, storms, wetness | `env/weather.ts`; streaks and splashes `world/rain.ts`; drops `render/glsl.ts` → `RAIN_CELL`, `rainDrop`; wet and puddles `render/patch.ts` (`uWet`, `ATM_PUDDLES`), `world/terrain.ts` (`aPool`) |
 | Wind strength and gusts | `env/wind.ts` → `WIND_MS`, `windGust`/`gustAt` |
-| Waves | `world/waves.ts` → `FETCH`, `heightFor`, `peakFor`, `SHAPES`, `QUARTERS`, `STEEPEST`, `BUILD`, `FADE`, `SHELTERED` |
+| Waves | `world/waves.ts` → `FETCH`, `heightFor`, `peakFor`, `SHAPES`, `QUARTERS`, `STEEPEST`, `BUILD`, `FADE`, `SHELTERED`, `INLAND`, `SHOAL_DEPTH`, `surfaceShare` |
 | Water's clarity | `render/glsl.ts` → `underwater()` |
-| Boat mass, drag, steering, heel | `world/boatPhysics.ts` → `MASS`, `STEER`, `strokePower`, `MAX_POWER`, `MAX_HEEL` |
+| Boat mass, drag, steering, heel | `world/boatPhysics.ts` → `MASS`, `STEER`, `strokePower`, `MAX_POWER`, `MAX_HEEL`, `ROLL`, `ROLL_EDDY` |
 | The stroke and the body's drive | `world/paddle.ts` → `STROKE_SECONDS`, `CATCH_Z`, `EXIT_Z`, `BLADE_X`, `LEAN_OUT`, `RECOVERY_LIFT`, `RECOVERY_LEAN`, `MEAN_THRUST`, `bodyDrive` |
 | Where the majhi stands, his grip | `world/hero.ts` → `STANCE`, `CROSS_HOLD`, `LOWER_HOLD` |
 | Bracing, leaning | `world/boatman.ts` → `BRACE`, `LEAN_MAX` |
@@ -404,7 +431,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
 | Fish, frogs, turtles | `world/fish.ts` → `KINDS`, `SCHOOLS`, `SWIM`; `world/frogs.ts` → `MOST`, `FIND`, `SHY`; `world/turtles.ts` → `SHY`, `SAFE` |
 | The hill stream and the sluice | plan.ts `HILL_STREAM`, `SLUICE`; carving `world/channels.ts`; water and flow `world/falls.ts` |
 | The mosque, its pond, graveyard and banyan | plan.ts `MOSQUE`, `MOSQUE_POND_TREES`, `MOSQUE_GROUNDS`, `GRAVEYARD`, `GRAVE_BANYAN`; the building, its kalima and its ghat landmarks.ts `MQ`, `mosque`, `mosqueGhat`; graves landmarks.ts `graveyard`; its fish fish.ts `KEPT_STOCK`; pebbles stones.ts `PEBBLE_LOOKS` |
-| The night lights (mosque, ghat lantern) | landmarks.ts `lampsGlow`, `Parts.lights`/`lamps`/`lanterns`/`glow`; light glsl.ts `lampLight`; on the water water.ts `lampGlint` |
+| The night lights (mosque, its ghat's lantern, the village ghat's) | landmarks.ts `lampsGlow`, `hubLantern`, `Parts.lights`/`lamps`/`lanterns`/`glow`; light glsl.ts `lampLight`; on the water water.ts `lampGlint` |
 | The boat's way, the sanko's clearance | waterways.ts `JOURNEY_LINE`, `SIDE_KHAL`; sites.ts `SANKO` (`crown`, `gap`), `sankoDeck` |
 | Textures | `render/textures.ts` |
 | Sound | `audio/soundscape.ts` |

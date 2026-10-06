@@ -67,6 +67,8 @@ export const G = {
    * the bil rise and fall by all of it, the ponds by `POND_RISE` (geography.ts waterLevelAt, GLSL waterLevels).
    */
   uWaterRise: { value: 0 },
+  /** How much of the rains' water stands in the salt farms (0..1: drained for the salt work, full as a gher in the rains; geography.ts setSaltWet). */
+  uSaltWet: { value: 0 },
   /** The season on the land: x leafiness, y dryness, z share of trees in flower, w kash in plume. */
   uSeasonA: { value: new Vector4(0.95, 0.1, 0, 1) },
   /** x lilies in flower, y water standing in the paddy plots, z wet soil, w salt pans at work. */
@@ -86,9 +88,11 @@ export const G = {
   uLamp0: { value: new Vector4() },
   uLamp1: { value: new Vector4() },
   uLamp2: { value: new Vector4() },
+  uLamp3: { value: new Vector4() },
   uLampColor0: { value: new Color(0, 0, 0) },
   uLampColor1: { value: new Color(0, 0, 0) },
   uLampColor2: { value: new Color(0, 0, 0) },
+  uLampColor3: { value: new Color(0, 0, 0) },
   /** How much cloud lies on the hills (0..1): winter's mornings and evenings most, some in the rains (main.ts). */
   uHillCloud: { value: 0 },
   /** A lightning strike's light (world/lightning.ts): xyz the way to where it lights the cloud from within, w how bright now. */

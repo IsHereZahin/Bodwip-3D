@@ -2,7 +2,8 @@ import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
 import { SLUICE_SITE, carve, channelAt } from './channels';
 import { FeatureGrid, HOMESTEAD_MOUNDS, MOUNDS, PONDS, POND_BANK, local, pondReach, shapeDistance, shapePoint, type Mound, type Pond } from './layout';
-import { BANYAN, FAR_GROVES, GRAVE_BANYAN, HILLS, MOSQUE, MOSQUE_GROUNDS, MOUND, PLAIN, POND_LEVEL, POND_RISE, SALT_FIELD, TEA_STALL, WATER_LEVEL, WORLD } from './plan';
+import { ghatFlight, ghatLocal, ghatPoint, type GhatSite, type GhatStep } from './ghatFlight';
+import { BANYAN, FAR_GROVES, GRAVE_BANYAN, HILLS, LOW_WATER, MOSQUE, MOSQUE_GROUNDS, MOUND, PLAIN, POND_LEVEL, POND_RISE, SALT_BAND, SALT_DRAIN, SALT_FIELD, SALT_FIELDS, TEA_STALL, WATER_LEVEL, WORLD, ZAMINDAR_GROUNDS, type SaltFarm } from './plan';
 import { railGround, railShare } from './railway';
 import { onRoad, roadCover, roadEdge, roadGround, roadNear } from './roads';
 import { BRIDGE, SANKO, bridgeDeck, bridgeEnds, bridgeFrame, bridgeSoffit, bridgeToWorld, onBridge, onSanko, sankoDeck, sankoEnds, sankoFrame, type Point2 } from './sites';
@@ -190,7 +191,10 @@ export function creekFlats(x: number, z: number): number {
 function bilGround(x: number, z: number, ground: number): number {
   if (!nearBil(x, z)) return ground;
   const e = bilReach(x, z);
-  const lane = BIL.level - bilLane(x, z);
+  // (only where the lane runs: taken as the bil's level everywhere, it flattened the whole rim to the water and
+  // left the fields standing a metre and a half over it in a cliff where the rim ends)
+  const cut = bilLane(x, z);
+  const lane = cut > 0 ? BIL.level - cut : Infinity;
   if (e < 1) return Math.min(ground, BIL.level - bilDepth(x, z), lane);
   if (e < 1.45) return Math.min(ground, BIL.level - 0.04 + (ground - BIL.level + 0.04) * smoothstep(1, 1.45, e), lane);
   return ground;
@@ -213,37 +217,78 @@ export function routeGap(x: number, z: number): number {
   return journeyFrame(x, z)?.d ?? Infinity;
 }
 
-// ---------- the salt field ----------
+// ---------- the salt farms ----------
 
-/** The salt field's floor (m): graded flat a little below the fields, so the brine stands in its beds. */
-const SALT_LEVEL = PLAIN - 0.3;
-
-/** (x, z) in the salt field's frame (m): `u` along its length from its east end, `v` across it from its north side. The result is reused. */
+/** (x, z) in a salt farm's frame (m): `u` along its length from its u = 0 end, `v` across it. The result is reused. */
 const saltAt = { u: 0, v: 0 };
-export function saltLocal(x: number, z: number): { u: number; v: number } {
-  const s = Math.sin(SALT_FIELD.yaw);
-  const c = Math.cos(SALT_FIELD.yaw);
-  const dx = x - SALT_FIELD.x;
-  const dz = z - SALT_FIELD.z;
-  saltAt.u = dx * s + dz * c + SALT_FIELD.w / 2;
-  saltAt.v = dx * c - dz * s + SALT_FIELD.d / 2;
+export function saltLocal(x: number, z: number, farm: SaltFarm = SALT_FIELD): { u: number; v: number } {
+  const s = Math.sin(farm.yaw);
+  const c = Math.cos(farm.yaw);
+  const dx = x - farm.x;
+  const dz = z - farm.z;
+  saltAt.u = dx * s + dz * c + farm.w / 2;
+  saltAt.v = dx * c - dz * s + farm.d / 2;
   return saltAt;
 }
 
-/** A point of the salt field's frame in the world. */
-export function saltPoint(u: number, v: number): { x: number; z: number } {
-  const s = Math.sin(SALT_FIELD.yaw);
-  const c = Math.cos(SALT_FIELD.yaw);
-  const a = u - SALT_FIELD.w / 2;
-  const b = v - SALT_FIELD.d / 2;
-  return { x: SALT_FIELD.x + a * s + b * c, z: SALT_FIELD.z + a * c - b * s };
+/** A point of a salt farm's frame in the world. */
+export function saltPoint(u: number, v: number, farm: SaltFarm = SALT_FIELD): { x: number; z: number } {
+  const s = Math.sin(farm.yaw);
+  const c = Math.cos(farm.yaw);
+  const a = u - farm.w / 2;
+  const b = v - farm.d / 2;
+  return { x: farm.x + a * s + b * c, z: farm.z + a * c - b * s };
 }
 
-/** How much of (x, z) is the salt field's ground (0..1): all of it inside its edge, none 3 m beyond. */
+/** How far (x, z) lies inside a farm's edge (m; negative outside it). */
+function saltEdge(farm: SaltFarm, x: number, z: number): number {
+  const { u, v } = saltLocal(x, z, farm);
+  return Math.min(u, farm.w - u, v, farm.d - v);
+}
+
+/** The salt farm whose ground (x, z) is on, `margin` m round it included; null off them all. */
+export function saltFarmAt(x: number, z: number, margin = 0): SaltFarm | null {
+  for (const farm of SALT_FIELDS) if (saltEdge(farm, x, z) > -margin) return farm;
+  return null;
+}
+
+/** How much of (x, z) is a salt farm's ground (0..1): all of it inside its edge, none 3 m beyond. */
 export function saltShare(x: number, z: number): number {
-  const { u, v } = saltLocal(x, z);
-  const d = Math.max(-u, u - SALT_FIELD.w, -v, v - SALT_FIELD.d);
-  return smoothstep(3, 0, d);
+  const farm = saltFarmAt(x, z, 3);
+  return farm ? smoothstep(-3, 0, saltEdge(farm, x, z)) : 0;
+}
+
+/** How much deeper than its pans a farm's settling pond is dug (m), sloping down from its bund over its first metres. */
+const SETTLING = 0.55;
+/** Where a farm's embankment's crest runs (m in from its edge), between its outer face and its inner. */
+const RIM_CREST: readonly [number, number] = [0.35, 1.25];
+
+/**
+ * A farm's ground at (u, v) of its frame, the fields standing at `land` there: its pans' floor dug into the
+ * fields, the settling pond's bed deeper, and the earth embankment round it, its crest over the fields, its
+ * outer face down to them and its inner face down to the pans: it holds the rains in them.
+ */
+function saltGround(farm: SaltFarm, u: number, v: number, land: number): number {
+  const floor = PLAIN - farm.dig;
+  const pondEnd = farm.w * farm.pond;
+  const bed = floor - SETTLING * smoothstep(pondEnd - 0.6, pondEnd - 4.5, u);
+  const crest = PLAIN + farm.rim;
+  const edge = Math.min(u, farm.w - u, v, farm.d - v);
+  if (edge >= farm.rimInset) return bed;
+  if (edge >= RIM_CREST[1]) return bed + (crest - bed) * smoothstep(farm.rimInset, RIM_CREST[1], edge);
+  if (edge >= RIM_CREST[0]) return crest;
+  // its outer face down to the fields, and the feeder ditch along its foot
+  const ditch = 0.22 * smoothstep(-2.1, -1.3, edge) * smoothstep(-0.1, -0.7, edge);
+  return land + (crest - land) * smoothstep(RIM_CREST[0] - 3, RIM_CREST[0], edge) - ditch;
+}
+
+/** A farm's water at its fullest, in the rains (m): over its pans' floor by its `rains`. */
+export const saltRains = (farm: SaltFarm): number => PLAIN - farm.dig + farm.rains;
+let saltWet = 0;
+
+/** Sets how much of the rains' water stands in the salt farms now (0..1; main.ts each frame, from env/season.ts `salt`). */
+export function setSaltWet(share: number): void {
+  saltWet = share;
 }
 
 // ---------- the ground ----------
@@ -301,8 +346,11 @@ function landHeight(x: number, z: number): number {
   const char = charShare(x, z);
   let h = PLAIN + unevenness(x, z) * (1 - char) + riverLevee(x, z) - 0.6 * char + hillHeight(x, z);
   h = Math.max(h, moundGround(x, z), PLAIN + MOUND * 0.8 * groveShare(x, z));
-  const salt = saltShare(x, z);
-  if (salt > 0) h += (SALT_LEVEL - h) * salt;
+  const farm = saltFarmAt(x, z, 3);
+  if (farm) {
+    const { u, v } = saltLocal(x, z, farm);
+    h = saltGround(farm, u, v, h);
+  }
   h = roadGround(x, z, h);
   h = railGround(x, z, h);
   return pondGround(x, z, h);
@@ -349,13 +397,19 @@ export function waterRise(): number {
  */
 export function meanWaterLevelAt(x: number, z: number): number {
   if (nearBil(x, z) && (bilReach(x, z) < 1.05 || bilLane(x, z) > 0.2)) return BIL.level;
+  const farm = saltFarmAt(x, z, -RIM_CREST[1]);
+  if (farm) return saltRains(farm);
   const w = waterwayAt(x, z);
   if (w && w.d < w.half + 1) return WATER_LEVEL;
   return pondSurface(x, z) ?? -Infinity;
 }
 
-/** Where a water whose mean level is `mean` stands this season: the waterways and the bil raised by all the rise, a pond by POND_RISE of it. */
+/**
+ * Where a water whose mean level is `mean` stands this season: the waterways and the bil raised by all the rise, a
+ * pond by POND_RISE of it, a salt farm's full in the rains and drained in the salt season (SALT_BAND).
+ */
 export function risenLevel(mean: number): number {
+  if (mean > SALT_BAND) return mean - (1 - saltWet) * SALT_DRAIN;
   return mean + rise * (mean > (WATER_LEVEL + POND_LEVEL) / 2 ? POND_RISE : 1);
 }
 
@@ -383,16 +437,18 @@ export function waterLevelAt(x: number, z: number): number {
  */
 export function shoreLevel(x: number, z: number): number {
   const here = meanWaterLevelAt(x, z);
-  if (Number.isFinite(here)) return here;
+  // (a salt farm's water comes and goes with the season, over the beds render/patch.ts paints: no shore of its own)
+  if (Number.isFinite(here)) return here > SALT_BAND ? -Infinity : here;
   if (bankStrip(x, z) > 0) return WATER_LEVEL;
   if (nearBil(x, z) && bilReach(x, z) < 1.5) return BIL.level;
   const n = pondNear(x, z);
   return n && n.d < POND_BANK.top ? n.pond.level : -Infinity;
 }
 
-/** Whether (x, z) holds water: the river, a khal, the bil or a pond. */
+/** Whether (x, z) holds water: the river, a khal, the bil, a pond, or a salt farm's pans (in the rains). */
 export function inlandWaterAt(x: number, z: number): boolean {
   if (nearBil(x, z) && (bilReach(x, z) < 1 || bilLane(x, z) > 0.3)) return true;
+  if (saltFarmAt(x, z, -RIM_CREST[1])) return true;
   const w = waterwayAt(x, z);
   if (w && w.d < w.half) return true;
   return pondSurface(x, z) !== null;
@@ -473,6 +529,8 @@ export function landUse(x: number, z: number): LandUse {
   if (ch) verge = Math.max(verge, smoothstep(ch.ch.width / 2 + 4, ch.ch.width / 2 + 1, ch.d));
   // the mosque's grounds: a common of grass round it, its pond and its graveyard, its edge ragged
   verge = Math.max(verge, smoothstep(3, -3, shapeDistance(MOSQUE_GROUNDS, x, z) + edgeWobble(x, z) * 2));
+  // and the zamindar house's lawn down to its ghat
+  verge = Math.max(verge, smoothstep(3, -3, shapeDistance(ZAMINDAR_GROUNDS, x, z) + edgeWobble(x, z) * 2));
   // the hills are forest: the grove's floor under their trees
   mound = Math.max(mound, hillShare(x, z), groveShare(x, z));
   const sand = charShare(x, z) * (1 - mound);
@@ -504,11 +562,56 @@ export function onLandmark(x: number, z: number, margin = 0): boolean {
   if (ch && ch.d < ch.ch.width / 2 + margin + 0.6) return true;
   if (Math.hypot(x - SLUICE_SITE.x, z - SLUICE_SITE.z) < 5 + margin) return true;
   if (Math.hypot(x - TEA_STALL.x, z - TEA_STALL.z) < 4 + margin) return true;
-  // the salt field: its beds and bunds are worked ground
-  const salt = saltLocal(x, z);
-  if (Math.max(-salt.u, salt.u - SALT_FIELD.w, -salt.v, salt.v - SALT_FIELD.d) < margin) return true;
+  // the salt farms: their beds and bunds are worked ground (an old farm's embankment grassed over)
+  const farm = saltFarmAt(x, z, margin);
+  if (farm) {
+    const edge = saltEdge(farm, x, z);
+    if (!(farm.grassy && margin === 0 && edge > 0.1 && edge < farm.rimInset - 0.3)) return true;
+  }
   for (const m of MOUNDS) if (!m.home && m.id !== 'banyan' && shapeDistance(m, x, z) < margin - 4) return true;
+  const gg = grandGhat();
+  if (gg && onGrandGhat(gg, x, z, margin)) return true;
   return false;
+}
+
+// ---------- the zamindar house's grand ghat ----------
+
+/** The zamindar house's grand ghat (landmarks.ts builds it): its stair's width and walls, its landing, and the pavilions beside the landing (m). */
+export const GRAND_GHAT = { width: 8, wall: 0.7, top: 11, landing: 2.6, pavilion: 3 } as const;
+export interface GrandGhat {
+  site: GhatSite;
+  steps: GhatStep[];
+  /** Half its breadth between its walls' outer faces (m). */
+  half: number;
+  /** A circle round all of it, stair and pavilions, to skip the rest of the world quickly. */
+  round: { x: number; z: number; r: number };
+}
+
+let grand: GrandGhat | null | undefined;
+
+/** The zamindar's grand ghat, laid out on first asking (it reads the ground): on the bank in front of the house, square to it. */
+export function grandGhat(): GrandGhat | null {
+  if (grand !== undefined) return grand;
+  const m = MOUNDS.find((k) => k.id === 'zamindar');
+  const near = m ? shapePoint(m, m.hu + 16, 0) : null;
+  const b = near ? bankAt(near.x, near.z) : null;
+  if (!m || !b) return (grand = null);
+  const site = { x: b.x, z: b.z, up: b.up };
+  const steps = ghatFlight(site, { ...GRAND_GHAT, low: WATER_LEVEL - LOW_WATER }, terrainHeight);
+  const mid = ghatPoint(site, (GRAND_GHAT.top + steps[steps.length - 1].front) / 2);
+  const r = Math.hypot(GRAND_GHAT.top - steps[steps.length - 1].front, GRAND_GHAT.width + GRAND_GHAT.pavilion * 2) / 2 + 2;
+  grand = { site, steps, half: GRAND_GHAT.width / 2 + GRAND_GHAT.wall, round: { x: mid.x, z: mid.z, r } };
+  return grand;
+}
+
+/** On the grand ghat's stair or its pavilions (with `margin` m round them). */
+function onGrandGhat(g: GrandGhat, x: number, z: number, margin: number): boolean {
+  if (Math.hypot(x - g.round.x, z - g.round.z) > g.round.r + margin) return false;
+  const { d, s } = ghatLocal(g.site, x, z);
+  const top = g.steps[0].back;
+  if (Math.abs(s) <= g.half + margin && d <= top + margin && d >= g.steps[g.steps.length - 1].front - margin) return true;
+  // the pavilions either side of the landing
+  return Math.abs(s) <= g.half + GRAND_GHAT.pavilion + 0.6 + margin && d <= top + margin && d >= top - GRAND_GHAT.pavilion - 0.6 - margin;
 }
 
 const GRAVES = MOUNDS.find((m) => m.id === 'graveyard');
@@ -543,6 +646,11 @@ function onMosqueWorks(x: number, z: number, margin: number): boolean {
 /** On the mosque's grounds, whose grass is kept short (grazed, and cut for the prayers). */
 export function onMosqueGrounds(x: number, z: number): boolean {
   return shapeDistance(MOSQUE_GROUNDS, x, z) < 0;
+}
+
+/** On the zamindar house's lawn, kept short down to its ghat. */
+export function onZamindarGrounds(x: number, z: number): boolean {
+  return shapeDistance(ZAMINDAR_GROUNDS, x, z) < 0;
 }
 
 /** Where a homestead comes down to its water: snapped to the nearest bank of the river or a khal, `s` along it and the side it is on. */

@@ -6,7 +6,7 @@ import { Rng } from '../core/rng';
 import { WATER_LEVEL, meanWaterLevelAt, onLandmark, risenLevel, terrainHeight, waterRise, waterwayAt } from './geography';
 import { PETAL_LENGTH, PETAL_TINTS, PETAL_WITHERED, bloomAt, petalGeometry, petalMaterial } from './leaves';
 import type { Crown } from './vegetation';
-import { SHELTERED, waveHeight } from './waves';
+import { INLAND, SHELTERED, waveHeight } from './waves';
 
 // The petals the trees in red flower have let fall (world/leaves.ts lets them fall): lying thick under each crown
 // near the camera, more the further the tree is into its flowering, the oldest browning; and afloat on the water
@@ -31,8 +31,8 @@ const MOST_AFLOAT = 2400;
 const LAY_MS = 1.5;
 /** Seconds a petal floats before it sinks, waterlogged, drifting on the current meanwhile. */
 const AFLOAT_LIFE: readonly [number, number] = [150, 320];
-/** On still fresh water the ripples are this share of the open water's waves (as drift.ts has them). */
-const RIPPLES = 0.15;
+/** On still fresh water the ripples are this share of the open water's waves (as the water shader draws them: waves.ts surfaceShare). */
+const RIPPLES = SHELTERED * INLAND;
 /**
  * The camera moves this far, or the flowering or the water this much, before the lying petals are put out again
  * (and every so many seconds, sooner while a crown's are still being laid).
@@ -251,7 +251,7 @@ export class PetalCarpet {
         if (Math.abs(along) < HULL.half && Math.abs(across) < HULL.beam * Math.sqrt(1 - (along / HULL.half) ** 2) + 0.05) continue;
         // it settles on the water as it comes, and sinks at the last, darkening as it soaks
         const size = a[i + A.size] * smoothstep(0, 0.02, age) * (1 - smoothstep(0.85, 1, age));
-        this.p.set(x, level + waveHeight(x, z, t, SHELTERED) * RIPPLES + 0.004, z);
+        this.p.set(x, level + waveHeight(x, z, t, RIPPLES) + 0.004, z);
         // turning slowly as it goes
         this.q.setFromAxisAngle(this.up, a[i + A.yaw] + age * life * 0.02);
         this.m.compose(this.p, this.q, this.s.setScalar(size));
@@ -617,7 +617,7 @@ export class HeroPetal {
     } else if (tau > this.fall) {
       // on the water it rides the ripples, dipping as it touches and bobbing back
       const s = tau - this.fall;
-      m.position.y += waveHeight(m.position.x, m.position.z, t, SHELTERED) * RIPPLES + 0.004 - 0.006 * Math.exp(-2.5 * s) * Math.cos(9 * s);
+      m.position.y += waveHeight(m.position.x, m.position.z, t, RIPPLES) + 0.004 - 0.006 * Math.exp(-2.5 * s) * Math.cos(9 * s);
     }
     // the ripples it makes as it touches, for their few seconds
     if (tau >= this.fall && tau < this.fall + 5) this.touch.set(this.to.x, this.to.z, tau - this.fall, 1);

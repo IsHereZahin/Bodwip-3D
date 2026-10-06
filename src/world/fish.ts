@@ -3,7 +3,8 @@ import { LAYER_NO_REFLECT } from '../core/globals';
 import { angleDelta, clamp, smoothstep } from '../core/mathx';
 import { Rng } from '../core/rng';
 import { patchMaterial } from '../render/patch';
-import { PONDS, pondReach, terrainHeight, waterLevelAt, type Pond } from './geography';
+import { PONDS, pondReach, saltLocal, saltPoint, terrainHeight, waterLevelAt, type Pond } from './geography';
+import { SALT_FIELDS, type SaltFarm } from './plan';
 import type { Ripples } from './ripples';
 
 // Fish in the waters round the camera, each swimming as fish do: a few beats of the tail and a glide, turning
@@ -13,7 +14,9 @@ import type { Ripples } from './ripples';
 // deeper and slower. The ponds keep their own: rui, tilapia and sharputi; the pond the village keeps clean (the
 // mosque's) many more (`KEPT_STOCK`): shoals of little sharputi near the top, schools of red tilapia and of
 // golden and silver fish that drift apart to feed and gather again, tilapia alone, and a few big rui and katla
-// keeping deep. The pond's fish rise now and then to sip at the surface.
+// keeping deep. The pond's fish rise now and then to sip at the surface. In the rains the salt farms, kept as
+// ghers, have theirs: schools of little sharputi and puti in the shallow water over the drowned beds, turning
+// back from the embankments, rising to sip.
 // Now and then one leaps clear and falls back. What they do to the surface (a leap, a sip, a sharp turn just
 // under it) rings the water (world/ripples.ts). Seen through the water they are dim shapes, as fish are (they
 // go through patchMaterial, so the water tints them). Only round the camera, so they cost the same anywhere.
@@ -62,10 +65,18 @@ const KEPT_STOCK: { kind: Kind; n: number; school: boolean }[] = [
   { kind: KINDS.tilapia, n: 6, school: false },
   { kind: KINDS.big, n: 5, school: false },
 ];
-/** The pond schools' numbers start here (the open waters' are 0 up). */
+/** The pond schools' numbers start here (the open waters' are 0 up), and the ghers' here. */
 const POND_SCHOOL = 1000;
-/** Room for the open waters' fish, the kept pond's, the other ponds' near the camera and the leaps. */
-const MOST = SCHOOLS * PER_SCHOOL + BIG + KEPT_STOCK.reduce((s, g) => s + g.n, 0) + 48;
+const GHER_SCHOOL = 2000;
+/** A gher's schools in the rains, and how near the camera a gher has its fish (m, from its middle, past its half-length). */
+const GHER_STOCK: { kind: Kind; n: number }[] = [
+  { kind: KINDS.shoal, n: 10 },
+  { kind: KINDS.shoal, n: 8 },
+  { kind: KINDS.puti, n: 7 },
+];
+const GHER_REACH = 90;
+/** Room for the open waters' fish, the kept pond's, the other ponds' near the camera, two ghers' and the leaps. */
+const MOST = SCHOOLS * PER_SCHOOL + BIG + KEPT_STOCK.reduce((s, g) => s + g.n, 0) + 2 * GHER_STOCK.reduce((s, g) => s + g.n, 0) + 48;
 
 /**
  * A fish 1 m long along +z (scaled down per fish), its head at z ½: a deep spindle body, its back darker than its
@@ -150,6 +161,8 @@ interface Swimmer {
   /** Its school (its index), or −1 alone; in a pond, which. */
   school: number;
   pond: Pond | null;
+  /** In a salt farm's gher, which. */
+  farm: SaltFarm | null;
   /** When it next looks ahead for shallows, and when it next rises to sip the surface (s). */
   look: number;
   sip: number;
@@ -174,8 +187,9 @@ export class Fish {
   private readonly swimmers: Swimmer[] = [];
   /** The open waters' schools: where each is, and whether it is in the water (NaN: to be placed). */
   private readonly schools: { c: Vector3; heading: number }[] = [];
-  /** The ponds whose fish are out now. */
+  /** The ponds whose fish are out now, and the ghers'. */
   private readonly stocked = new Set<Pond>();
+  private readonly ghers = new Set<SaltFarm>();
   private readonly leaps: Leap[] = [];
   private readonly rng = new Rng(77);
   private readonly ripples: Ripples;
@@ -214,7 +228,7 @@ export class Fish {
     for (let k = 0; k < BIG; k++) this.swimmers.push(this.spawn(KINDS.rui, -1, null));
   }
 
-  private spawn(kind: Kind, school: number, pond: Pond | null): Swimmer {
+  private spawn(kind: Kind, school: number, pond: Pond | null, farm: SaltFarm | null = null): Swimmer {
     const r = this.rng;
     return {
       kind,
@@ -231,6 +245,7 @@ export class Fish {
       color: new Color(r.pick(kind.back)).multiplyScalar(r.range(0.9, 1.1)),
       school,
       pond,
+      farm,
       look: 0,
       sip: r.range(6, 30),
       wander: r.range(0, 100),
@@ -300,6 +315,38 @@ export class Fish {
     }
   }
 
+  /**
+   * The salt farms' ghers within reach of `eye` have their fish while the rains stand in them (a hand's breadth
+   * over the beds at least); those left behind, or drained for the salt work, lose theirs.
+   */
+  private stockGhers(eye: Vector3): void {
+    SALT_FIELDS.forEach((farm, fi) => {
+      const middle = saltPoint(farm.w * 0.5, farm.d * 0.5, farm);
+      const flooded = waterLevelAt(middle.x, middle.z) - terrainHeight(middle.x, middle.z) > 0.12;
+      const near = flooded && Math.hypot(farm.x - eye.x, farm.z - eye.z) < GHER_REACH + farm.w / 2;
+      if (near === this.ghers.has(farm)) return;
+      if (!near) {
+        this.ghers.delete(farm);
+        for (let i = this.swimmers.length - 1; i >= 0; i--) if (this.swimmers[i].farm === farm) this.swimmers.splice(i, 1);
+        return;
+      }
+      this.ghers.add(farm);
+      GHER_STOCK.forEach((g, i) => {
+        // each school about one place over the beds, well in from the embankment
+        const m = farm.rimInset + 3;
+        const at = saltPoint(this.rng.range(m, farm.w - m), this.rng.range(m, farm.d - m), farm);
+        const wander = this.rng.range(0, 100);
+        for (let k = 0; k < g.n; k++) {
+          const f = this.spawn(g.kind, GHER_SCHOOL + fi * 8 + i, null, farm);
+          f.p.set(at.x + this.rng.range(-0.8, 0.8), 0, at.z + this.rng.range(-0.8, 0.8));
+          f.wander = wander + this.rng.range(-0.3, 0.3);
+          f.depth = Math.min(f.depth, 0.16);
+          this.swimmers.push(f);
+        }
+      });
+    });
+  }
+
   /** Somewhere in `pond` within `share` of its reach from its middle (a fresh vector). */
   private pondPlace(pond: Pond, share: number): Vector3 {
     const a = this.rng.range(0, Math.PI * 2);
@@ -311,6 +358,7 @@ export class Fish {
     if (dt <= 0) return;
     this.clock += dt;
     this.stock(eye);
+    this.stockGhers(eye);
     for (let i = 0; i < this.schools.length; i++) {
       const s = this.schools[i];
       if (Number.isNaN(s.c.x) || Math.hypot(s.c.x - eye.x, s.c.z - eye.z) > REACH) {
@@ -343,7 +391,7 @@ export class Fish {
         if (this.depthAt(x, z) < 1.2 || PONDS.some((p) => pondReach(p, x, z) < 1.3)) continue;
         f.p.set(x, 0, z);
       }
-      if (!f.pond && Math.hypot(f.p.x - eye.x, f.p.z - eye.z) > REACH * 1.2) {
+      if (!f.pond && !f.farm && Math.hypot(f.p.x - eye.x, f.p.z - eye.z) > REACH * 1.2) {
         f.p.x = Number.NaN;
         continue;
       }
@@ -357,7 +405,7 @@ export class Fish {
       const room = Math.max(0.08, level - terrainHeight(f.p.x, f.p.z) - 0.12);
       // rising to sip the surface now and then (the pond's fish), each sip a little ring
       let depth = Math.min(f.depth, room);
-      if (f.pond) {
+      if (f.pond || f.farm) {
         const s = this.clock - f.sip;
         if (s > 0) {
           depth *= 1 - Math.sin(Math.PI * Math.min(1, s / 1.6)) * 0.9;
@@ -396,7 +444,7 @@ export class Fish {
     // with its school: toward its middle and along its way (a pond's schools drift apart to feed now and then,
     // and gather again)
     if (school && school.n > 1) {
-      const together = f.pond ? 0.3 + 0.7 * smoothstep(-0.4, 0.4, Math.sin(t * 0.045 + f.school * 2.1)) : 1;
+      const together = f.pond || f.farm ? 0.3 + 0.7 * smoothstep(-0.4, 0.4, Math.sin(t * 0.045 + f.school * 2.1)) : 1;
       gx += ((school.x / school.n - f.p.x) * 0.22 + (school.hx / school.n) * 0.4) * 2 * together;
       gz += ((school.z / school.n - f.p.z) * 0.22 + (school.hz / school.n) * 0.4) * 2 * together;
     }
@@ -418,6 +466,15 @@ export class Fish {
       const back = smoothstep(0.55, 0.85, reach) * 4;
       gx += ((f.pond.x - f.p.x) / f.pond.r) * back;
       gz += ((f.pond.z - f.p.z) / f.pond.r) * back;
+    } else if (f.farm) {
+      // in a gher: back toward the farm's middle as it nears the embankment
+      const farm = f.farm;
+      const { u, v } = saltLocal(f.p.x, f.p.z, farm);
+      const edge = Math.min(u, farm.w - u, v, farm.d - v);
+      const back = smoothstep(farm.rimInset + 3, farm.rimInset + 1, edge) * 4;
+      const r = Math.max(farm.w, farm.d) / 2;
+      gx += ((farm.x - f.p.x) / r) * back * 2;
+      gz += ((farm.z - f.p.z) / r) * back * 2;
     } else if (this.clock > f.look) {
       // looking ahead now and then for the shallows, and turning toward the deeper side
       f.look = this.clock + this.rng.range(0.2, 0.35);

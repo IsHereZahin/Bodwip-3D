@@ -213,6 +213,20 @@ export function banglaDate(day: number): { month: string; date: number } {
 }
 
 /** Day of the year (0 = 1 January) of a calendar date, with the time of day as a fraction. */
+/** Bangladesh's offset from UTC (h): Bangladesh Standard Time, with no summer time. */
+const BD_OFFSET = 6;
+
+/**
+ * The village's own date and hour now, as in Bangladesh (whatever the viewer's own time zone): the day of the
+ * year (0 = 1 January) and the hour. The sky follows them (its solar hour is Bangladesh's clock, the country
+ * lying about the meridian of UTC+6).
+ */
+export function bangladeshTime(at = Date.now()): { day: number; hour: number } {
+  const bd = new Date(at + BD_OFFSET * 3600e3);
+  const day = (Date.UTC(bd.getUTCFullYear(), bd.getUTCMonth(), bd.getUTCDate()) - Date.UTC(bd.getUTCFullYear(), 0, 1)) / 864e5;
+  return { day, hour: bd.getUTCHours() + bd.getUTCMinutes() / 60 + bd.getUTCSeconds() / 3600 };
+}
+
 export function dayOfYear(date: Date): number {
   const start = new Date(date.getFullYear(), 0, 1);
   return (date.getTime() - start.getTime()) / 86400000;

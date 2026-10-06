@@ -6,7 +6,7 @@
  */
 export const CROP_REACH = { fade: 30, edge: 37, canopy: [80, 100], lift: 2 } as const;
 
-import { POND_LEVEL, POND_RISE, WATER_LEVEL } from '../world/plan';
+import { POND_LEVEL, POND_RISE, SALT_BAND, SALT_DRAIN, WATER_LEVEL } from '../world/plan';
 
 /**
  * Shared uniforms, noise and aerial perspective. Included exactly once in every scene shader
@@ -58,6 +58,7 @@ uniform vec4 uCorridorMap;
 uniform float uMirrorLevel;
 uniform float uFlowScale;
 uniform float uWaterRise;
+uniform float uSaltWet;
 uniform vec4 uSeasonA;
 uniform vec4 uSeasonB;
 uniform vec4 uCrops;
@@ -69,13 +70,15 @@ uniform vec4 uLightning;
 uniform vec4 uLamp0;
 uniform vec4 uLamp1;
 uniform vec4 uLamp2;
+uniform vec4 uLamp3;
 uniform vec3 uLampColor0;
 uniform vec3 uLampColor1;
 uniform vec3 uLampColor2;
+uniform vec3 uLampColor3;
 
 // One of the village's lamps on a surface at p facing n (world): a soft light, falling off nearly as the square
 // of the distance and smoothly to nothing at its reach, wrapped a little round the surface (a room's lamp fills
-// it from its walls too). Three separate uniforms, not an array indexed in a loop (slow on ANGLE/Direct3D).
+// it from its walls too). Four separate uniforms, not an array indexed in a loop (slow on ANGLE/Direct3D).
 vec3 lampLight(vec4 lamp, vec3 color, vec3 p, vec3 n) {
   vec3 d = lamp.xyz - p;
   float d2 = dot(d, d);
@@ -86,7 +89,7 @@ vec3 lampLight(vec4 lamp, vec3 color, vec3 p, vec3 n) {
   return color * edge * edge / (1.0 + d2) * nl;
 }
 vec3 lampsAt(vec3 p, vec3 n) {
-  return lampLight(uLamp0, uLampColor0, p, n) + lampLight(uLamp1, uLampColor1, p, n) + lampLight(uLamp2, uLampColor2, p, n);
+  return lampLight(uLamp0, uLampColor0, p, n) + lampLight(uLamp1, uLampColor1, p, n) + lampLight(uLamp2, uLampColor2, p, n) + lampLight(uLamp3, uLampColor3, p, n);
 }
 
 float hash12(vec2 p) {
@@ -195,7 +198,8 @@ vec3 hazeColor(vec3 rd) {
 // taken as water wherever a level was carried (r far above its fill of -20).
 vec3 waterLevels(vec2 p) {
   vec3 lv = texture2D(tLevel, (uLevelMap.xy - p) * uLevelMap.zw).rgb;
-  lv.r += uWaterRise * (lv.r > ${(WATER_LEVEL + (POND_LEVEL - WATER_LEVEL) / 2).toFixed(2)} ? ${POND_RISE.toFixed(2)} : 1.0);
+  // (a salt farm's stands above SALT_BAND: full in the rains, drained for the salt work, geography.ts risenLevel)
+  lv.r += lv.r > ${SALT_BAND.toFixed(2)} ? -(1.0 - uSaltWet) * ${SALT_DRAIN.toFixed(2)} : uWaterRise * (lv.r > ${(WATER_LEVEL + (POND_LEVEL - WATER_LEVEL) / 2).toFixed(2)} ? ${POND_RISE.toFixed(2)} : 1.0);
   if (uWaterRise > 0.01 && lv.r > -5.0) lv.b = 1.0;
   return lv;
 }

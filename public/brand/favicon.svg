@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- নদী, small: the red sun on green and the river sweeping under it, the boat crossing it, in strokes bold
+       enough for a browser tab (the full mark, with the majhi: logo.svg). -->
+  <defs>
+    <clipPath id="disk"><circle cx="50" cy="50" r="49" /></clipPath>
+  </defs>
+  <g clip-path="url(#disk)">
+    <rect width="100" height="100" fill="#006a4e" />
+    <circle cx="45" cy="46" r="26" fill="#f42a41" />
+    <path d="M0 66C14 60 26 60 40 66S66 72 80 66 100 60 100 60V100H0Z" fill="#00553e" />
+    <path d="M0 67C14 61 26 61 40 67S66 73 80 67 96 61 100 61" fill="none" stroke="#f4ecdc" stroke-width="5" stroke-linecap="round" />
+    <path d="M6 80C20 75 32 75 44 80S66 85 80 80 94 75 100 75" fill="none" stroke="#f4ecdc" stroke-width="4" stroke-linecap="round" opacity="0.7" />
+    <g fill="#0b2a20">
+      <path d="M20 66C25 70.5 49 70.5 54 66L56 62.6C48 65.6 26 65.6 18 62.6Z" />
+      <path d="M30 65.4C30.8 60 33.4 57.8 37.8 57.8S44.8 60 45.6 65.4Z" />
+    </g>
+  </g>
+</svg>

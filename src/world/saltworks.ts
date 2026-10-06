@@ -6,106 +6,136 @@ import {
   LatheGeometry,
   Matrix4,
   Mesh,
-  MeshBasicMaterial,
   MeshStandardMaterial,
-  PlaneGeometry,
   Quaternion,
   Vector2,
   Vector3,
 } from 'three';
 import type { BufferGeometry, Vector4 } from 'three';
 import { LAYER_NO_REFLECT } from '../core/globals';
-import { smoothstep } from '../core/mathx';
 import { Rng } from '../core/rng';
-import { windAt } from '../env/wind';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
 import { instanced, type Placement } from '../render/instancing';
 import { patchMaterial } from '../render/patch';
-import { softSpotTexture, weaveTexture } from '../render/textures';
-import { Boatman, type Outfit, type OarPose } from './boatman';
+import { weaveTexture } from '../render/textures';
+import type { Outfit } from './boatman';
 import { Fisher, type FisherPlace } from './fisher';
 import type { Ripples } from './ripples';
-import { SALT_CREEK, WATER_LEVEL, saltLocal, saltPoint, terrainHeight } from './geography';
-import type { BodyDrive } from './paddle';
-import { SALT_FIELD } from './plan';
+import { SALT_CREEK, WATER_LEVEL, saltLocal, saltPoint, saltRains, terrainHeight, waterLevelAt } from './geography';
+import { PLAIN, SALT_FIELD, SALT_FIELDS, type SaltFarm, type SaltTask } from './plan';
+import { Feeder, Raker, Spader, Walker, Watcher, basketGeometry, type Drop } from './saltHands';
 
-// The salt field by where the boat sets out (world/plan.ts SALT_FIELD; the user asked for salt being made).
-// The ground of it, the beds and the brine, is painted by the terrain (render/patch.ts). Here is what stands
-// on it: the earth bunds between the beds and round the farm; the heaps of salt raked up along the
-// crystallizers' bunds (white and drying while the salt season runs, gone to market in the rains); a gola,
-// the low thatched shed the salt is kept in, with an old heap under black sheeting beside it; and the people
-// at work: three men raking the crust that has formed on the black plastic into lines toward the bund, a
-// basket or two by them. They are the boatman's body (human.ts) in their own lungis and gamchhas, each
-// drawing a wooden board on a bamboo handle (ফাউড়া) through the salt toward his feet, lifting it and reaching
-// out again. The brine comes up from the sea by a tidal creek (world/waterways.ts SALT_CREEK) to a sluice by
-// the settling pond: a plank culvert through the creek's bank with its gate in grooves, and a trough on to the
-// field's feeder channel. In the rains, when no salt can be made, the flooded beds are kept as a fish and shrimp
-// gher, as the coast's salt farmers do: a man on a bund casts his net into the old settling pond, and a
-// watchman's hut stands on bamboo legs at the farm's corner.
+// The salt farms by where the boat sets out (world/plan.ts SALT_FIELDS; the user asked for salt being made, and
+// for several farms, none alike). The ground of each, its pans dug into the fields and its embankment round
+// them, is world/geography.ts's; its beds and brine are painted by the terrain (render/patch.ts), and the rains
+// stand in its pans as real water. Here is what stands on it: the earth bunds between the beds, each its own
+// height, so that the rains drown some and not others; the heaps of salt raked up along the crystallizers' bunds
+// (white and drying while the salt season runs, gone to market in the rains), and where the carriers tip theirs;
+// at the creek's farm a gola, the low thatched shed the salt is kept in, with an old heap under black sheeting
+// beside it, the sluice where the creek's salt water is let in, and in the rains the watchman's hut; and the
+// people at work, each farm its own (world/saltHands.ts): raking, carrying, looking the beds over, dressing a
+// bed with the kodal and watching it done, and in the rains, when no salt can be made and the flooded farms are
+// kept as fish and shrimp ghers as the coast's salt farmers do, casting the net over them and feeding them.
 
 /** The gher's fisherman's clothes in the rains: a faded lungi, a dark sando. */
 const GHER_OUTFIT: Outfit = { lungi: ['#3f4f5e', '#b7b2a2', '#1e2833'], vest: '#5a5650', gamchha: ['#9a7a2a', '#e8dfcc', '#4a3a12'], seed: 95 };
 
+/** The creek's farm: its gola, its sluice, its gher's fisherman and its watchman's hut. */
 const F = SALT_FIELD;
-/** A bund's cross-section (m): its foot, its crown, its height. */
-const BUND = { foot: 0.8, crown: 0.36, height: 0.28 };
+/** A bund's cross-section (m): its foot and its crown (its height is its own, the farm's `bunds`). */
+const BUND = { foot: 0.8, crown: 0.36 };
 const CLAY: RGB = rgb('#6f685d');
 const CROWN: RGB = rgb('#857c70');
 const RIME: RGB = rgb('#b9b6ae');
 const UP = new Vector3(0, 1, 0);
 
-/** Where the farm's sections start along its length (m from its east end). */
-const POND_END = F.w * F.pond;
-const CRYSTAL_START = F.w * F.evaporation;
+/** Where a farm's sections start along its length (m from its u = 0 end). */
+const pondEnd = (farm: SaltFarm) => farm.w * farm.pond;
+const crystalStart = (farm: SaltFarm) => farm.w * farm.evaporation;
+/** A farm's pans' floor (m). */
+const floorOf = (farm: SaltFarm) => PLAIN - farm.dig;
 
-/** A crystallizer bed's stage in the work (0..1: brine, crust forming, salt ready to rake, raked): render/patch.ts's own, cell by cell. */
-export function saltStage(col: number, row: number): number {
-  const x = col * 0.618 + row * 0.29 + 0.11;
+/** A crystallizer bed's stage in the work (0..1: brine, crust forming, salt ready to rake, raked): render/patch.ts's own, cell by cell, farm by farm. */
+export function saltStage(col: number, row: number, farm: SaltFarm = SALT_FIELD): number {
+  const x = col * 0.618 + row * 0.29 + 0.11 + farm.seed;
   return x - Math.floor(x);
 }
 
 /**
- * Where the men rake (the field's frame, m): in the beds nearest the river where the salt stands ready, each
- * in his own, a step in from the bund at its east end, facing up the field (+u), drawing the salt toward it.
+ * Where a farm's rakers rake (its frame, m): in the beds where the salt stands ready, each in his own, a step in
+ * from the bund at its near end, facing up the farm (+u), drawing the salt toward it.
  */
-export function rakerStations(): { u: number; v: number }[] {
-  const cols = Math.round((F.w - CRYSTAL_START) / F.crystalCell[0]);
+export function rakerStations(farm: SaltFarm = SALT_FIELD, count = 3): { u: number; v: number }[] {
+  const start = crystalStart(farm);
+  const [cu, cv] = farm.crystalCell;
+  const cols = Math.round((farm.w - start) / cu);
+  const rows = Math.round(farm.d / cv);
   const stations: { u: number; v: number }[] = [];
-  for (let row = 1; row <= 4 && stations.length < 3; row++) {
-    for (let col = 0; col < cols && stations.length < 3; col++) {
-      const stage = saltStage(col, row);
-      if (stage > 0.6 && stage < 0.8) stations.push({ u: CRYSTAL_START + col * F.crystalCell[0] + 0.9, v: (row + 0.5) * F.crystalCell[1] });
+  for (let row = 1; row < rows - 1 && stations.length < count; row++) {
+    for (let col = 0; col < cols && stations.length < count; col++) {
+      const stage = saltStage(col, row, farm);
+      if (stage > 0.6 && stage < 0.8) stations.push({ u: start + col * cu + 0.9, v: (row + 0.5) * cv });
     }
   }
   return stations;
 }
 
-/** Where the gher's fisherman stands in the rains: on the settling pond's inner bund, facing into it (world/fisher.ts FisherPlace). */
+/** The world's ground under a point of a farm's frame. */
+function groundAt(u: number, v: number, farm: SaltFarm = SALT_FIELD): { x: number; y: number; z: number } {
+  const p = saltPoint(u, v, farm);
+  return { x: p.x, y: terrainHeight(p.x, p.z), z: p.z };
+}
+
+/** A farm's bunds between its beds, in its frame: [u0, v0, u1, v1, height over its floor] (render/patch.ts paints the same lines). */
+function bundLines(farm: SaltFarm): [number, number, number, number, number][] {
+  const { w, d, rimInset: r } = farm;
+  const [lo, hi] = farm.bunds;
+  const lines: [number, number, number, number, number][] = [];
+  // each its own height, as they were built up and worn down; the pond's and the crystallizers' main bunds the highest
+  const height = () => {
+    const x = Math.sin((lines.length + 1) * 12.9898 + farm.seed * 78.233) * 43758.5453;
+    return lo + (hi - lo) * (x - Math.floor(x));
+  };
+  const within = (a: number, top: number) => a > r + 0.5 && a < top - r - 0.5;
+  lines.push([pondEnd(farm), r, pondEnd(farm), d - r, hi], [crystalStart(farm), r, crystalStart(farm), d - r, hi]);
+  for (let u = pondEnd(farm) + farm.evapCell[0]; u < crystalStart(farm) - 1; u += farm.evapCell[0]) lines.push([u, r, u, d - r, height()]);
+  for (let v = farm.evapCell[1]; v < d - 1; v += farm.evapCell[1]) if (within(v, d)) lines.push([pondEnd(farm), v, crystalStart(farm), v, height()]);
+  for (let u = crystalStart(farm) + farm.crystalCell[0]; u < w - r - 0.5; u += farm.crystalCell[0]) lines.push([u, r, u, d - r, height()]);
+  for (let v = farm.crystalCell[1]; v < d - 1; v += farm.crystalCell[1]) if (within(v, d)) lines.push([crystalStart(farm), v, w - r, v, height()]);
+  return lines;
+}
+
+/** The height of a bund's crown at (u, v) of a farm's frame, if (u, v) is on one (else null). */
+function crownAt(farm: SaltFarm, lines: readonly [number, number, number, number, number][], u: number, v: number): number | null {
+  for (const [u0, v0, u1, v1, h] of lines) {
+    const along = u0 === u1 ? v : u;
+    const [a, b] = u0 === u1 ? [v0, v1] : [u0, u1];
+    const off = u0 === u1 ? Math.abs(u - u0) : Math.abs(v - v0);
+    if (off < BUND.crown / 2 + 0.05 && along >= Math.min(a, b) - 0.2 && along <= Math.max(a, b) + 0.2) return floorOf(farm) + h;
+  }
+  return null;
+}
+
+/** Where the creek's farm's gher fisherman stands in the rains: on its settling pond's bund, facing into it (world/fisher.ts FisherPlace). */
 export function gherStand(): FisherPlace {
-  const at = groundAt(POND_END, F.d * 0.55);
+  const at = groundAt(pondEnd(F), F.d * 0.55);
   return {
     x: at.x,
     z: at.z,
     yaw: F.yaw + Math.PI,
-    ground: at.y + BUND.height - 0.02,
-    // the rain's water standing over the old pond's floor
-    water: groundAt(POND_END * 0.5, F.d * 0.55).y + 0.3,
+    ground: floorOf(F) + F.bunds[1] - 0.02,
+    // the rains' water standing over the pans
+    water: saltRains(F),
     outfit: GHER_OUTFIT,
     // an older man, the gher's keeper, under his mathal
     who: 'majhi',
   };
 }
 
-/** The world's ground under a point of the field's frame. */
-function groundAt(u: number, v: number): { x: number; y: number; z: number } {
-  const p = saltPoint(u, v);
-  return { x: p.x, y: terrainHeight(p.x, p.z), z: p.z };
-}
-
-/** An earth bund from (u0, v0) to (u1, v1) in the field's frame: a low ridge, its crown worn pale, rimed white at its foot. */
-function bund(b: MeshBuilder, u0: number, v0: number, u1: number, v1: number): void {
-  const a = groundAt(u0, v0);
-  const e = groundAt(u1, v1);
+/** An earth bund from (u0, v0) to (u1, v1) of a farm's frame, `h` over its floor: a low ridge, its crown worn pale, rimed white at its foot. */
+function bund(b: MeshBuilder, farm: SaltFarm, u0: number, v0: number, u1: number, v1: number, h: number): void {
+  const a = groundAt(u0, v0, farm);
+  const e = groundAt(u1, v1, farm);
   const dx = e.x - a.x;
   const dz = e.z - a.z;
   const len = Math.hypot(dx, dz);
@@ -115,44 +145,27 @@ function bund(b: MeshBuilder, u0: number, v0: number, u1: number, v1: number): v
   const cz = dx / len;
   const f = BUND.foot / 2;
   const c = BUND.crown / 2;
-  const h = BUND.height;
-  const at = (p: { x: number; y: number; z: number }, across: number, up: number) => new Vector3(p.x + cx * across, p.y + up, p.z + cz * across);
+  const top = floorOf(farm) + h;
+  const at = (p: { x: number; y: number; z: number }, across: number, y: number) => new Vector3(p.x + cx * across, y, p.z + cz * across);
   const slope = Math.atan2(h, f - c);
+  // an old farm's bunds have grass in their crowns
+  const crown = farm.grassy ? mixRgb(CROWN, rgb('#5e6a3a'), 0.6) : CROWN;
   for (const side of [-1, 1]) {
     const n = new Vector3(cx * side * Math.sin(slope), Math.cos(slope), cz * side * Math.sin(slope));
     const s = b.vertexCount;
-    b.vertex(at(a, side * f, -0.04), n, 0, 0, mixRgb(CLAY, RIME, 0.2));
-    b.vertex(at(e, side * f, -0.04), n, 1, 0, mixRgb(CLAY, RIME, 0.2));
-    b.vertex(at(e, side * c, h), n, 1, 1, CLAY);
-    b.vertex(at(a, side * c, h), n, 0, 1, CLAY);
+    b.vertex(at(a, side * f, a.y - 0.06), n, 0, 0, mixRgb(CLAY, RIME, 0.2));
+    b.vertex(at(e, side * f, e.y - 0.06), n, 1, 0, mixRgb(CLAY, RIME, 0.2));
+    b.vertex(at(e, side * c, top), n, 1, 1, CLAY);
+    b.vertex(at(a, side * c, top), n, 0, 1, CLAY);
     if (side > 0) b.quad(s, s + 1, s + 2, s + 3);
     else b.quad(s, s + 3, s + 2, s + 1);
   }
   const s = b.vertexCount;
-  b.vertex(at(a, -c, h), UP, 0, 0, CROWN);
-  b.vertex(at(a, c, h), UP, 0, 1, CROWN);
-  b.vertex(at(e, c, h), UP, 1, 1, CROWN);
-  b.vertex(at(e, -c, h), UP, 1, 0, CROWN);
+  b.vertex(at(a, -c, top), UP, 0, 0, crown);
+  b.vertex(at(a, c, top), UP, 0, 1, crown);
+  b.vertex(at(e, c, top), UP, 1, 1, crown);
+  b.vertex(at(e, -c, top), UP, 1, 0, crown);
   b.quad(s, s + 1, s + 2, s + 3);
-}
-
-/** The lines the bunds run along, in the field's frame: [u0, v0, u1, v1] (render/patch.ts draws the same). */
-function bundLines(): [number, number, number, number][] {
-  const { w, d, rimInset: r } = F;
-  // the bund round the farm, inside its feeder channel
-  const lines: [number, number, number, number][] = [
-    [r, r, w - r, r],
-    [r, d - r, w - r, d - r],
-    [r, r, r, d - r],
-    [w - r, r, w - r, d - r],
-  ];
-  // the settling pond's bund, and the evaporation beds' and the crystallizers' between them
-  lines.push([POND_END, r, POND_END, d - r], [CRYSTAL_START, r, CRYSTAL_START, d - r]);
-  for (let u = POND_END + F.evapCell[0]; u < CRYSTAL_START - 1; u += F.evapCell[0]) lines.push([u, r, u, d - r]);
-  for (let v = F.evapCell[1]; v < d - 1; v += F.evapCell[1]) lines.push([POND_END, v, CRYSTAL_START, v]);
-  for (let u = CRYSTAL_START + F.crystalCell[0]; u < w - 1; u += F.crystalCell[0]) lines.push([u, r, u, d - r]);
-  for (let v = F.crystalCell[1]; v < d - 1; v += F.crystalCell[1]) lines.push([CRYSTAL_START, v, w - r, v]);
-  return lines;
 }
 
 /** A heap of salt: a rounded cone shovelled up, its sides a little uneven. */
@@ -217,130 +230,50 @@ function shed(b: MeshBuilder, at: Vector3, yaw: number, rng: Rng): void {
   }
 }
 
-/** A round basket (টুকরি) of split bamboo, open at the top: its foot at the origin. */
-function basket(): BufferGeometry {
-  return new LatheGeometry(
-    [
-      [0.0, 0.0],
-      [0.15, 0.0],
-      [0.2, 0.06],
-      [0.25, 0.17],
-      [0.265, 0.2],
-      [0.25, 0.2],
-      [0.23, 0.17],
-      [0.18, 0.06],
-      [0.0, 0.03],
-    ].map(([r, y]) => new Vector2(r, y)),
-    14,
-  );
-}
+// ---------- the people ----------
 
-// ---------- the people at work ----------
-
-/** The raking: its period (s), how far ahead the board is drawn from and to (m), how high it is lifted to reach out again, the handle's length, and the hands' spacing on it. */
-const RAKE = { period: 2.7, out: 1.85, in: 1.05, lift: 0.1, handle: 1.8, hands: 0.55, radius: 0.018 };
-/** The share of a stroke spent drawing the board in along the ground (the rest lifts it and reaches out). */
-const PULL = 0.62;
-
-/** Their lungis, sandos and gamchhas (each Outfit as boatman.ts's). */
+/** Their lungis, sandos and gamchhas (each Outfit as boatman.ts's), every man his own. */
 const OUTFITS: readonly Outfit[] = [
   { lungi: ['#7a2f2a', '#d9cdb5', '#3e1512'], vest: '#cfc6b4', gamchha: ['#2f6a3a', '#e9e0cc', '#173a1f'], seed: 81 },
   { lungi: ['#3b3b3b', '#a8a8a0', '#1a1a1a'], vest: '#b7ad98', gamchha: ['#a8342a', '#efe6d6', '#5a1410'], seed: 83 },
   { lungi: ['#5a4a2a', '#c9b98f', '#2c2412'], vest: '#d8d2c2', gamchha: ['#284f86', '#e8e2d2', '#16244a'], seed: 85 },
+  { lungi: ['#2d4f6e', '#c6c0ae', '#16283a'], vest: '#c2b9a2', gamchha: ['#7a5a1e', '#ebe2cc', '#3a2a0c'], seed: 87 },
+  { lungi: ['#5e2e4e', '#d2c4b2', '#2e1426'], vest: '#d4ccb8', gamchha: ['#356a5a', '#e6e0d0', '#1a3a30'], seed: 89 },
+  { lungi: ['#4a5a2a', '#cfc8a8', '#232c12'], vest: '#bdb39c', gamchha: ['#9a3a5a', '#eee4d6', '#4a1426'], seed: 91 },
 ];
 
-/** A man raking salt: the boatman's body on his feet in a crystallizer bed, the rake's board and handle, his soft shadow. */
-class Raker {
-  readonly group = new Group();
-  private readonly man: Boatman;
-  private readonly board: Mesh;
-  private readonly handle: Mesh;
-  private readonly drive: BodyDrive = { twist: -0.15, bend: 0.4, lean: 0, crouch: 0.06, shift: 0 };
-  private readonly pose: OarPose = {
-    holds: [
-      { at: new Vector3(), thumb: new Vector3() },
-      { at: new Vector3(), thumb: new Vector3() },
-    ],
-  };
-  private readonly tilt = { rotX: 0, rotZ: 0 };
-  private readonly wind = new Vector3();
-  private readonly gravity = new Vector3(0, -9.81, 0);
-  private readonly air = { x: 0, z: 0 };
-  private readonly at = new Vector3();
-  private readonly hand = new Vector3();
-  private readonly dir = new Vector3();
-  private readonly offset: number;
-
-  constructor(outfit: Outfit, offset: number, wood: MeshStandardMaterial, bamboo: MeshStandardMaterial) {
-    this.offset = offset;
-    this.man = new Boatman(new Vector3(0, 0, 0), [RAKE.radius, RAKE.radius], outfit);
-    this.board = new Mesh(new BoxGeometry(0.56, 0.11, 0.03).translate(0, 0.055, 0), wood);
-    this.handle = new Mesh(new CylinderGeometry(RAKE.radius, RAKE.radius * 1.1, RAKE.handle, 6).translate(0, RAKE.handle / 2, 0), bamboo);
-    const shadow = new Mesh(
-      new PlaneGeometry(0.95, 0.75).rotateX(-Math.PI / 2),
-      new MeshBasicMaterial({ map: softSpotTexture(), transparent: true, depthWrite: false, color: '#000000', opacity: 0.5 }),
-    );
-    shadow.position.set(0, 0.03, 0.12);
-    this.group.add(this.man.group, this.board, this.handle, shadow);
-    // moving things stay out of the shadow map (it is not redrawn every frame), and out of the mirror
-    this.group.traverse((o) => {
-      o.castShadow = false;
-      o.layers.set(LAYER_NO_REFLECT);
-    });
-  }
-
-  /** Poses him `t` s into the work: where the board is in its stroke, his hands on the handle, his body over it. */
-  update(dt: number, t: number): void {
-    const cycle = t / RAKE.period + this.offset;
-    const phase = cycle - Math.floor(cycle);
-    // each stroke a little to one side of the last, so the bed is raked across its width
-    const sweep = 0.22 * Math.sin(Math.floor(cycle) * 1.7 + this.offset * 9);
-    let reach: number;
-    let lift: number;
-    if (phase < PULL) {
-      reach = RAKE.out + (RAKE.in - RAKE.out) * smoothstep(0, 1, phase / PULL);
-      lift = 0;
-    } else {
-      const k = (phase - PULL) / (1 - PULL);
-      reach = RAKE.in + (RAKE.out - RAKE.in) * smoothstep(0, 1, k);
-      lift = RAKE.lift * Math.sin(Math.PI * k);
-    }
-    // how far out the board is (1 reaching, 0 drawn in): he bends and leans into the reach
-    const f = (reach - RAKE.in) / (RAKE.out - RAKE.in);
-    this.at.set(sweep, 0.02 + lift, reach);
-    // his right hand by his right hip, coming in and up as the board comes to him
-    this.hand.set(-0.24, 0.98 - 0.2 * f, 0.3 + 0.25 * f);
-    this.dir.subVectors(this.hand, this.at);
-    const along = Math.min(this.dir.length(), RAKE.handle - 0.08);
-    this.dir.normalize();
-    const [right, left] = this.pose.holds;
-    right.at.copy(this.at).addScaledVector(this.dir, along);
-    right.thumb.copy(this.dir);
-    left.at.copy(right.at).addScaledVector(this.dir, -RAKE.hands);
-    left.thumb.copy(this.dir);
-    this.board.position.copy(this.at);
-    this.handle.position.copy(this.at).addScaledVector(UP, 0.06);
-    this.handle.quaternion.setFromUnitVectors(UP, this.dir);
-    this.drive.bend = 0.3 + 0.32 * f;
-    this.drive.crouch = 0.04 + 0.05 * f;
-    this.drive.shift = -0.02 + 0.12 * f;
-    // the wind past him, in his own frame
-    const g = this.group;
-    windAt(g.position.x, g.position.z, this.air);
-    const c = Math.cos(g.rotation.y);
-    const s = Math.sin(g.rotation.y);
-    this.wind.set(this.air.x * c - this.air.z * s, 0, this.air.x * s + this.air.z * c);
-    this.man.update(dt, t, this.drive, this.pose, this.tilt, this.wind, this.gravity);
-  }
+/** What any of them is to the farm: posed each frame while he can be seen. */
+interface Worker {
+  readonly group: Group;
+  update(dt: number, t: number): void;
 }
 
-/** The salt field's people at work: hidden out of the salt season, and posed only while the camera is near enough to see them. */
+/** A farm's people: those at the salt work and those of the gher in the rains, and where the farm is. */
+interface Crew {
+  x: number;
+  z: number;
+  salt: Group;
+  rains: Group;
+  saltHands: Worker[];
+  rainHands: Worker[];
+}
+
+/** People are posed within this distance of their farm (m), and drawn within the second. */
+const POSED = 250;
+const DRAWN = 300;
+
+/** A fixed hash, 0..1. */
+const hash = (a: number, b: number) => {
+  const x = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453;
+  return x - Math.floor(x);
+};
+
+/** The salt farms' bunds, heaps and sheds, and their people at work: hidden out of their season, and posed only while the camera is near enough to see them. */
 export class SaltWorks {
   readonly group = new Group();
-  /** Where each man stands (world), for the film's shot of them. */
+  /** Where each of the creek's farm's rakers stands (world), for the film's shot of them. */
   readonly workers: readonly { x: number; y: number; z: number; yaw: number }[];
-  private readonly people = new Group();
-  private readonly rakers: Raker[] = [];
+  private readonly crews: Crew[] = [];
   private readonly gherFisher: Fisher;
   private hut = new Mesh();
 
@@ -352,45 +285,190 @@ export class SaltWorks {
     this.gherFisher = new Fisher(ripples, gherStand());
     this.gherFisher.group.visible = false;
     this.group.add(this.gherFisher.group);
+    // a hand or a handful of feed meets the water only where water stands
+    const drop: Drop = (x, z, radius, strength) => {
+      const level = waterLevelAt(x, z);
+      if (Number.isFinite(level) && level > terrainHeight(x, z) + 0.02) ripples.drop(x, z, radius, strength);
+    };
 
-    // the bunds
+    const wood = patchMaterial(new MeshStandardMaterial({ color: '#6b5236', roughness: 0.85 }), { grime: 0.3 });
+    const bamboo = patchMaterial(new MeshStandardMaterial({ color: '#a39469', roughness: 0.7 }), { grime: 0.3 });
+    const iron = patchMaterial(new MeshStandardMaterial({ color: '#4c4a46', roughness: 0.45, metalness: 0.4 }), { grime: 0.4 });
+    const clay = patchMaterial(new MeshStandardMaterial({ color: '#9a5a3a', roughness: 0.8 }), { grime: 0.3 });
+    const weave = weaveTexture(57);
+    weave.repeat.set(6, 2);
+    const basketMat = patchMaterial(new MeshStandardMaterial({ map: weave, color: '#cdb78a', roughness: 0.9, side: DoubleSide }), { grime: 0.3 });
+    const basketGeo = basketGeometry();
+    // the salt, the raked heaps' and what a carrier brings: rising through the salt season, gone to market by the rains (G.uSeasonB.w)
+    const seasonal = { key: 'salt-season', pars: '', code: 'transformed *= smoothstep(0.15, 0.55, uSeasonB.w);' };
+    const saltMat = patchMaterial(new MeshStandardMaterial({ color: '#e9e7e1', roughness: 0.55 }), { grime: 0.08, vertex: seasonal });
+    const carried = patchMaterial(new MeshStandardMaterial({ color: '#e9e7e1', roughness: 0.55 }), { grime: 0.08 });
+
     const bunds = new MeshBuilder();
-    for (const [u0, v0, u1, v1] of bundLines()) {
-      // in pieces, so each follows the ground closely
-      const n = Math.max(1, Math.ceil(Math.hypot(u1 - u0, v1 - v0) / 8));
-      for (let k = 0; k < n; k++) bund(bunds, u0 + ((u1 - u0) * k) / n, v0 + ((v1 - v0) * k) / n, u0 + ((u1 - u0) * (k + 1)) / n, v0 + ((v1 - v0) * (k + 1)) / n);
-    }
+    const fresh: Placement[] = [];
+    const workers: { x: number; y: number; z: number; yaw: number }[] = [];
+    SALT_FIELDS.forEach((farm, fi) => {
+      const lines = bundLines(farm);
+      for (const [u0, v0, u1, v1, h] of lines) {
+        // in pieces, so each follows the ground closely
+        const n = Math.max(1, Math.ceil(Math.hypot(u1 - u0, v1 - v0) / 8));
+        for (let k = 0; k < n; k++) bund(bunds, farm, u0 + ((u1 - u0) * k) / n, v0 + ((v1 - v0) * k) / n, u0 + ((u1 - u0) * (k + 1)) / n, v0 + ((v1 - v0) * (k + 1)) / n, h);
+      }
+      const crest = (u: number, v: number) => crownAt(farm, lines, u, v) ?? groundAt(u, v, farm).y;
+
+      // the crystallizers: who rakes which bed (salt ready on it), and the heaps along the bunds of the beds raked
+      // and being raked, on the bund at the end the men draw the salt toward
+      const rake = farm.work.find((t): t is Extract<SaltTask, { do: 'rake' }> => t.do === 'rake');
+      const stations = rake ? rakerStations(farm, rake.count) : [];
+      const start = crystalStart(farm);
+      const [cu, cv] = farm.crystalCell;
+      const cols = Math.round((farm.w - start) / cu);
+      const rows = Math.round(farm.d / cv);
+      for (let row = 1; row < rows - 1; row++) {
+        for (let col = 0; col < cols; col++) {
+          const stage = saltStage(col, row, farm);
+          if (stage < 0.6) continue;
+          const u0 = start + col * cu;
+          const vMid = (row + 0.5) * cv;
+          // where a man rakes, a heap beside him on the bund at his back (his basket on the other side)
+          const worked = stations.some((st) => Math.abs(st.u - u0 - 0.9) < 0.01 && Math.abs(st.v - vMid) < 0.01);
+          const spots = worked ? [1.8] : stage >= 0.85 ? [-0.95, 0.95] : [0];
+          for (const dv of spots) {
+            const v = vMid + dv + rng.range(-0.15, 0.15);
+            const g = groundAt(u0, v, farm);
+            fresh.push({ x: g.x, y: crest(u0, v) - 0.08, z: g.z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.55, 0.8), sy: rng.range(0.9, 1.25) });
+          }
+        }
+      }
+
+      // the people, each at his own task, at his own pace, in his own clothes
+      const crew: Crew = { x: farm.x, z: farm.z, salt: new Group(), rains: new Group(), saltHands: [], rainHands: [] };
+      let k = 0;
+      const next = () => {
+        k++;
+        return { outfit: OUTFITS[(fi * 2 + k) % OUTFITS.length], pace: 0.86 + 0.28 * hash(fi, k), offset: 3.7 * k + 1.9 * fi };
+      };
+      const add = (w: Worker, when: SaltTask['when']) => {
+        (when === 'salt' ? crew.salt : crew.rains).add(w.group);
+        (when === 'salt' ? crew.saltHands : crew.rainHands).push(w);
+      };
+      /** A way along the bunds (its frame's points) as world points a metre apart on their crowns, and how far along it each of its points is. */
+      const way = (path: readonly (readonly [number, number])[]) => {
+        const pts: Vector3[] = [];
+        const stops: number[] = [0];
+        let along = 0;
+        for (let i = 0; i + 1 < path.length; i++) {
+          const [u0, v0] = path[i];
+          const [u1, v1] = path[i + 1];
+          const n = Math.max(1, Math.ceil(Math.hypot(u1 - u0, v1 - v0)));
+          for (let j = i === 0 ? 0 : 1; j <= n; j++) {
+            const u = u0 + ((u1 - u0) * j) / n;
+            const v = v0 + ((v1 - v0) * j) / n;
+            const p = saltPoint(u, v, farm);
+            const at = new Vector3(p.x, crest(u, v), p.z);
+            if (pts.length) along += at.distanceTo(pts[pts.length - 1]);
+            pts.push(at);
+          }
+          stops.push(along);
+        }
+        return { pts, stops };
+      };
+      const spadeAt: Vector3[] = [];
+      for (const task of farm.work) {
+        if (task.do === 'spade') {
+          const g = groundAt(task.at[0], task.at[1], farm);
+          spadeAt.push(new Vector3(g.x, g.y, g.z));
+        }
+      }
+      for (const task of farm.work) {
+        switch (task.do) {
+          case 'rake':
+            stations.forEach((st, i) => {
+              const { outfit, pace, offset } = next();
+              const g = groundAt(st.u, st.v, farm);
+              const r = new Raker(outfit, task.who ?? (i === 1 ? 'tarun' : 'majhi'), pace, offset, wood, bamboo);
+              r.group.position.set(g.x, g.y, g.z);
+              r.group.rotation.y = farm.yaw;
+              add(r, 'salt');
+              if (fi === 0) workers.push({ x: g.x, y: g.y, z: g.z, yaw: farm.yaw });
+              // his basket on the bund behind him
+              const b = groundAt(st.u - 0.9, st.v - 1.5, farm);
+              const m = new Mesh(basketGeo, basketMat);
+              m.position.set(b.x, crest(st.u - 0.9, st.v - 1.5) - 0.02, b.z);
+              m.rotation.y = rng.range(0, Math.PI * 2);
+              m.layers.set(LAYER_NO_REFLECT);
+              crew.salt.add(m);
+            });
+            break;
+          case 'carry': {
+            const { outfit, pace, offset } = next();
+            const { pts, stops } = way(task.path);
+            add(new Walker(outfit, 'tarun', pts, [0, stops[stops.length - 1]], true, pace, offset, null, basketMat, carried), 'salt');
+            // the heap he tips his salt on at the end of his way
+            const end = pts[pts.length - 1];
+            const before = pts[Math.max(0, pts.length - 3)];
+            const dx = end.x - before.x;
+            const dz = end.z - before.z;
+            const l = Math.hypot(dx, dz) || 1;
+            const hx = end.x + (dx / l) * 1.3;
+            const hz = end.z + (dz / l) * 1.3;
+            fresh.push({ x: hx, y: terrainHeight(hx, hz) - 0.06, z: hz, ry: rng.range(0, Math.PI * 2), s: 1.15, sy: 1.25 });
+            break;
+          }
+          case 'inspect': {
+            const { outfit, pace, offset } = next();
+            const { pts, stops } = way(task.path);
+            add(new Walker(outfit, task.who ?? 'majhi', pts, stops, false, pace, offset, drop, null, null), task.when);
+            break;
+          }
+          case 'spade': {
+            const { outfit, pace, offset } = next();
+            const g = groundAt(task.at[0], task.at[1], farm);
+            const s = new Spader(outfit, k % 2 ? 'tarun' : 'majhi', pace, offset, wood, iron);
+            s.group.position.set(g.x, g.y, g.z);
+            s.group.rotation.y = farm.yaw + task.facing;
+            add(s, 'salt');
+            break;
+          }
+          case 'watch': {
+            const { outfit, pace, offset } = next();
+            const p = saltPoint(task.at[0], task.at[1], farm);
+            const at = new Vector3(p.x, crest(task.at[0], task.at[1]), p.z);
+            const yaw = farm.yaw + task.facing;
+            // what he watches, in his own frame: the men at the bed, their heads
+            const seen = (spadeAt[0] ?? at.clone().add(new Vector3(Math.sin(yaw) * 4, 0, Math.cos(yaw) * 4))).clone().add(new Vector3(0, 1.1, 0)).sub(at).applyAxisAngle(UP, -yaw);
+            const w = new Watcher(outfit, 'majhi', seen, pace, offset);
+            w.group.position.copy(at);
+            w.group.rotation.y = yaw;
+            add(w, 'salt');
+            break;
+          }
+          case 'feed': {
+            const { outfit, pace, offset } = next();
+            const p = saltPoint(task.at[0], task.at[1], farm);
+            const f = new Feeder(outfit, 'majhi', pace, offset, drop, clay);
+            f.group.position.set(p.x, crest(task.at[0], task.at[1]), p.z);
+            f.group.rotation.y = farm.yaw + task.facing;
+            add(f, 'rains');
+            break;
+          }
+          case 'net':
+            // the creek's farm's gher fisherman (world/fisher.ts), above
+            break;
+        }
+      }
+      crew.salt.visible = crew.rains.visible = false;
+      this.group.add(crew.salt, crew.rains);
+      this.crews.push(crew);
+    });
+    this.workers = workers;
+
     const bundMesh = new Mesh(bunds.build(), patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.95 }), { grime: 0.45 }));
     bundMesh.receiveShadow = true;
     this.group.add(bundMesh);
-
-    // the crystallizers: who rakes which bed (salt ready on it), and the heaps along the bunds of the beds
-    // raked and being raked, on the bund at the end the men draw the salt toward
-    const cols = Math.round((F.w - CRYSTAL_START) / F.crystalCell[0]);
-    const rows = Math.round(F.d / F.crystalCell[1]);
-    const fresh: Placement[] = [];
-    const stations = rakerStations();
-    for (let row = 1; row < rows - 1; row++) {
-      for (let col = 0; col < cols; col++) {
-        const stage = saltStage(col, row);
-        if (stage < 0.6) continue;
-        const u0 = CRYSTAL_START + col * F.crystalCell[0];
-        const vMid = (row + 0.5) * F.crystalCell[1];
-        // where a man rakes, a heap beside him on the bund at his back (his basket on the other side)
-        const worked = stations.some((st) => Math.abs(st.u - u0 - 0.9) < 0.01 && Math.abs(st.v - vMid) < 0.01);
-        const spots = worked ? [1.8] : stage >= 0.85 ? [-0.95, 0.95] : [0];
-        for (const dv of spots) {
-          const g = groundAt(u0, vMid + dv + rng.range(-0.15, 0.15));
-          fresh.push({ x: g.x, y: g.y + BUND.height - 0.08, z: g.z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.55, 0.8), sy: rng.range(0.9, 1.25) });
-        }
-      }
-    }
-    // the fresh heaps rise through the salt season and are gone to market by the rains (G.uSeasonB.w)
-    const seasonal = { key: 'salt-season', pars: '', code: 'transformed *= smoothstep(0.15, 0.55, uSeasonB.w);' };
-    const saltMat = patchMaterial(new MeshStandardMaterial({ color: '#e9e7e1', roughness: 0.55 }), { grime: 0.08, vertex: seasonal });
     if (fresh.length) this.group.add(instanced(heap(), saltMat, fresh, { cast: true, receive: true, layer: LAYER_NO_REFLECT }));
 
-    // the gola at the field's far corner, by the hill, its door toward the beds, and the year's old heap
+    // the gola at the creek's farm's far corner, by the hill, its door toward the beds, and the year's old heap
     // kept under black sheeting beside it
     const corner = groundAt(F.w - 7, F.d + 4.5);
     const yaw = F.yaw + Math.PI;
@@ -408,35 +486,8 @@ export class SaltWorks {
     covered.castShadow = true;
     covered.receiveShadow = true;
     this.group.add(covered);
-
-    // the men, and a basket or two by each, on the bund behind him
-    const wood = patchMaterial(new MeshStandardMaterial({ color: '#6b5236', roughness: 0.85 }), { grime: 0.3 });
-    const bamboo = patchMaterial(new MeshStandardMaterial({ color: '#a39469', roughness: 0.7 }), { grime: 0.3 });
-    const weave = weaveTexture(57);
-    weave.repeat.set(6, 2);
-    const basketMat = patchMaterial(new MeshStandardMaterial({ map: weave, color: '#cdb78a', roughness: 0.9, side: DoubleSide }), { grime: 0.3 });
-    const basketGeo = basket();
-    const workers: { x: number; y: number; z: number; yaw: number }[] = [];
-    stations.forEach((st, i) => {
-      const g = groundAt(st.u, st.v);
-      const r = new Raker(OUTFITS[i % OUTFITS.length], i * 0.37, wood, bamboo);
-      r.group.position.set(g.x, g.y, g.z);
-      r.group.rotation.y = F.yaw;
-      this.people.add(r.group);
-      this.rakers.push(r);
-      workers.push({ x: g.x, y: g.y, z: g.z, yaw: F.yaw });
-      const b = groundAt(st.u - 0.9, st.v - 1.5);
-      const m = new Mesh(basketGeo, basketMat);
-      m.position.set(b.x, b.y + BUND.height - 0.02, b.z);
-      m.rotation.y = rng.range(0, Math.PI * 2);
-      m.layers.set(LAYER_NO_REFLECT);
-      this.people.add(m);
-    });
-    this.workers = workers;
-    this.group.add(this.people);
   }
 
-  /** `eye`: the camera; `salt`: the season's salt work (env/season.ts). */
   /** The water's uniforms for the gher fisherman's net (world/water.ts `nets`). */
   bindWater(a: Vector4, b: Vector4): void {
     this.gherFisher.bindWater(a, b);
@@ -454,14 +505,19 @@ export class SaltWorks {
   update(dt: number, t: number, eye: Vector3, salt: number, also: Vector3 | null = null): void {
     const working = salt > 0.5;
     const gher = salt < 0.25;
-    this.people.visible = working;
     this.gherFisher.group.visible = gher;
     if (!gher) this.gherFisher.stillWater();
     this.hut.visible = gher;
-    const far = (p: Vector3) => Math.hypot(p.x - F.x, p.z - F.z) > 320;
-    if (far(eye) && (!also || far(also))) return;
-    if (working) for (const r of this.rakers) r.update(dt, t);
-    if (gher) this.gherFisher.update(dt, t, eye, also);
+    const within = (p: Vector3 | null, x: number, z: number, r: number) => p !== null && Math.hypot(p.x - x, p.z - z) < r;
+    for (const crew of this.crews) {
+      const drawn = within(eye, crew.x, crew.z, DRAWN) || within(also, crew.x, crew.z, DRAWN);
+      crew.salt.visible = working && drawn;
+      crew.rains.visible = gher && drawn;
+      if (!within(eye, crew.x, crew.z, POSED) && !within(also, crew.x, crew.z, POSED)) continue;
+      if (working) for (const w of crew.saltHands) w.update(dt, t);
+      if (gher) for (const w of crew.rainHands) w.update(dt, t);
+    }
+    if (gher && (within(eye, F.x, F.z, POSED) || within(also, F.x, F.z, POSED))) this.gherFisher.update(dt, t, eye, also);
   }
 
   /**

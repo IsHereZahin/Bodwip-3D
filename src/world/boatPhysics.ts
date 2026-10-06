@@ -1,11 +1,11 @@
 import { Vector3 } from 'three';
 import { G } from '../core/globals';
-import { angleDelta, smoothstep } from '../core/mathx';
+import { angleDelta } from '../core/mathx';
 import { windAt } from '../env/wind';
-import { WATER_LEVEL, waterLevelAt, waterRise, waterwayAt } from './geography';
+import { WATER_LEVEL, terrainHeight, waterLevelAt, waterRise, waterwayAt } from './geography';
 import { HERO_HULL, heroBeamAtWater } from './hull';
 import { CRUISE, PADDLE_MOMENT, STROKE_SECONDS, paddleForce, strokePhase, type PaddleForce } from './paddle';
-import { SHELTERED, hullWaves, type HullWaves } from './waves';
+import { hullWaves, surfaceShare, type HullWaves } from './waves';
 
 // The hero boat as a floating body. In the plane: mass and added mass, drag through the water (light
 // fore and aft, heavy sideways, like a keel), the river's and the khal's slow current, the paddle's pulses of drive from one
@@ -57,6 +57,13 @@ const HEAVE = { f: 1.3, zeta: 0.35 };
 const PITCH = { f: 1.0, zeta: 0.3 };
 // roll is damped more than a bare hull would be: the boatman balancing and his blade in the water steady her
 const ROLL = { f: 0.6, zeta: 0.2 };
+/**
+ * Her roll's damping by the eddies shed off her bilge, which grows as the square of how fast she rolls
+ * (1/rad): the stroke's gentle rocking keeps its life, while a squall's gust is checked before her heel
+ * overshoots (with the linear damping alone she swung to 0.3–0.4 rad in a kalboishakhi, a side of her
+ * hull standing a quarter of a metre out of the water).
+ */
+const ROLL_EDDY = 8;
 /** Moment (N·m) to heel the boat one radian, and to trim it one radian. */
 const ROLL_STIFF = 3200;
 const PITCH_STIFF = 200000;
@@ -97,8 +104,8 @@ function strokePower(n: number, speed: number): number {
 }
 /** The hardest he can pull, against his steady stroke. */
 const MAX_POWER = 2.2;
-/** The most the wind and waves heel her (rad): past a point he throws his weight to windward and her flare bites. */
-const MAX_HEEL = 0.24;
+/** The most the wind and waves heel her (rad, about 8°): past a point he throws his weight to windward and her flare bites. */
+const MAX_HEEL = 0.14;
 
 /** Where in the stroke he rests the paddle when not rowing: near the end of the recovery, blade forward, its tip trailing in the water. */
 export const REST_PHASE = 0.93;
@@ -109,9 +116,10 @@ const tmp = { x: 0, z: 0 };
 const air = { x: 0, z: 0 };
 const stroke: PaddleForce = { thrust: 0, side: 0, x: 0, z: 0 };
 
-function spring(x: number, v: number, target: number, f: number, zeta: number, dt: number): [number, number] {
+/** A damped spring's step toward `target`; `quad` adds damping that grows as the square of its speed. */
+function spring(x: number, v: number, target: number, f: number, zeta: number, dt: number, quad = 0): [number, number] {
   const w = f * Math.PI * 2;
-  v += (w * w * (target - x) - 2 * zeta * w * v) * dt;
+  v += (w * w * (target - x) - 2 * zeta * w * v - quad * v * Math.abs(v)) * dt;
   return [x + v * dt, v];
 }
 
@@ -237,10 +245,11 @@ export class BoatBody {
     this.heading += this.yawRate * dt;
 
     // out of the plane: the waves as her waterline feels them, averaged over it, so short chop largely
-    // cancels under her and the long swell lifts and tilts her whole (the water's shelter as the shader
-    // has it: still water carries a share of the river's waves)
-    const shelter = SHELTERED + (1 - SHELTERED) * smoothstep(0, 0.2, Math.hypot(tmp.x, tmp.z));
-    const w = hullWaves(this.pos.x, this.pos.z, this.heading, WATERLINE.len, WATERLINE.beam, t, shelter, this.waves);
+    // cancels under her and the long swell lifts and tilts her whole; at the share of them the drawn surface
+    // carries where she is (its shelter, its shallows), so she rides the water the eye sees
+    const level = waterUnder(this.pos.x, this.pos.z);
+    const share = surfaceShare(level - terrainHeight(this.pos.x, this.pos.z), Math.hypot(tmp.x, tmp.z));
+    const w = hullWaves(this.pos.x, this.pos.z, this.heading, WATERLINE.len, WATERLINE.beam, t, share, this.waves);
     const mean = w.heave;
     // local height = heave + x·rotZ − z·rotX, so the surface's slopes give the angles it would set
     let rollTarget = w.across;
@@ -252,12 +261,11 @@ export class BoatBody {
     pitchTarget += (MAN_MASS * GRAVITY * crew.z) / PITCH_STIFF - 0.003 * ur * ur;
     // she floats on the water under her, riding the waves on it (a jump of its level carries her with it
     // rather than leaving her to fall or float up through it)
-    const level = waterUnder(this.pos.x, this.pos.z);
     if (Number.isFinite(this.level)) this.pos.y += level - this.level;
     this.level = level;
     [this.pos.y, this.vHeave] = spring(this.pos.y, this.vHeave, level + mean, HEAVE.f, HEAVE.zeta, dt);
     [this.rotX, this.vRotX] = spring(this.rotX, this.vRotX, pitchTarget, PITCH.f, PITCH.zeta, dt);
-    [this.rotZ, this.vRotZ] = spring(this.rotZ, this.vRotZ, rollTarget, ROLL.f, ROLL.zeta, dt);
+    [this.rotZ, this.vRotZ] = spring(this.rotZ, this.vRotZ, rollTarget, ROLL.f, ROLL.zeta, dt, ROLL_EDDY);
   }
 
   /** How fast she is rolling and pitching (rad/s), for things that swing aboard. */

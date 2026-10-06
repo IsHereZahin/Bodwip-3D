@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <!-- নদী: Bangladesh's red sun on her green, set toward the hoist as on her flag; a river sweeping across under it,
+       and a country boat with her majhi crossing it. (index.html draws the same mark inline for the loader, its sun
+       rising out of the river as the world loads; scripts/brand/icons.mjs makes the icons from it.) -->
+  <defs>
+    <clipPath id="disk"><circle cx="50" cy="50" r="46" /></clipPath>
+  </defs>
+  <g clip-path="url(#disk)">
+    <rect width="100" height="100" fill="#006a4e" />
+    <circle cx="45" cy="48" r="23" fill="#f42a41" />
+    <path d="M0 66C14 61 26 61 40 66S66 71 80 66 100 61 100 61V100H0Z" fill="#00553e" />
+    <path d="M2 67C14 62 26 62 40 67S66 72 80 67 96 62 100 62" fill="none" stroke="#f4ecdc" stroke-width="2.4" stroke-linecap="round" />
+    <path d="M8 76C20 72 30 72 42 76S64 80 76 76 92 72 98 72" fill="none" stroke="#f4ecdc" stroke-width="1.8" stroke-linecap="round" opacity="0.7" />
+    <g fill="#0b2a20">
+      <path d="M24 66.5C28 69.7 46 69.7 50 66.5L51.4 64.1C45.4 66.3 28.4 66.3 22.6 64.1Z" />
+      <path d="M32 66C32.6 62 34.6 60.4 38 60.4S43.4 62 44 66Z" />
+      <path d="M26.4 65.6 26 57.6C26 56.8 26.5 56.4 27.1 56.4S28.2 56.8 28.2 57.6L27.8 65.6Z" />
+      <circle cx="27.1" cy="54.6" r="1.6" />
+      <path d="M28 58.6 32.4 71.4 31.6 71.7 27.2 59Z" />
+    </g>
+  </g>
+  <circle cx="50" cy="50" r="46" fill="none" stroke="#f4ecdc" stroke-opacity="0.35" stroke-width="1" />
+</svg>

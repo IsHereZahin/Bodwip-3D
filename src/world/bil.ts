@@ -31,7 +31,7 @@ import type { BoatBody } from './boatPhysics';
 import { BIL, bilDepth, bilReach, routeGap, terrainHeight, waterRise } from './geography';
 import { bilLocal, bilPoint } from './waterways';
 import { HERO_HULL, heroBeamAtWater } from './hull';
-import { SHELTERED, waveHeightGlsl, waveSlopeGlsl } from './waves';
+import { INLAND, SHELTERED, SHOAL_DEPTH, waveHeightGlsl, waveSlopeGlsl } from './waves';
 
 // The shapla bil: a broad, shallow wetland behind the left bank, its water still and glassy. Water lilies
 // (white, pink and red shapla) grow in rafts across it, thickest in water between knee and chest deep;
@@ -433,7 +433,9 @@ function carpetGeometry(): BufferGeometry {
  * bil's sheltered swell and the boat's wash spreading from her, and rock in the breeze.
  */
 function lilyMotion(wash: Vector4, perVertex: boolean, flower = false): NonNullable<PatchOptions['vertex']> {
-  const s = SHELTERED.toFixed(2);
+  // the waves as the bil's surface is drawn round them (waves.ts surfaceShare: still water, inland water's
+  // share, dying out on the shallows)
+  const s = (SHELTERED * INLAND).toFixed(4);
   return {
     key: perVertex ? 'lily-carpet' : flower ? 'lily-flower' : 'lily-plant',
     uniforms: { uWash: { value: wash } },
@@ -450,15 +452,16 @@ function lilyMotion(wash: Vector4, perVertex: boolean, flower = false): NonNulla
   vec3 lilyAt = ${perVertex ? '(lilyM * vec4(transformed, 1.0)).xyz' : '(lilyM * vec4(0.0, 0.0, 0.0, 1.0)).xyz'};
   ${perVertex ? 'lilyOff = vec3(0.0);' : ''}
   float lilyScale = length(lilyM[0].xyz);
+  float lilyBed = aBed + uWaterRise;
+  float lilyShare = ${s} * smoothstep(0.0, ${SHOAL_DEPTH.toFixed(2)}, lilyBed);
   vec2 toWash = lilyAt.xz - uWash.xy;
   float wd = length(toWash);
   float wa = 0.025 * min(uWash.z / 1.5, 1.2) * exp(-wd / 4.0);
   float wph = wd * 2.4 - uTime * 4.2;
-  vec2 tilt = waveSlope(lilyAt.xz) * ${s} + toWash / max(wd, 0.001) * wa * (2.4 * cos(wph) - 0.25 * sin(wph));
+  vec2 tilt = waveSlope(lilyAt.xz) * lilyShare + toWash / max(wd, 0.001) * wa * (2.4 * cos(wph) - 0.25 * sin(wph));
   tilt += uWind.xy * (0.02 * uWind.z) * sin(uTime * 1.7 + dot(lilyAt.xz, vec2(0.61, 0.37)));
-  float lift = waveHeight(lilyAt.xz) * ${s} + wa * sin(wph) + dot(tilt, lilyOff.xz);
+  float lift = waveHeight(lilyAt.xz) * lilyShare + wa * sin(wph) + dot(tilt, lilyOff.xz);
   transformed.y += (lift + ${BIL.level.toFixed(3)} + uWaterRise) / lilyScale;
-  float lilyBed = aBed + uWaterRise;
   ${
     perVertex
       ? '#ifdef USE_COLOR_ALPHA\n  vColor.a *= smoothstep(0.05, 0.2, lilyBed);\n  #endif'

@@ -42,18 +42,25 @@ export function hullHalfWidthAt(shape: HullShape, s: number, y: number): number 
   return hb * Math.pow(Math.sqrt(Math.max(1 - c * c, 0)), 0.8);
 }
 
-/** GLSL twin of hullHalfWidthAt(…, y = waterline): the water shader cuts the river out of the hull with it. */
+/**
+ * GLSL twins of hullHalfWidthAt, with s in [−1, 1] from stern to bow: `hullHalfWidth(s, y)` at any height of
+ * her frame (the water shader cuts the river out of her where it meets her as she heaves and heels), and
+ * `hullHalfBeamAtWater(s)` at her waterline at rest (the ripples' wall).
+ */
 export function hullWaterlineGlsl(shape: HullShape, waterline = 0): string {
   const f = (n: number) => n.toFixed(4);
   return /* glsl */ `
-float hullHalfBeamAtWater(float s) {
+float hullHalfWidth(float s, float y) {
   float a = abs(s);
   float keel = ${f(shape.keelMid)} + ${f(shape.keelRise)} * pow(a, 2.5);
-  if (keel >= ${f(waterline)}) return 0.0;
+  if (y <= keel) return 0.0;
   float sheer = ${f(shape.sheerMid)} + ${f(shape.sheerRise)} * pow(a, 3.0);
   float hb = ${f(shape.beam)} * pow(max(1.0 - pow(a, 2.2), 0.0), 0.6);
-  float c = 1.0 - (${f(waterline)} - keel) / (sheer - keel);
+  float c = 1.0 - min((y - keel) / (sheer - keel), 1.0);
   return hb * pow(sqrt(max(1.0 - c * c, 0.0)), 0.8);
+}
+float hullHalfBeamAtWater(float s) {
+  return hullHalfWidth(s, ${f(waterline)});
 }`;
 }
 

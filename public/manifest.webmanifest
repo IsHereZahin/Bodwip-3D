@@ -1,0 +1,19 @@
+{
+  "name": "নদী — বাংলার গ্রাম, নদী আর ছয় ঋতু",
+  "short_name": "নদী",
+  "description": "বাংলার এক গ্রামের ছোট নদী দিয়ে মাঝির নৌকা, বাংলাদেশের এই মুহূর্তের সময় থেকে পথে পথে ছয় ঋতু।",
+  "lang": "bn",
+  "dir": "ltr",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "landscape",
+  "background_color": "#0d0c0b",
+  "theme_color": "#0d0c0b",
+  "icons": [
+    { "src": "brand/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "brand/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "brand/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "brand/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

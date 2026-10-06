@@ -1,9 +1,11 @@
-import { PerspectiveCamera, Quaternion, Vector3 } from 'three';
+import { Matrix4, PerspectiveCamera, Quaternion, Vector3 } from 'three';
 import { angleDelta, clamp, damp, lerp, smoothstep } from '../core/mathx';
 import { BoatBody, type Crew } from '../world/boatPhysics';
 import { BRIDGE, JOURNEY, SANKO, bridgeDeck, bridgeFrame, bridgeSoffit, inlandWaterAt, journeyAt, journeyFrame, sankoDeck, sankoFrame, terrainHeight, waterLevelAt, waterwayAt } from '../world/geography';
 import { sankoToWorld } from '../world/sites';
 import { FlyCam } from './flycam';
+import { HANDOFF, OPENING_SECONDS, openingFloor, openingPose, openingSide, wayAt, type RestPlace } from './opening';
+import { sightPose, sightWeight, type Sight } from './showcase';
 
 /** How far along her way the boatman steers for, m. */
 const LOOK_AHEAD = 16;
@@ -131,6 +133,21 @@ export class Rig {
   private readonly keys = new Set<string>();
   private readonly target = new Vector3();
   private readonly fly = new FlyCam();
+  /** The opening flight while it runs: how far into it (s), the side of the river it comes down over, the floor laid for it. */
+  private opening: { t: number; side: number; floor: Float32Array } | null = null;
+  /** Where the follow camera is, in her way's frame: where the opening flight ends. */
+  private readonly restAt: RestPlace = { a: 0, c: 0, h: 0, focus: 0 };
+  private readonly openPos = new Vector3();
+  private readonly openLook = new Vector3();
+  private readonly openQuat = new Quaternion();
+  private readonly followQuat = new Quaternion();
+  private readonly lookAt = new Matrix4();
+  /** The sights along her way the camera turns aside to show when left to itself (showcase.ts). */
+  private sights: readonly Sight[] = [];
+  /** How free the camera is to go to them (0..1): eased up while nobody steers, dropped when someone does. */
+  private showGate = 0;
+  private readonly showPos = new Vector3();
+  private readonly showLook = new Vector3();
 
   readonly camera: PerspectiveCamera;
 
@@ -138,6 +155,7 @@ export class Rig {
     this.camera = camera;
     this.place(JOURNEY.opening / JOURNEY.length);
     element.addEventListener('pointerdown', (e) => {
+      this.endOpening();
       element.setPointerCapture(e.pointerId);
       this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
       this.dragging = true;
@@ -178,6 +196,7 @@ export class Rig {
       'wheel',
       (e) => {
         e.preventDefault();
+        this.endOpening();
         this.zoom(Math.exp(e.deltaY * 0.0012));
         this.idle = 0;
       },
@@ -225,6 +244,61 @@ export class Rig {
     this.idle = 0;
   }
 
+  /** Starts the opening flight: from high over the river ahead of her, down over the village's bank to her. */
+  beginOpening(): void {
+    this.setMode('follow');
+    this.rest = OPENING_VIEW;
+    this.settle(OPENING_VIEW);
+    // the follow camera posed once, for where the flight ends
+    const b = this.boat;
+    this.orbit(b.pos.x, b.pos.z, b.course, 0, b.pos.y + 2.2, 3);
+    this.restPlace();
+    const side = openingSide(this.along);
+    this.opening = { t: 0, side, floor: openingFloor(this.along, side, this.restAt, b.pos.y) };
+  }
+
+  /** Where the follow camera is now and what it looks at (orbit() has posed it), in her way's frame at her place (`restAt`). */
+  private restPlace(): void {
+    const p = wayAt(this.along);
+    const fx = Math.sin(p.heading);
+    const fz = Math.cos(p.heading);
+    const dx = this.camera.position.x - p.x;
+    const dz = this.camera.position.z - p.z;
+    this.restAt.a = dx * fx + dz * fz;
+    this.restAt.c = dx * fz - dz * fx;
+    this.restAt.h = this.camera.position.y - this.boat.pos.y;
+    this.restAt.focus = (this.target.x - p.x) * fx + (this.target.z - p.z) * fz;
+  }
+
+  /** Ends the opening flight (the viewer took the camera, or the film began): the camera eases over to her. */
+  endOpening(): void {
+    if (!this.opening) return;
+    this.opening = null;
+    this.fromPos.copy(this.camera.position);
+    this.fromQuat.copy(this.camera.quaternion);
+    this.blend = 0;
+  }
+
+  /** The sights along her way, for the camera to show by itself (showcase.ts findSights). */
+  setSights(sights: readonly Sight[]): void {
+    this.sights = sights;
+  }
+
+  /** The sights along her way (for the debug hooks). */
+  get sightList(): readonly Sight[] {
+    return this.sights;
+  }
+
+  /** Whether the opening flight is running. */
+  get flying(): boolean {
+    return this.opening !== null;
+  }
+
+  /** The letterbox the opening flight is shot in (0..1): full as it sets off, opening out as it comes down to her. */
+  get openingBars(): number {
+    return this.opening ? 1 - smoothstep(OPENING_SECONDS - 7, OPENING_SECONDS - 1, this.opening.t) : 0;
+  }
+
   /** Starts turning toward `watch` now, rather than after the camera has sat idle. */
   lookNow(): void {
     this.idle = IDLE_SECONDS;
@@ -252,10 +326,19 @@ export class Rig {
     this.distT = WATCH_VIEW.dist;
   }
 
+  /** Back to following the boat from her resting view, at once (under a cut: the camera is not seen moving). */
+  followNow(): void {
+    this.endOpening();
+    this.setMode('follow');
+    this.blend = 1;
+  }
+
   /** Puts the free camera at a point; for stills. */
   placeFree(x: number, y: number, z: number, yaw: number, pitch: number): void {
     this.setMode('free');
     this.fly.place(x, y, z, yaw, pitch);
+    // a still jumps there (the ease from the camera before, an opening flight's, would hold it where it was)
+    this.blend = 1;
   }
 
   /** Jumps the camera to its targets (no easing), for stills. */
@@ -290,6 +373,7 @@ export class Rig {
   update(dt: number, t: number, crew: Crew): void {
     const k = this.keys;
     for (const code of k) if (!MODIFIERS.has(code)) this.idle = 0;
+    if (k.size) this.endOpening();
     if (this.mode === 'follow') {
       if (k.has('ArrowLeft')) this.yawT += dt * 1.2;
       if (k.has('ArrowRight')) this.yawT -= dt * 1.2;
@@ -342,6 +426,8 @@ export class Rig {
         this.distT = damp(this.distT, this.rest.dist, 0.2, dt);
       }
       this.orbit(b.pos.x, b.pos.z, h, dt, b.pos.y + 2.2, 3);
+      if (this.opening) this.flyOpening(dt);
+      else this.showcase(dt, idle && !this.watch);
     }
 
     // ease over from wherever the free camera was
@@ -353,6 +439,58 @@ export class Rig {
       this.camera.quaternion.slerpQuaternions(this.fromQuat, this.toQuat, e);
       this.camera.updateMatrixWorld();
     }
+  }
+
+  /**
+   * The opening flight's frame, over the follow camera's (orbit() has just posed it): the flight's own pose,
+   * easing into the follow camera's over its last seconds, so it hands over without a seam.
+   */
+  private flyOpening(dt: number): void {
+    const o = this.opening;
+    if (!o) return;
+    o.t += dt;
+    if (o.t >= OPENING_SECONDS) {
+      this.opening = null;
+      return;
+    }
+    this.restPlace();
+    openingPose(o.t, this.along, o.side, this.restAt, this.boat.pos.y, this.target, o.floor, this.openPos, this.openLook);
+    this.lookAt.lookAt(this.openPos, this.openLook, this.camera.up);
+    this.openQuat.setFromRotationMatrix(this.lookAt);
+    const e = smoothstep(OPENING_SECONDS - HANDOFF, OPENING_SECONDS, o.t);
+    const cam = this.camera;
+    this.followQuat.copy(cam.quaternion);
+    cam.position.lerpVectors(this.openPos, cam.position, e);
+    cam.quaternion.slerpQuaternions(this.openQuat, this.followQuat, e);
+    cam.updateMatrixWorld();
+  }
+
+  /**
+   * Left to itself, the camera goes aside to the sight whose stretch of her way she is in, over the follow
+   * camera's pose (orbit() has just posed it), as far as the sight's own easing and the gate allow: so it moves
+   * off her slowly and comes back slowly, and hands back at once when someone takes the camera.
+   */
+  private showcase(dt: number, free: boolean): void {
+    this.showGate = damp(this.showGate, free ? 1 : 0, free ? 0.5 : 3, dt);
+    let sight: Sight | null = null;
+    let w = 0;
+    for (const s of this.sights) {
+      const k = sightWeight(s, this.along);
+      if (k > w) (w = k), (sight = s);
+    }
+    const e = w * this.showGate;
+    if (!sight || e < 0.002) return;
+    const b = this.boat;
+    sightPose(sight, b.pos, b.course, this.along, this.target, b.pos.y, this.showPos, this.showLook);
+    this.lookAt.lookAt(this.showPos, this.showLook, this.camera.up);
+    this.openQuat.setFromRotationMatrix(this.lookAt);
+    const cam = this.camera;
+    this.followQuat.copy(cam.quaternion);
+    cam.position.lerp(this.showPos, e);
+    cam.quaternion.slerpQuaternions(this.followQuat, this.openQuat, e);
+    keepClearOfBridge(cam.position);
+    keepClearOfSanko(cam.position);
+    cam.updateMatrixWorld();
   }
 
   /** Scales the orbit distance by `factor`; the free camera moves forward or back instead. */

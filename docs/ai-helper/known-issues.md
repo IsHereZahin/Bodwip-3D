@@ -13,6 +13,7 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
 - **The underwater tint assumes a flat surface** (`underwater()`). In big waves, the parts of a hull near the surface can take the wrong tint.
 - **Ponds reflect the hazy sky.** They sit at their own level and so don't get the mirror; from above they can read as pale sheets.
 - **The water grid is dense under the camera,** which is wasted from high up.
+- **A crop chunk's reach shows as a rectangle from high above** (the free camera at ≈40 m over the bil's rim in the rains): the plants stop at a straight edge. From the boat and the film's heights it is not seen.
 
 ## Performance
 
@@ -26,6 +27,7 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
   - One shadow-depth program is still first compiled as the film starts.
   - Not measured on a real GPU.
 - **Never measured:** phones, laptop integrated GPUs, weak GPUs.
+- **The salt farms' people** are boatman bodies (≈10 draw calls each, with cloth): up to 13 in the salt season. The film's লবণ মাঠ shot draws ≈1050 calls, the most of any shot. They are posed within `POSED` and drawn within `DRAWN` of their farm (saltworks.ts).
 
 ## Accepted simplifications
 
@@ -76,6 +78,12 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
   - The lamps' light (`lampLight`) casts no shadows: what faces a lamp is lit through walls (faintly, its reach is short); what faces away is not. Only three lamps cast light (the hall's spill, the verandah's, the ghat's lantern); the other bulbs only glow.
   - The kalima needs the Amiri web font; offline a system Arabic face stands in (Traditional Arabic, Arabic Typesetting, Geeza Pro, Segoe UI), shaped correctly but plainer.
 - **The boat's way** leaves the khal for the side khal: the khal's upper reach, its third rock and its mouth into the bil are no longer on her way (seen from the free camera only).
+- **The map's visits:** a place's shots are designed for its usual look: at night they are dark (the mosque's lamps show), and in the rains some low shots over water ride the higher water. A visit's year is set to the boat's new place at once, so the land's season can differ from the view the viewer left (each keeps its own through the dissolve).
+- **The experience:**
+  - The loader's backdrop is one still (the bil at sunset) whatever the hour.
+  - At night the opening flight and the journey are dark, by the user's choice of real time; the flight's first seconds show the world's edge haze from high.
+  - The sights are found once from the village as built; a sight behind a bank's trees is shown as it is (no check that it is in view).
+  - The dock's menus use the Popover API (Chrome 114+, Safari 17+, Firefox 125+); the SVG favicon has a PNG fallback.
 - **Depth of field** gathers 40 taps a pixel: a fine grain shows in the strongest blur. Rain streaks and other things that write no depth take the blur of what is behind them.
 - **The reapers** cut at the field's edge, but the field never shrinks (crops are a per-plot shader).
 - **The three salt rakers** share one body (`majhi`) in different clothes, and are posed only within 320 m.
@@ -92,6 +100,8 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
 - The boat under the sanko was judged in stills and one headless recording: not at full speed on a real GPU, and the paddle's blade against the middle span's trestles not frame by frame (the span leaves ≈1 m beyond the paddle's reach when she is on her line).
 
 ## Backlog (proposed, not yet asked for)
+
+- **The salt farms:** only the creek's farm has a sluice and a gola; the others have feeder ditches painted along their embankments. The gher's fish swim through the drowned bunds. A walker's planted foot slides a little as he stops or turns in place.
 
 - **Banks and river life:** roots, mud, reeds and bushes on the banks; ghat details; moored and moving boats; washing and bathing at the ghats, cattle, cooking smoke at dusk, kites overhead; banana rafts in the rains.
 - **Vegetation:** distant coconuts read as poles; the far villages' rows; homestead groves' density.

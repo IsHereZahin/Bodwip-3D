@@ -15,7 +15,7 @@ import { buildHull, hullHalfWidthAt, hullStation, type HullShape } from './hull'
 import type { BodyDrive } from './paddle';
 import { FISHER_NEAR } from './plan';
 import { RIVER } from './waterways';
-import { SHELTERED, waveHeight, waveSlope } from './waves';
+import { surfaceShare, waveHeight, waveSlope } from './waves';
 
 // The fisherman with his cast net (ঝাঁকি জাল) on the river below where the khal comes in (the user asked for
 // a fisherman catching fish with a net). His dinghy is tied to a bamboo pole planted in the bed; he stands in
@@ -403,8 +403,10 @@ export class Fisher {
   /** She rides the sheltered ripples where she lies, and heels a little under his swing and his hauling. */
   private floatBoat(t: number, level: number): void {
     const b = this.boat;
-    waveSlope(this.site.x, this.site.z, t, this.slope, SHELTERED);
-    b.position.y = level + FLOAT + waveHeight(this.site.x, this.site.z, t, SHELTERED);
+    // (the waves as the surface round her is drawn: still water, the share inland water carries)
+    const share = surfaceShare(level - terrainHeight(this.site.x, this.site.z), 0);
+    waveSlope(this.site.x, this.site.z, t, this.slope, share);
+    b.position.y = level + FLOAT + waveHeight(this.site.x, this.site.z, t, share);
     const c = Math.cos(this.site.yaw);
     const s = Math.sin(this.site.yaw);
     // the slopes along her and across her, and his weight (crew is in her frame: x across, z along)

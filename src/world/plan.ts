@@ -43,6 +43,16 @@ export const ROAD_RAISE = 0.7;
 export const POND_LEVEL = WATER_LEVEL + 0.55;
 /** How much of the season's rise and fall the ponds take: rain-fed, they change less than the river. */
 export const POND_RISE = 0.3;
+/** How far the river, the khals and the bil fall below their mean level at their lowest, in spring (m; env/season.ts `water`): the ghats' steps run on below it. */
+export const LOW_WATER = 0.4;
+/**
+ * A stored water level above SALT_BAND (m) is a salt farm's (world/water.ts's level map, GLSL waterLevels,
+ * geography.ts risenLevel): none of the waterways', the bil's or the ponds' stands so high. Out of the rains a
+ * farm's water is drained SALT_DRAIN below its rains' level (by the season's share of salt work), so that only
+ * its settling pond keeps some.
+ */
+export const SALT_BAND = 1.9;
+export const SALT_DRAIN = 0.6;
 
 // ---------- the waterways ----------
 
@@ -156,27 +166,161 @@ export const SANKO_NEAR: Pt = [150, 476];
 export const CHAR = { x: -455, z: 128, halfLen: 140, halfWid: 34, yaw: 0.22 } as const;
 
 /**
- * The salt field (লবণ মাঠ, the user's ask) on the river's south bank by where the boat sets out, behind the
- * river's embankment at the foot of the wooded hill: one farm (khola) worked in the dry months (env/season.ts
- * `salt`). Its middle, the way its length runs (yaw: along (sin, cos), here upriver, west), its length and
- * width (m), and the shares of its length (from its east end) given to the settling pond where the river's
- * water is let in, then the evaporation beds where the brine thickens; the rest is crystallizer beds lined
- * with black plastic, where the salt forms and is raked up. render/patch.ts paints it, world/saltworks.ts
- * builds what stands on it: keep the two in step.
+ * What a salt farm's people do (world/saltworks.ts), in the salt season or in the rains, at points of its frame
+ * (m: `u` along its length, `v` across it; `facing` from +u toward +v, rad): rake the salt where it stands ready,
+ * carry it in a basket on the head along the bunds to the heap, walk the bunds looking the beds over (crouching
+ * to feel the brine at each stop), dress a bed's floor with a spade, stand by watching the others at it, throw
+ * feed into the flooded beds of the gher, or cast the net over them.
  */
-export const SALT_FIELD = {
-  x: -1200,
-  z: -52,
-  yaw: 1.485,
-  w: 96,
-  d: 60,
-  pond: 0.22,
-  evaporation: 0.5,
-  /** The evaporation beds' and the crystallizers' cells (m along, m across), and how far in from the edge its bund runs (inside the feeder channel). */
-  evapCell: [8.96, 10],
-  crystalCell: [8, 5],
-  rimInset: 2.3,
-} as const;
+export type SaltTask =
+  | { do: 'rake'; when: 'salt'; count: number; who?: 'majhi' | 'tarun' }
+  | { do: 'carry'; when: 'salt'; path: readonly Pt[] }
+  | { do: 'inspect'; when: 'salt' | 'rains'; path: readonly Pt[]; who?: 'majhi' | 'tarun' }
+  | { do: 'spade'; when: 'salt'; at: Pt; facing: number }
+  | { do: 'watch'; when: 'salt'; at: Pt; facing: number }
+  | { do: 'feed'; when: 'rains'; at: Pt; facing: number }
+  | { do: 'net'; when: 'rains' };
+
+/**
+ * A salt farm (khola) on the river's south bank by where the boat sets out, behind the river's embankment at the
+ * foot of the wooded hill, worked in the dry months (env/season.ts `salt`) and kept as a fish gher in the rains.
+ * Its middle, the way its length runs (yaw: along (sin, cos)), its length and width (m), and the shares of its
+ * length (from its u = 0 end) given to the settling pond where the water is let in, then the evaporation beds
+ * where the brine thickens; the rest is crystallizer beds lined with black plastic, where the salt forms and is
+ * raked up. Its cells (m along, m across), and how far in from its edge the embankment round it rises.
+ * Its ground: its pans dug `dig` m below the fields (the settling pond deeper), its embankment's crest `rim` m
+ * over the fields, its inner bunds `bunds` m over the pans' floor (least, most), and the rains standing `rains`
+ * m deep in its pans, over some of its bunds and under the rest (at least 0.2 m below the fields: `dig` − `rains`
+ * ≥ 0.2, or they would stand in the hollows beyond its embankment); `grassy` when its bunds are old and grassed.
+ * `seed` sets which bed is at which stage. render/patch.ts paints it, world/geography.ts digs it and keeps its
+ * water, world/saltworks.ts builds what stands on it: keep them in step.
+ */
+export interface SaltFarm {
+  x: number;
+  z: number;
+  yaw: number;
+  w: number;
+  d: number;
+  pond: number;
+  evaporation: number;
+  evapCell: readonly [number, number];
+  crystalCell: readonly [number, number];
+  rimInset: number;
+  dig: number;
+  rim: number;
+  bunds: readonly [number, number];
+  rains: number;
+  grassy: boolean;
+  seed: number;
+  work: readonly SaltTask[];
+}
+
+/**
+ * The salt farms, none alike (the user asked for several, of different sizes, shapes, depths, embankments, water
+ * and work): the creek's own by its sluice (the film's), the broad one beside the creek's flats with its high
+ * embankment and big settling pond, the long narrow one at the hill's foot whose low bunds the rains drown, and
+ * a small old one between the river and the creek, its bunds grassed.
+ */
+export const SALT_FIELDS: readonly SaltFarm[] = [
+  {
+    x: -1200,
+    z: -52,
+    yaw: 1.485,
+    w: 96,
+    d: 60,
+    pond: 0.22,
+    evaporation: 0.5,
+    evapCell: [8.96, 10],
+    crystalCell: [8, 5],
+    rimInset: 2.3,
+    dig: 0.55,
+    rim: 0.3,
+    bunds: [0.28, 0.36],
+    rains: 0.32,
+    grassy: false,
+    seed: 0,
+    work: [
+      { do: 'rake', when: 'salt', count: 3 },
+      // the salt in baskets on their heads down the crystallizers' bund to the gola at the far corner
+      { do: 'carry', when: 'salt', path: [[56, 30], [88, 30], [88, 56.6], [89.2, 61.5]] },
+      { do: 'inspect', when: 'salt', path: [[23, 20], [46, 20]], who: 'majhi' },
+      { do: 'net', when: 'rains' },
+      { do: 'inspect', when: 'rains', path: [[12, 1.3], [86, 1.3]], who: 'tarun' },
+    ],
+  },
+  {
+    x: -1195,
+    z: -140,
+    yaw: 0.06,
+    w: 70,
+    d: 52,
+    pond: 0.3,
+    evaporation: 0.78,
+    evapCell: [10, 13],
+    crystalCell: [7.7, 6.5],
+    rimInset: 2.6,
+    dig: 0.65,
+    rim: 0.42,
+    bunds: [0.34, 0.48],
+    rains: 0.4,
+    grassy: false,
+    seed: 0.37,
+    work: [
+      // two dressing a bed's floor with their spades, an older man on the bund watching them
+      { do: 'spade', when: 'salt', at: [35.5, 17.6], facing: 0 },
+      { do: 'spade', when: 'salt', at: [36.4, 20.9], facing: -0.25 },
+      { do: 'watch', when: 'salt', at: [31.0, 23.5], facing: -0.5 },
+      { do: 'feed', when: 'rains', at: [21.6, 30], facing: Math.PI },
+      { do: 'inspect', when: 'rains', path: [[21, 39], [51, 39]], who: 'majhi' },
+    ],
+  },
+  {
+    x: -1140,
+    z: -195,
+    yaw: 1.6,
+    w: 64,
+    d: 30,
+    pond: 0.15,
+    evaporation: 0.35,
+    evapCell: [6.4, 7.5],
+    crystalCell: [6, 5],
+    rimInset: 2.0,
+    dig: 0.52,
+    rim: 0.18,
+    bunds: [0.2, 0.3],
+    rains: 0.31,
+    grassy: false,
+    seed: 0.71,
+    work: [
+      { do: 'rake', when: 'salt', count: 2, who: 'tarun' },
+      { do: 'carry', when: 'salt', path: [[28.4, 15], [58.4, 15], [61.2, 15]] },
+    ],
+  },
+  {
+    x: -1330,
+    z: -48,
+    yaw: 1.485,
+    w: 46,
+    d: 28,
+    pond: 0.4,
+    evaporation: 0.75,
+    evapCell: [8.05, 7],
+    crystalCell: [5.75, 4.67],
+    rimInset: 2.0,
+    dig: 0.58,
+    rim: 0.22,
+    bunds: [0.22, 0.32],
+    rains: 0.36,
+    grassy: true,
+    seed: 0.19,
+    work: [
+      { do: 'rake', when: 'salt', count: 1, who: 'majhi' },
+      { do: 'inspect', when: 'salt', path: [[26.5, 7], [26.5, 21]], who: 'majhi' },
+    ],
+  },
+];
+/** The creek's farm, by its sluice: the film's (rig/tour.ts). */
+export const SALT_FIELD = SALT_FIELDS[0];
 
 // ---------- homesteads ----------
 
@@ -292,6 +436,8 @@ export const TEA_STALL = { x: -97, z: 106, face: E + 0.5 } as const;
 
 /** The zamindar house: its compound's middle, the way its front looks (over the river), and its compound's size (m). */
 export const ZAMINDAR = { x: -440, z: 240, face: S + 0.35, w: 72, d: 54, pond: { x: -530, z: 262, yaw: 0.35, halfW: 20, halfD: 13 } as PondSpec } as const;
+/** Its lawn, running down from the house's front over the bank's top to its grand ghat on the river: kept grass, not paddy. */
+export const ZAMINDAR_GROUNDS = { x: -450, z: 204, face: S + 0.35, hu: 17, hv: 20, corner: 8 } as const;
 
 /** The mosque: its middle and the way its door looks (east: it faces the qibla, west, across its prayer hall); its pond before it. */
 /** (its axis, out of its door toward its pond, runs along z = 212: the walk and the pond's ghat lie on it) */
@@ -472,7 +618,7 @@ export const ROADS: readonly RoadSpec[] = [
   // the field path from it up past the date palms to the village road
   { kind: 'earth', width: 1.1, points: [...KHEJUR_PATH] },
   // up to the homesteads north of the road
-  { kind: 'earth', width: 1.3, points: [[-306, 294], [-318, 330], [-330, 364]] },
+  { kind: 'earth', width: 1.3, points: [[-306, 294], [-314, 326], [-315, 352], [-326, 368]] },
   { kind: 'earth', width: 1.3, points: [[-206, 248], [-196, 290], [-184, 318]] },
   { kind: 'earth', width: 1.3, points: [[-520, 302], [-548, 350], [-558, 384]] },
   // the khal's east bank: from the road north past the homesteads toward the bil
@@ -482,12 +628,19 @@ export const ROADS: readonly RoadSpec[] = [
   // (for the ablutions), crossing the path
   { kind: 'earth', width: 1.8, points: [[126, 40], [124, 100], [124, 160], [129, 212], [136, 262]] },
   { kind: 'brick', width: 2.2, flat: true, points: [[138.8, 212], [130, 212], [119.4, 212]] },
+  // the zamindar house's brick walk over its lawn, from the foot of its front steps down to the back of its grand
+  // ghat's landing (geography.ts grandGhat: 11 m up the bank from the ghat's foot)
+  { kind: 'brick', width: 2.6, flat: true, points: [[-444.8, 226.85], [-454.36, 199.28]] },
   { kind: 'earth', width: 1.3, points: [[266, 166], [262, 220], [262, 276]] },
   { kind: 'earth', width: 1.3, points: [[282, 346], [278, 312], [276, 286]] },
-  // the field path north over the side khal by the bamboo sanko, to the homestead by the bil
-  { kind: 'earth', width: 1.2, points: [[152, 263], [150, 330], [150, 384], [146, 430], 'sanko-s', 'sanko-n', [166, 530], [210, 600], [262, 650], [314, 688]] },
+  // the field path north over the side khal by the bamboo sanko, across the fields to the bil's south shore,
+  // where the shapla is gathered
+  { kind: 'earth', width: 1.2, points: [[152, 263], [150, 330], [150, 384], [146, 430], 'sanko-s', 'sanko-n', [166, 530], [186, 572], [200, 616]] },
+  // and from before the sanko, up the side khal's east bank to the homestead by the bil (it lies across the
+  // khal's north-running reach from the sanko's far side: no way crosses there)
+  { kind: 'earth', width: 1.2, points: [[146, 430], [190, 468], [232, 515], [268, 562], [290, 608], [304, 648], [318, 676]] },
   // the south bank's field path between its homesteads
-  { kind: 'earth', width: 1.3, points: [[-760, 30], [-700, 18], [-640, 14], [-560, 54], [-460, 70], [-360, 72], [-268, 56], [-180, 0], [-110, -34]] },
+  { kind: 'earth', width: 1.3, points: [[-760, 30], [-700, 18], [-640, 14], [-598, 15], [-568, 24], [-552, 46], [-460, 70], [-360, 72], [-268, 56], [-180, 0], [-110, -34]] },
   { kind: 'earth', width: 1.2, points: [[-640, 14], [-652, 60]] },
   // out across the char through its kash to the river's edge, where the boats put in to cut it and graze the cattle
   { kind: 'earth', width: 1.2, points: [[-460, 70], [-458, 100], [-454, 126], [-450, 151]] },

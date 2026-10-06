@@ -17,7 +17,8 @@ import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
 import { CORRIDOR, CROP_REACH } from '../render/glsl';
 import { patchMaterial } from '../render/patch';
-import { WATER_LEVEL, corridorDistance, inGraveyard, onBridge, onLandmark, onMosqueGrounds, onRoad, roadNear, terrainHeight } from './geography';
+import { WATER_LEVEL, corridorDistance, inGraveyard, onBridge, onLandmark, onMosqueGrounds, onRoad, onZamindarGrounds, roadNear, terrainHeight } from './geography';
+import { ghatLocal } from './ghatFlight';
 import { nearStone } from './stones';
 import { groundLattice } from './terrain';
 import type { Ghat, HutPlan } from './village';
@@ -443,15 +444,15 @@ export class Meadow {
         // none in the khal's or the bil's water, nor on the mud just above it
         if (g.h < WATER_LEVEL + 0.25) continue;
         if (huts.some((h) => Math.hypot(h.x - x, h.z - z) < Math.max(h.l, h.w) * 0.6 + 0.4)) continue;
-        // (the graveyard's grass is let grow among its graves; the mosque's grounds are kept short)
+        // (the graveyard's grass is let grow among its graves; the mosque's grounds and the zamindar's lawn are kept short)
         const graves = inGraveyard(x, z);
-        const short = graves || onMosqueGrounds(x, z);
+        const short = graves || onMosqueGrounds(x, z) || onZamindarGrounds(x, z);
         if (onBridge(x, z) || (onLandmark(x, z) && !graves) || nearStone(x, z, 0.05)) continue;
         // nothing grows on a road, a footpath or the bridge's worn way: they stay trodden and clear (the
         // lattice is too coarse to see a footpath's metre, so each is asked here)
         if (nearWay && onRoad(x, z, 0.25)) continue;
-        // the ghats' steps and the trodden way down to them
-        if (ghats.some((gh) => Math.hypot(gh.x - x, gh.z - z) < 9)) continue;
+        // the ghats' steps, their landings and benches, and the trodden ground round them
+        if (ghats.some((gh) => Math.hypot(gh.x - x, gh.z - z) < 9 || onGhatGround(gh, x, z))) continue;
         // grass where the ground is grassy, in drifts, thinning on trodden earth and in the paddy
         const drift = smoothstep(0.28, 0.62, fbm(x * 0.07, z * 0.07, 2, 91));
         // none in the paddy plots (zone > 0)
@@ -477,4 +478,10 @@ export class Meadow {
     };
   }
 
+}
+
+/** Up a ghat's bank from its foot past its landing, and across it to its benches (village.ts brickGhat: its landing's back is 9.9 m up). */
+function onGhatGround(g: Ghat, x: number, z: number): boolean {
+  const { d, s } = ghatLocal(g, x, z);
+  return d > -1 && d < 11.4 && Math.abs(s) < 5;
 }

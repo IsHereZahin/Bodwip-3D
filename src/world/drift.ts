@@ -6,10 +6,10 @@ import { patchMaterial } from '../render/patch';
 import { hyacinthLeafTexture } from '../render/textures';
 import { windAt } from '../env/wind';
 import type { BoatBody } from './boatPhysics';
-import { PONDS, SALT_CREEK, WATER_LEVEL, inlandWaterAt, meanWaterLevelAt, pondReach, risenLevel, terrainHeight, waterLevelAt, waterwayAt } from './geography';
+import { PONDS, SALT_CREEK, WATER_LEVEL, inlandWaterAt, meanWaterLevelAt, pondReach, risenLevel, saltFarmAt, terrainHeight, waterLevelAt, waterwayAt } from './geography';
 import { HERO_HULL, heroBeamAtWater, hullHalfWidthAt, type HullShape } from './hull';
 import { wakeHeight } from './wake';
-import { SHELTERED, waveHeight, waveSlope } from './waves';
+import { INLAND, SHELTERED, waveHeight, waveSlope } from './waves';
 
 // Water hyacinth (kochuripana), each plant its own floating body, held to its neighbours in loose mats by
 // tangled roots; and fallen leaves. It floats on the still fresh water round the viewer (the khal, the bil, the
@@ -40,8 +40,8 @@ const FLOATS = 0.25;
 const EDGE = 3;
 /** Frames a mat with no water to go to waits before it looks again. */
 const RETRY = 45;
-/** On still fresh water the ripples are this share of the open water's waves (as the water shader has it). */
-const RIPPLES = 0.15;
+/** On still fresh water the ripples are this share of the open water's waves (as the water shader draws them: waves.ts surfaceShare). */
+const RIPPLES = SHELTERED * INLAND;
 /** Seconds for a plant (or a leaf) to come to the current's speed after a shove. */
 const DRAG_TAU = [1.6, 0.8];
 /** Drift downwind, m/s at full wind. */
@@ -469,8 +469,8 @@ export class Drift {
       // boats' way; none in the salt creek, whose water is the sea's
       const w = waterwayAt(x, z);
       if (w && (w.d < w.half - Math.min(EDGE, w.half * 0.4) || w.way === SALT_CREEK)) continue;
-      // none on the pond the village keeps clean
-      if (KEPT.some((p) => pondReach(p, x, z) < 1.3)) continue;
+      // none on the pond the village keeps clean, nor in the salt farms' brine
+      if (KEPT.some((p) => pondReach(p, x, z) < 1.3) || saltFarmAt(x, z, 2)) continue;
       return [x, z];
     }
     return null;
@@ -531,11 +531,11 @@ export class Drift {
         continue;
       }
       // on its water's ripples
-      let y = risenLevel(this.levelOf[i]) + waveHeight(x, z, t, SHELTERED) * RIPPLES;
+      let y = risenLevel(this.levelOf[i]) + waveHeight(x, z, t, RIPPLES);
       const bx = x - boat.pos.x;
       const bz = z - boat.pos.z;
       if (Math.abs(bx) + Math.abs(bz) < 150) y += wakeHeight(bx * ch - bz * sh, bx * sh + bz * ch, boat.speed);
-      waveSlope(x, z, t, this.slope, SHELTERED * RIPPLES);
+      waveSlope(x, z, t, this.slope, RIPPLES);
       const sl = Math.hypot(this.slope.x, this.slope.z);
       this.q.setFromAxisAngle(UP, this.yaw[i]);
       if (sl > 1e-5) {

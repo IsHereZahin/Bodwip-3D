@@ -1,4 +1,5 @@
 import { G } from '../core/globals';
+import { smoothstep } from '../core/mathx';
 import { WIND_MS } from '../env/wind';
 import { terrainHeight } from './geography';
 
@@ -330,6 +331,24 @@ float swellBreaking(float exposure, float depth) {
 
 /** Still water (khals, the bil, the slack by the banks) is sheltered: its waves are this share of the river's. */
 export const SHELTERED = 0.35;
+/**
+ * Fresh inland water carries this share of the waves the wind raises over FETCH: the village's river and khals
+ * are narrow, and the hundred metres or so of open water the wind has over them raise waves about this share
+ * of a broad river's.
+ */
+export const INLAND = 0.15;
+/** Over this last depth of water (m) the waves die out on the shallows. */
+export const SHOAL_DEPTH = 0.6;
+
+/**
+ * The share of the wind's waves the drawn surface carries where the water is `depth` deep and runs at `flow`
+ * m/s: the water shader's own factor (sheltered where it lies still, dying out on the shallows, inland water's
+ * share), so whatever floats rides the surface the eye sees. (Ridden at the open waves' height, the hero boat
+ * heaved and tilted some seven times as much as the water drawn round her, and in a storm stood out of it.)
+ */
+export function surfaceShare(depth: number, flow: number): number {
+  return (SHELTERED + (1 - SHELTERED) * smoothstep(0, 0.2, flow)) * smoothstep(0, SHOAL_DEPTH, depth) * INLAND;
+}
 
 const f = (n: number) => n.toFixed(5);
 const phaseOf = (v: Wave) => `${f(v.k)} * dot(p, vec2(${f(v.dx)}, ${f(v.dz)})) - ${f(v.w)} * uTime + ${f(v.phase)}`;

@@ -2,7 +2,7 @@ import { ShaderChunk } from 'three';
 import type { IUniform, Material } from 'three';
 import { G } from '../core/globals';
 import { CROP_REACH, GLSL_COMMON } from './glsl';
-import { SALT_FIELD } from '../world/plan';
+import { SALT_FIELDS } from '../world/plan';
 import type { GroundSet } from './surfaces';
 
 export interface PatchOptions {
@@ -323,52 +323,75 @@ ${SPLAT_COLOR}
     diffuseColor.rgb = mix(diffuseColor.rgb, fc, vZone);
     atmBrine = plotWater * mix(0.5, 0.6, sh.x);
   }
-  // the salt field (লবণ মাঠ, world/plan.ts SALT_FIELD; world/saltworks.ts builds its bunds and heaps, whose
-  // twin of this layout must stay in step): one farm (khola) inside a feeder channel of the river's water and
-  // an earth bund. A settling pond where the water is let in; evaporation beds with mud floors where the brine
-  // thickens in the sun, a few strong enough to rime their floors white; then the small crystallizer beds lined
-  // with black plastic, each at its stage (saltStage): a film of brine mirroring the sky, crust forming in it, a
-  // white sheet of salt ready to rake, or just raked (the heaps stand on the bunds). Out of the salt season
-  // (uSeasonB.w: from late autumn to the first storms of summer) the beds lie flooded, the plastic taken up.
+  // the salt farms (লবণ মাঠ, world/plan.ts SALT_FIELDS; world/geography.ts digs them, world/saltworks.ts builds
+  // their bunds and heaps, and their twins of this layout must stay in step): each a farm (khola) inside its earth
+  // embankment, a feeder ditch along its foot. A settling pond where the water is let in; evaporation beds with mud
+  // floors where the brine thickens in the sun, a few strong enough to rime their floors white; then the small
+  // crystallizer beds lined with black plastic, each at its stage (saltStage): a film of brine mirroring the sky,
+  // crust forming in it, a white sheet of salt ready to rake, or just raked (the heaps stand on the bunds). Out of
+  // the salt season (uSeasonB.w: from late autumn to the first storms of summer) the plastic is taken up and the
+  // rains stand in the pans as real water (the water's own surface, uSaltWet), the settling pond's all year.
   float panW = 0.0;
   if (vZone < -0.01) {
     float salt = -vZone;
-    const vec2 blockSize = vec2(${SALT_FIELD.w.toFixed(1)}, ${SALT_FIELD.d.toFixed(1)});
-    vec2 rel = wp - vec2(${SALT_FIELD.x.toFixed(1)}, ${SALT_FIELD.z.toFixed(1)});
-    vec2 axis = vec2(${Math.sin(SALT_FIELD.yaw).toFixed(5)}, ${Math.cos(SALT_FIELD.yaw).toFixed(5)});
-    vec2 bq = vec2(dot(rel, axis), dot(rel, vec2(axis.y, -axis.x))) + blockSize * 0.5;
+    // which farm, and where in its frame
+    vec2 bq = vec2(-1e3);
+    vec2 blockSize = vec2(1.0);
+    float pondShare = 0.0;
+    float evapShare = 0.0;
+    vec2 evapCell = vec2(1.0);
+    vec2 crystalCell = vec2(1.0);
+    float rimInset = 2.0;
+    float farmSeed = 0.0;
+    float grassy = 0.0;
+${SALT_FIELDS.map((f) => `    if (bq.x < -900.0) {
+      vec2 rel = wp - vec2(${f.x.toFixed(1)}, ${f.z.toFixed(1)});
+      vec2 fq = vec2(dot(rel, vec2(${Math.sin(f.yaw).toFixed(5)}, ${Math.cos(f.yaw).toFixed(5)})), dot(rel, vec2(${Math.cos(f.yaw).toFixed(5)}, ${(-Math.sin(f.yaw)).toFixed(5)}))) + vec2(${(f.w / 2).toFixed(2)}, ${(f.d / 2).toFixed(2)});
+      if (fq.x > -4.0 && fq.y > -4.0 && fq.x < ${(f.w + 4).toFixed(2)} && fq.y < ${(f.d + 4).toFixed(2)}) {
+        bq = fq;
+        blockSize = vec2(${f.w.toFixed(2)}, ${f.d.toFixed(2)});
+        pondShare = ${f.pond.toFixed(4)};
+        evapShare = ${f.evaporation.toFixed(4)};
+        evapCell = vec2(${f.evapCell[0].toFixed(3)}, ${f.evapCell[1].toFixed(3)});
+        crystalCell = vec2(${f.crystalCell[0].toFixed(3)}, ${f.crystalCell[1].toFixed(3)});
+        rimInset = ${f.rimInset.toFixed(3)};
+        farmSeed = ${f.seed.toFixed(4)};
+        grassy = ${f.grassy ? '1.0' : '0.0'};
+      }
+    }`).join('\n')}
     vec2 q = bq;
     vec2 eb = min(bq, blockSize - bq);
     float edge = min(eb.x, eb.y);
-    // the feeder channel just inside the field's edge, its bund inside that; outside, the channel's earth bank
-    float channel = (1.0 - smoothstep(1.2, 1.6, edge)) * smoothstep(-0.5, 0.0, edge);
-    float rim = (1.0 - smoothstep(2.0, 2.6, edge)) * (1.0 - channel) * step(0.0, edge);
+    // the feeder ditch along the embankment's foot, outside it, and the embankment itself
+    float ditch = smoothstep(-2.0, -1.5, edge) * (1.0 - smoothstep(-0.5, -0.2, edge));
+    float rim = smoothstep(-0.4, 0.1, edge) * (1.0 - smoothstep(rimInset - 0.4, rimInset, edge));
     float working = smoothstep(-0.05, 0.05, uSeasonB.w - 0.5);
     vec3 clay = vec3(0.24, 0.21, 0.17) * (0.9 + 0.2 * vnoise(q * 1.7));
     vec3 brackish = vec3(0.1, 0.1, 0.075);
     float u = bq.x / blockSize.x;
     vec2 lq = bq;
     vec2 size = blockSize;
-    if (u >= ${SALT_FIELD.evaporation.toFixed(3)}) {
-      lq.x -= blockSize.x * ${SALT_FIELD.evaporation.toFixed(3)};
-      size = vec2(${SALT_FIELD.crystalCell[0].toFixed(2)}, ${SALT_FIELD.crystalCell[1].toFixed(2)});
-    } else if (u >= ${SALT_FIELD.pond.toFixed(3)}) {
-      lq.x -= blockSize.x * ${SALT_FIELD.pond.toFixed(3)};
-      size = vec2(${SALT_FIELD.evapCell[0].toFixed(2)}, ${SALT_FIELD.evapCell[1].toFixed(2)});
+    if (u >= evapShare) {
+      lq.x -= blockSize.x * evapShare;
+      size = crystalCell;
+    } else if (u >= pondShare) {
+      lq.x -= blockSize.x * pondShare;
+      size = evapCell;
     }
     vec2 cell = floor(lq / size);
     vec2 e = min(fract(lq / size), 1.0 - fract(lq / size)) * size;
     float inner = 1.0 - smoothstep(0.3, 0.7, min(e.x, e.y));
-    float bund = max(rim, u >= ${SALT_FIELD.pond.toFixed(3)} ? inner : 0.0);
+    float bund = max(rim, u >= pondShare ? inner * step(rimInset, edge) : 0.0);
     // each bed's stage in the work (saltworks.ts saltStage is its twin)
-    float stage = fract(cell.x * 0.618 + cell.y * 0.29 + 0.11);
+    float stage = fract(cell.x * 0.618 + cell.y * 0.29 + 0.11 + farmSeed);
     vec3 work;
     float wet;
-    if (u < ${SALT_FIELD.pond.toFixed(3)}) {
-      // the settling pond
+    bool pond = u < pondShare;
+    if (pond) {
+      // the settling pond: its water is the water's own, all year
       work = vec3(0.11, 0.115, 0.085);
-      wet = 1.0;
-    } else if (u < ${SALT_FIELD.evaporation.toFixed(3)}) {
+      wet = 0.0;
+    } else if (u < evapShare) {
       // evaporation beds: brine over mud, browner where it is new, greyer and greener as it thickens, a few
       // drying out with salt riming their floors
       work = mix(vec3(0.16, 0.145, 0.105), vec3(0.15, 0.165, 0.135), stage);
@@ -399,15 +422,18 @@ ${SPLAT_COLOR}
       }
       panW = 1.0;
     }
+    // out of the season the floors lie bare and dark under the rains' water (which the water itself draws)
     vec3 pc = mix(brackish, work, working);
-    float water = mix(1.0, wet, working) * step(0.0, edge);
-    // the bunds: grey clay, rimed white with salt where the brine laps them while the farm works
+    float water = wet * working * (1.0 - uSaltWet) * step(rimInset, edge);
+    // the bunds: grey clay, rimed white with salt where the brine laps them while the farm works; an old farm's
+    // embankment grassed over
     vec3 bundC = mix(clay, vec3(0.5, 0.49, 0.46), working * 0.5 * smoothstep(0.6, 0.95, bund) * vnoise(q * 4.0));
+    bundC = mix(bundC, mix(vec3(0.09, 0.15, 0.05), vec3(0.14, 0.13, 0.075), uSeasonA.y) * (0.85 + 0.3 * vnoise(q * 0.9)), grassy * rim);
     pc = mix(pc, bundC, max(bund, 1.0 - step(0.0, edge)));
     water *= 1.0 - bund;
-    // the feeder channel runs with the river's water whatever the season
-    pc = mix(pc, brackish, channel);
-    water = max(water, channel);
+    // the feeder ditch runs with the creek's water whatever the season
+    pc = mix(pc, brackish, ditch);
+    water = max(water, ditch);
     diffuseColor.rgb = mix(diffuseColor.rgb, pc, salt);
     float brine = water * salt;
     panW *= salt * (1.0 - bund);

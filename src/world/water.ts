@@ -25,9 +25,9 @@ import { EDGE_MARGIN, GLSL_COMMON } from '../render/glsl';
 import { HERO_HULL, HERO_SINK, hullWaterlineGlsl } from './hull';
 import { RIPPLE_GLSL, type FieldUniforms, type RippleUniforms } from './ripples';
 import { shipWakeGlsl, wakeGlsl } from './wake';
-import { OPEN_SEA, SHELTERED, swellGlsl, waveHeightLodGlsl, waveSlopeLodGlsl } from './waves';
-import { PONDS, WATER_LEVEL, WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, eachWaterwayPoint, inlandWaterAt, meanWaterLevelAt, pondReach, terrainHeight, waterLevelAt, waterRise, waterwayAt } from './geography';
-import { WORLD } from './plan';
+import { INLAND, OPEN_SEA, SHELTERED, SHOAL_DEPTH, swellGlsl, waveHeightLodGlsl, waveSlopeLodGlsl } from './waves';
+import { PONDS, WATER_LEVEL, WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, eachWaterwayPoint, inlandWaterAt, meanWaterLevelAt, pondReach, saltLocal, saltRains, terrainHeight, waterLevelAt, waterRise, waterwayAt } from './geography';
+import { SALT_FIELDS, WORLD } from './plan';
 
 /** A field's rectangle in the world (x0, z0 its corner with the least x and z; sx, sz its extent) and its texels. */
 interface FieldRect {
@@ -288,6 +288,20 @@ function levelTexture(): { texture: DataTexture; map: Vector4 } {
     inland[i] = 1;
   };
   eachWaterwayPoint(mark);
+  // the salt farms' cells, and a cell round each, hold the farm's own level, as water: the rains stand in its pans
+  // out to its embankment's inner face (the ground hides them past it), and no other water's level is carried
+  // over them (the creek's, spread over the creek's farm's corner, had cut its water short there)
+  for (const farm of SALT_FIELDS) {
+    const level = saltRains(farm);
+    for (let i = 0; i < n; i++) {
+      const c = centre(i);
+      if (Math.abs(c.x - farm.x) > farm.w + LEVEL_CELL * 2 || Math.abs(c.z - farm.z) > farm.w + LEVEL_CELL * 2) continue;
+      const { u, v } = saltLocal(c.x, c.z, farm);
+      if (Math.min(u, farm.w - u, v, farm.d - v) < -LEVEL_CELL) continue;
+      surface[i] = level;
+      inland[i] = 1;
+    }
+  }
   // carry each water's level outward, ring by ring (the nearest water's, as a breadth-first search), over
   // ground that stands above it only: on lower ground beyond a pond's bank its water would stand in the air
   const above = (j: number, level: number) => {
@@ -461,8 +475,9 @@ void main() {
   // still water carries a share of the open water's waves, and they die out on the shallows by the shore;
   // a pond's are only ripples
   float running = max(smoothstep(0.0, 0.2, length(fld.gb) * abs(uFlowScale)), fld.a);
-  float shoal = smoothstep(0.0, 0.6, depth);
-  float h = waveHeightLod(xz, spacing) * mix(${SHELTERED.toFixed(2)}, 1.0, running) * shoal * (uInland > 0.5 ? 0.15 : 1.0);
+  // (waves.ts surfaceShare is this factor's twin: what floats rides this surface)
+  float shoal = smoothstep(0.0, ${SHOAL_DEPTH.toFixed(2)}, depth);
+  float h = waveHeightLod(xz, spacing) * mix(${SHELTERED.toFixed(2)}, 1.0, running) * shoal * (uInland > 0.5 ? ${INLAND.toFixed(2)} : 1.0);
   // toward the open Bay the wind's waves stand higher, and the swell rolls in, rising over the shallows
   if (uInland < 0.5) {
     float open = seaExposure(xz);
@@ -498,6 +513,7 @@ uniform vec4 uField;
 uniform sampler2D tFieldWide;
 uniform vec4 uFieldWide;
 uniform vec4 uBoat;      // x, z, heading, speed through the water
+uniform vec4 uBoatHull;  // her hull's frame: the height of its zero, its pitch (rotX) and roll (rotZ)
 uniform vec4 uOar;       // the paddle's blade in the boat's frame (x across, z along), how hard it pulls, how deep it is (0..1)
 uniform vec4 uSwirl;     // where the blade last came out (world x, z), seconds since, how hard it had pulled
 ${SHIP_UNIFORMS}
@@ -649,8 +665,12 @@ void main() {
   vec2 bd = wp.xz - uBoat.xy;
   vec2 q = vec2(dot(bd, rt), dot(bd, fw));
   float sAlong = q.y / ${(HERO_HULL.len / 2).toFixed(3)};
-  // no river inside the boat: its floorboards sit just above the waterline
-  if (abs(sAlong) < 1.0 && abs(q.x) < hullHalfBeamAtWater(sAlong) * 0.96) discard;
+  // no river inside the boat (its floorboards sit just above the waterline): cut where the surface meets her
+  // hull as she heaves, pitches and heels on it, at the surface's height in her own frame (a cut fixed at
+  // her waterline at rest let the water into her lee side as she heeled, and left a hole beside her weather side)
+  float hullY = wp.y - uBoatHull.x - q.x * uBoatHull.z + q.y * uBoatHull.y;
+  float hullHalf = abs(sAlong) < 1.0 ? hullHalfWidth(sAlong, hullY) : 0.0;
+  if (abs(q.x) < hullHalf * 0.96) discard;
   float boatSpd = clamp(uBoat.w / 2.0, 0.0, 1.4);
 
   vec4 fld = waterField(wp.xz);
@@ -690,7 +710,7 @@ void main() {
   // the wind's waves the boat and the floating plants ride (see waves.ts), as the surface stands on them,
   // damped where the water is sheltered and dying out on the shallows; under a gust front the ripples
   // darken and roughen the water (cat's paws)
-  float shoal = smoothstep(0.0, 0.6, depth);
+  float shoal = smoothstep(0.0, ${SHOAL_DEPTH.toFixed(2)}, depth);
   float footprint = max(length(dFdx(wp.xz)), length(dFdy(wp.xz)));
   slope += waveSlopeLod(wp.xz, footprint) * mix(${SHELTERED.toFixed(2)}, 1.0, running) * shoal;
   // toward the open Bay: the wind's waves higher, the swell, and where it breaks over the shallows the surf
@@ -739,7 +759,8 @@ void main() {
 
   float foam = whitecaps * 0.6 * running + rainWhite * 0.6;
   // in a strong wind the highest crests break, white for a moment in ragged patches, streaked away downwind
-  float crest = smoothstep(0.4, 0.8, vWave / max(uSea.x, 0.02));
+  // (measured against the waves this water carries: inland, INLAND's share of the open water's)
+  float crest = smoothstep(0.4, 0.8, vWave / max(uSea.x * (uInland > 0.5 ? ${INLAND.toFixed(2)} : 1.0), 0.004));
   if (crest > 0.0) {
     vec2 cq = vec2(dot(wp.xz, vec2(-uWind.y, uWind.x)) * 4.0, dot(wp.xz, uWind.xy) * 1.3 - uTime * 1.5);
     float rag = vnoise(cq) * 0.6 + vnoise(cq * 2.9 + 1.7) * 0.4;
@@ -747,7 +768,7 @@ void main() {
   }
   // water lapping along the hull at the waterline, livelier with way on
   if (abs(sAlong) < 1.0) {
-    float edge = abs(q.x) - hullHalfBeamAtWater(sAlong);
+    float edge = abs(q.x) - hullHalf;
     foam += smoothstep(0.28, 0.0, edge) * (0.3 + 0.4 * boatSpd) * smoothstep(0.35, 0.7, vnoise(vec2(q.y * 3.0 - uTime * 1.5, q.x * 9.0)));
   }
   if (q.y > -180.0 && q.y < 12.0 && abs(q.x) < 75.0) {
@@ -839,7 +860,7 @@ void main() {
   float nh = max(dot(N, H), 0.0);
   col += uKeyColor * (pow(nh, 1100.0) * 26.0 + pow(nh, 160.0) * 0.7) * step(0.0, uKeyDir.y) * (1.0 - uOvercast) * sunlit;
   // and the lamps' after dark
-  if (uNight > 0.01) col += lampGlint(uLamp0, uLampColor0, wp, N, V) + lampGlint(uLamp1, uLampColor1, wp, N, V) + lampGlint(uLamp2, uLampColor2, wp, N, V);
+  if (uNight > 0.01) col += lampGlint(uLamp0, uLampColor0, wp, N, V) + lampGlint(uLamp1, uLampColor1, wp, N, V) + lampGlint(uLamp2, uLampColor2, wp, N, V) + lampGlint(uLamp3, uLampColor3, wp, N, V);
   col *= sheet;
   alpha *= sheet;
 
@@ -879,6 +900,8 @@ export interface Water {
   warm(x: number, z: number, until: number): boolean;
   /** The hero boat: x, z, heading, speed through the water. */
   boat: Vector4;
+  /** Her hull's frame as drawn: the height of its zero, its pitch and its roll (the group's rotation x and z). */
+  hull: Vector4;
   /** Its paddle blade in the boat's frame (x across, z along), how hard it pulls, how deep it is (0..1). */
   oar: Vector4;
   /** The eddy the blade left where it last came out: world x, z, seconds since, strength. */
@@ -910,6 +933,7 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
   G.tLevel.value = levels.texture;
   G.uLevelMap.value.copy(levels.map);
   const boat = new Vector4();
+  const hull = new Vector4();
   const oar = new Vector4();
   const swirl = new Vector4(0, 0, 99, 0);
   const nets: NetRipples = { a: [new Vector4(), new Vector4()], b: [new Vector4(), new Vector4()] };
@@ -955,6 +979,7 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
       },
     },
     uBoat: { value: boat },
+    uBoatHull: { value: hull },
     uOar: { value: oar },
     uSwirl: { value: swirl },
     uNetA0: { value: nets.a[0] },
@@ -1006,6 +1031,7 @@ export function buildWater(reflection: Texture, textureMatrix: Matrix4, maxAniso
       G.uMirrorLevel.value = mirrorLevelAt(x, z);
     },
     boat,
+    hull,
     oar,
     swirl,
     touch,

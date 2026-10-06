@@ -12,6 +12,8 @@ import { JOURNEY, journeyAt, journeyFrame, terrainHeight, waterLevelAt } from '.
 // again, dissolving each way between their view and the film's. The frame is letterboxed and each place is named.
 // Nothing may appear in a shot: the ground, grass and crops along the next shot's path are built a little each
 // frame through the last seconds of the one before.
+// It also plays a visit (the map's places, rig/visits.ts): a place's own few shots in the viewer's world (no
+// world of their own), joined by the same dissolves, from the viewer's view and back to it after the last.
 
 /** A scene's world: the day of the year, the hour (or so long before or after that day's sunrise, sunset or moonrise), the moon, the weather and the wind. */
 export interface SceneWorld {
@@ -158,7 +160,8 @@ export interface Scene {
    * the whole scene.
    */
   shot?: boolean;
-  world: SceneWorld;
+  /** Its world; a visit's shots have none (they are seen in the viewer's own). */
+  world?: SceneWorld;
   /** Where the boat is on her journey as the scene opens, for scenes in her waters; else she goes on. */
   journey?: number;
   /**
@@ -246,6 +249,8 @@ export class Director {
   private index = 0;
   private time = 0;
   private readonly scenes: readonly Scene[];
+  /** A visit's shots while one plays (the map's), else null: the film's scenes. */
+  private visitShots: readonly Scene[] | null = null;
   private readonly stage: Stage;
   private readonly pos = new Vector3();
   private readonly look = new Vector3();
@@ -295,9 +300,19 @@ export class Director {
     this.leavingView = { camera: this.outCamera, boat: null, dof: { focus: 10, aperture: 0 } };
   }
 
-  /** The tour is on. */
+  /** The tour, or a visit, is on. */
   get active(): boolean {
     return this.playing;
+  }
+
+  /** A visit from the map is playing (not the film). */
+  get visiting(): boolean {
+    return this.playing && this.visitShots !== null;
+  }
+
+  /** What is playing: a visit's shots, or the film's scenes. */
+  private get list(): readonly Scene[] {
+    return this.visitShots ?? this.scenes;
   }
 
   /** Which scene is showing (from 0, its shots counted as one), and how many there are. */
@@ -323,7 +338,7 @@ export class Director {
    * then would drop the half-faded shot at once).
    */
   skip(step: number): void {
-    if (!this.playing) return;
+    if (!this.playing || this.visitShots) return;
     if (this.out) {
       this.queued = step;
       return;
@@ -347,9 +362,23 @@ export class Director {
 
   /** Starts the tour: the viewer's view dissolves into the first scene, both moving. */
   start(camera: PerspectiveCamera): void {
-    if (this.playing) return;
+    if (this.playing && !this.visitShots) return;
+    if (this.visitShots) this.stop(true);
     this.leaveView(camera);
     this.stage.save();
+    this.playing = true;
+    this.enter(0);
+  }
+
+  /**
+   * Plays a visit: the viewer's view dissolves into the place's first shot, both moving, and after its last the
+   * camera dissolves back to the viewer's view. The viewer's world goes on as it is (the film playing is left at
+   * once, its world put back). The first shot may put the boat on her way (`journey`).
+   */
+  visit(shots: readonly Scene[], camera: PerspectiveCamera): void {
+    if (this.playing) this.stop(true);
+    this.leaveView(camera);
+    this.visitShots = shots;
     this.playing = true;
     this.enter(0);
   }
@@ -361,9 +390,12 @@ export class Director {
    */
   stop(immediate = false, restore = true): void {
     if (!this.playing) return;
+    // a visit kept the viewer's world: nothing to put back
+    if (this.visitShots) restore = false;
     this.playing = false;
     this.queued = 0;
     if (immediate) {
+      this.visitShots = null;
       this.finishLeaving();
       this.dissolve = 0;
       this.captionAlpha = 0;
@@ -372,7 +404,8 @@ export class Director {
       return;
     }
     this.leaveScene();
-    this.stage.restore();
+    this.visitShots = null;
+    if (restore) this.stage.restore();
     if (this.out) this.out.moved = true;
     // the hand-back is a full dissolve, whichever shot it leaves
     this.dissolveFor = DISSOLVE;
@@ -395,22 +428,26 @@ export class Director {
         this.queued = 0;
         this.skip(step);
       }
-      const scene = this.scenes[this.index];
+      const scene = this.list[this.index];
       this.time += dt;
       this.sceneTime += dt;
-      // the end of the shot: on into the next, this one going on beneath it as it dissolves away
+      // the end of the shot: on into the next, this one going on beneath it as it dissolves away; after a visit's
+      // last, back to the viewer's view
       if (this.time >= scene.seconds) {
-        this.leaveScene();
-        this.enter((this.index + 1) % this.scenes.length);
+        if (this.visitShots && this.index === this.visitShots.length - 1) this.stop();
+        else {
+          this.leaveScene();
+          this.enter((this.index + 1) % this.list.length);
+        }
       }
-      this.play(dt, t, camera);
+      if (this.playing) this.play(dt, t, camera);
     }
     this.updateLeaving(dt, t, camera);
     this.letterbox = damp(this.letterbox, this.playing ? 1 : 0, 2.2, dt);
   }
 
   private play(dt: number, t: number, camera: PerspectiveCamera): void {
-    const scene = this.scenes[this.index];
+    const scene = this.list[this.index];
     this.frameCamera(scene, t, camera);
     // a caption still up as its scene is left (the viewer skipped on) fades before the next one's comes
     if (scene.caption !== this.caption && this.captionAlpha > 0.02) this.captionAlpha = damp(this.captionAlpha, 0, 9, dt);
@@ -418,11 +455,12 @@ export class Director {
       this.caption = scene.caption;
       this.captionAlpha = scene.caption ? clamp(Math.min((this.time - 1.2) / 0.9, (scene.seconds - 1.6 - this.time) / 0.9), 0, 1) : 0;
     }
-    if (scene.world.sweep && !scene.shot) this.stage.sweep(sweepAt(scene.world.sweep, clamp(this.time / scene.seconds, 0, 1)));
-    if (!scene.shot) this.rainAt(scene.world, clamp(this.time / scene.seconds, 0, 1));
-    // the last seconds: build the next shot's places ahead, a little each frame
-    if (this.time > scene.seconds - WARM_AHEAD && !this.aheadDone) {
-      this.ahead ??= this.pathOf(this.scenes[(this.index + 1) % this.scenes.length], true);
+    if (scene.world?.sweep && !scene.shot) this.stage.sweep(sweepAt(scene.world.sweep, clamp(this.time / scene.seconds, 0, 1)));
+    if (scene.world && !scene.shot) this.rainAt(scene.world, clamp(this.time / scene.seconds, 0, 1));
+    // the last seconds: build the next shot's places ahead, a little each frame (after a visit's last, none)
+    const last = this.visitShots !== null && this.index === this.visitShots.length - 1;
+    if (this.time > scene.seconds - WARM_AHEAD && !this.aheadDone && !last) {
+      this.ahead ??= this.pathOf(this.list[(this.index + 1) % this.list.length], true);
       this.aheadDone = this.stage.warm(this.ahead);
     }
   }
@@ -430,6 +468,7 @@ export class Director {
   /** For stills: into a scene, at a point within it (its world set, the camera posed). */
   cue(index: number, u: number, camera: PerspectiveCamera): void {
     this.finishLeaving();
+    this.visitShots = null;
     this.playing = true;
     const i = ((index % this.scenes.length) + this.scenes.length) % this.scenes.length;
     // a later shot of a scene: the scene opened (its cues as far on), and the boat on as far as she would have come by then
@@ -444,12 +483,28 @@ export class Director {
     }
     const scene = this.scenes[this.index];
     this.time = scene.seconds * clamp(u, 0, 1);
-    if (scene.world.sweep && !scene.shot) this.stage.sweep(sweepAt(scene.world.sweep, clamp(u, 0, 1)));
-    if (!scene.shot) this.rainAt(scene.world, clamp(u, 0, 1));
+    if (scene.world?.sweep && !scene.shot) this.stage.sweep(sweepAt(scene.world.sweep, clamp(u, 0, 1)));
+    if (scene.world && !scene.shot) this.rainAt(scene.world, clamp(u, 0, 1));
     this.letterbox = 1;
     this.frameCamera(scene, 0, camera);
     this.caption = scene.caption;
     this.captionAlpha = scene.caption ? 1 : 0;
+  }
+
+  /** For stills: into a visit's shot `index`, `u` through it (the boat put where its first shot puts her). */
+  cueVisit(shots: readonly Scene[], index: number, u: number, camera: PerspectiveCamera): void {
+    this.finishLeaving();
+    this.visitShots = shots;
+    this.playing = true;
+    const i = clamp(Math.round(index), 0, shots.length - 1);
+    const at = shots[i].seconds * clamp(u, 0, 1);
+    this.enter(0, i === 0 ? at : 0);
+    if (i > 0) this.enter(i, at);
+    this.time = at;
+    this.letterbox = 1;
+    this.frameCamera(shots[i], 0, camera);
+    this.caption = shots[i].caption;
+    this.captionAlpha = shots[i].caption ? 1 : 0;
   }
 
   /** A scene's own rain and wet at `u` through it, if it has them. */
@@ -458,7 +513,7 @@ export class Director {
   }
 
   private enter(index: number, at = 0): void {
-    const scene = this.scenes[index];
+    const scene = this.list[index];
     this.index = index;
     this.time = 0;
     if (!scene.shot) this.sceneTime = 0;
@@ -466,7 +521,7 @@ export class Director {
     this.dissolveFor = scene.shot ? SHOT_DISSOLVE : DISSOLVE;
     // a further shot of the same scene: its world goes on as it is
     if (!scene.shot) {
-      this.stage.set(scene.world);
+      if (scene.world) this.stage.set(scene.world);
       if (scene.journey !== undefined) this.stage.placeBoat(scene.journey);
     }
     scene.begin?.(this.stage, at);
@@ -483,7 +538,7 @@ export class Director {
 
   /** Leaves the scene now playing: its camera goes on as it was going, its boat on her way, in its kept world. */
   private leaveScene(): void {
-    const scene = this.scenes[this.index];
+    const scene = this.list[this.index];
     const o = this.beginLeaving();
     o.scene = scene;
     o.boat.copy(this.stage.boatPos);

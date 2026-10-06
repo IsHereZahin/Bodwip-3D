@@ -6,7 +6,7 @@ import { SegmentIndex } from '../core/segmentIndex';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { ROAD_SURFACES, roadAtlas } from '../render/textures';
-import { HOMESTEAD_MOUNDS, PONDS, pondReach, shapePoint } from './layout';
+import { HOMESTEAD_MOUNDS, PONDS, local, pondReach, shapePoint } from './layout';
 import { PLAIN, ROAD_RAISE, ROADS, type Pt, type RoadPoint, type RoadSpec } from './plan';
 import { bridgeEnds, sankoEnds, type Point2 } from './sites';
 import { KHAL, RIVER, charShare, riverLevee, waterwayAt } from './waterways';
@@ -187,10 +187,14 @@ function wet(x: number, z: number): boolean {
 
 /**
  * Every homestead is reached by a way: one that no designed way passes close by gets a footpath of its own,
- * from its yard to the nearest point of the ways, as long as it need not cross water to get there.
+ * to the nearest point of the ways, as long as it need cross no water. It leaves the yard by its open front
+ * (the houses stand round its other three sides: village.ts homestead) and, where the way lies behind the
+ * mound, goes on round the mound's side, the nearer one unless that is wet. (Struck straight from the
+ * mound's middle, the old paths ran through the houses.)
  */
 {
   const designed = REACHES.length;
+  const point = (p: Point2): Pt => [p.x, p.z];
   for (const m of HOMESTEAD_MOUNDS) {
     let best = { d: Infinity, x: 0, z: 0 };
     for (let k = 0; k < designed; k++) {
@@ -205,16 +209,19 @@ function wet(x: number, z: number): boolean {
     }
     // a way already passes by the mound, or none is near enough to be worth a path
     if (best.d < Math.max(m.hu, m.hv) + 6 || best.d > 160) continue;
-    const from = shapePoint(m, 0, 0);
-    const dir = Math.atan2(best.x - from.x, best.z - from.z);
-    const start = { x: from.x + Math.sin(dir) * Math.min(m.hu, m.hv) * 0.4, z: from.z + Math.cos(dir) * Math.min(m.hu, m.hv) * 0.4 };
-    const len = Math.hypot(best.x - start.x, best.z - start.z);
-    let dry = true;
-    for (let d = 0; d <= len && dry; d += 2) dry = !wet(start.x + ((best.x - start.x) * d) / len, start.z + ((best.z - start.z) * d) / len);
-    if (!dry) continue;
-    // a little bent, as a path worn across the fields is
-    const mid: Pt = [(start.x + best.x) / 2 + (best.z - start.z) * 0.08, (start.z + best.z) / 2 - (best.x - start.x) * 0.08];
-    lay(curve([[start.x, start.z], mid, [best.x, best.z]]), 0.6, 'earth', false);
+    const yard = point(shapePoint(m, m.hu * 0.3, 0));
+    const gate = point(shapePoint(m, m.hu + 2, 0));
+    const { u, v } = local(m, best.x, best.z);
+    const routes: Pt[][] =
+      u > m.hu
+        ? [[yard, gate, [best.x, best.z]]]
+        : [v >= 0 ? 1 : -1, v >= 0 ? -1 : 1].map((side) => [yard, gate, point(shapePoint(m, m.hu + 2, side * (m.hv + 3))), point(shapePoint(m, Math.max(u, -m.hu - 3), side * (m.hv + 3))), [best.x, best.z]]);
+    for (const route of routes) {
+      const pts = curve(route);
+      if (pts.some(([x, z]) => wet(x, z))) continue;
+      lay(pts, 0.6, 'earth', false);
+      break;
+    }
   }
 }
 

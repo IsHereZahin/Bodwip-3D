@@ -5,9 +5,10 @@ import { Rng } from '../core/rng';
 import { MeshBuilder, card, mixRgb, rgb, scaleRgb, slab, taperedTube, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { brickTexture, glowTexture, inscriptionTexture, leafClusterTexture, plasterTexture, tinTexture, weaveTexture } from '../render/textures';
-import { MOUNDS, PONDS, WATER_LEVEL, bankAt, pondReach, shapePoint, terrainHeight, type Mound, type Pond } from './geography';
+import { GRAND_GHAT, MOUNDS, PONDS, WATER_LEVEL, bankAt, grandGhat as grandGhatPlan, pondReach, shapePoint, terrainHeight, type Mound, type Pond } from './geography';
+import { ghatPoint, groundOver } from './ghatFlight';
 import { Frame } from './houses';
-import { TEA_STALL } from './plan';
+import { HUB_GHAT, TEA_STALL } from './plan';
 
 // The village's landmarks, each built where the design sets it (world/plan.ts) on its own raised ground:
 // - the zamindar house: two storeys of lime-plastered brick behind a colonnade on both floors, a balustrade
@@ -36,7 +37,7 @@ interface Parts {
   lamps: Vector3[];
   /** Openings lit from within after dark (the mosque's doors and windows): dark by day. */
   glow: MeshBuilder;
-  /** The lamps whose light falls on what is round them (world): where, how far (m), how strong. At most three (globals.ts uLamp0..2). */
+  /** The lamps whose light falls on what is round them (world): where, how far (m), how strong. At most four (globals.ts uLamp0..3). */
   lights: { at: Vector3; reach: number; strength: number }[];
   /** Small glass lanterns (their glass's middle, world), and their frames' turn. */
   lanterns: { at: Vector3; ry: number }[];
@@ -151,7 +152,8 @@ function weathered(base: RGB, y: number, top: number, rng: Rng): RGB {
 
 // ---------- the zamindar house ----------
 
-function zamindarHouse(p: Parts, m: Mound, rng: Rng): { front: Vector3; stepsAt: { x: number; z: number } } {
+/** The house, 3 m behind its compound's middle and facing the river; its front steps' foot 14 m out from the middle, where the brick walk up from its ghat ends (plan.ts ROADS). */
+function zamindarHouse(p: Parts, m: Mound, rng: Rng): void {
   const at = shapePoint(m, 3, 0);
   const y = terrainHeight(at.x, at.z) - 0.1;
   const f = new Frame(at.x, y, at.z, m.face);
@@ -279,62 +281,60 @@ function zamindarHouse(p: Parts, m: Mound, rng: Rng): { front: Vector3; stepsAt:
       card(p.leaves, q, new Vector3(Math.cos(a + 1.2) * s, 0, Math.sin(a + 1.2) * s), new Vector3(0, s, 0), up, scaleRgb([1, 1, 1], rng.range(0.85, 1.1)));
     }
   }
-  return { front: f.p(0, 0, front + V + 2.8), stepsAt: shapePoint(m, 3 + front + V + 2.8, 0) };
 }
 
-/** Wide brick steps from the water up the bank, flanked at the top by two little pavilions; a brick walk from them to the house. */
-function grandGhat(p: Parts, m: Mound, house: { x: number; z: number }, rng: Rng): void {
-  const ahead = shapePoint(m, m.hu + 16, 0);
-  const b = bankAt(ahead.x, ahead.z);
-  if (!b) return;
-  const ux = Math.sin(b.up);
-  const uz = Math.cos(b.up);
-  const cx = Math.cos(b.up);
-  const cz = -Math.sin(b.up);
-  const at = (d: number, s = 0) => ({ x: b.x + ux * d + cx * s, z: b.z + uz * d + cz * s });
-  const width = 8;
-  const reach = 9;
-  const tread = 0.45;
+/**
+ * The grand ghat (laid out in geography.ts grandGhat): broad lime-plastered steps from a landing at the bank's
+ * top down into the river, each a solid block down into the bank, between walls that step down with them (and
+ * hold the bank back where the flight is cut into it); two little pavilions (chandni) beside the landing, on its
+ * level. (The brick walk up from the landing to the house is a way: plan.ts ROADS.)
+ */
+function grandGhat(p: Parts, rng: Rng): void {
+  const gg = grandGhatPlan();
+  if (!gg) return;
+  const { site, steps, half } = gg;
+  const { width, wall, pavilion } = GRAND_GHAT;
+  // lime, darkening and greening toward the water and below the rains' high-water mark
   const tone = (yy: number) => scaleRgb(mixRgb(LIME, rgb('#5a5444'), 1 - Math.min(1, Math.max(0, (yy - WATER_LEVEL + 0.2) / 1.2))), rng.range(0.9, 1.04));
-  const n = Math.round((reach + 1.6) / tread);
-  let topY = 0;
-  for (let i = 0; i < n; i++) {
-    const d = reach - i * tread;
-    let yy = -Infinity;
-    for (const s of [-width / 2, 0, width / 2]) {
-      const q = at(d, s);
-      yy = Math.max(yy, terrainHeight(q.x, q.z));
+  const lowest = (d0: number, d1: number, s0: number, s1: number) => groundOver(site, d0, d1, s0, s1, terrainHeight).low;
+  const highest = (d0: number, d1: number, s: number) => groundOver(site, d0, d1, s, s, terrainHeight).high;
+  const land = steps[0].y;
+  steps.forEach((st, i) => {
+    const run = st.back - st.front;
+    const mid = ghatPoint(site, (st.front + st.back) / 2);
+    // the tread's block, down into the bank (or the river's bed) under it
+    const bottom = Math.min(lowest(st.front, st.back, -width / 2, width / 2), st.y) - 0.5;
+    slab(p.plaster, mid.x, (st.y + bottom) / 2, mid.z, width, st.y - bottom, run + 0.02, site.up, tone(st.y), 2);
+    // a worn nosing at the tread's edge, a shade lighter
+    if (i > 0) {
+      const edge = ghatPoint(site, st.front + 0.05);
+      slab(p.plaster, edge.x, st.y - 0.035, edge.z, width, 0.07, 0.12, site.up, scaleRgb(tone(st.y), 1.06), 2);
     }
-    yy = Math.max(yy + 0.06, WATER_LEVEL - 0.5);
-    if (i === 0) topY = yy;
-    const q = at(d);
-    slab(p.plaster, q.x, yy - 0.45, q.z, width, 0.9, tread + 0.04, b.up, tone(yy), 2);
+    // the walls either side: a parapet over the flight, a low kerb along the landing; and wherever the bank
+    // beside stands higher, up to it, holding it back
     for (const side of [-1, 1]) {
-      const w = at(d, side * (width / 2 + 0.3));
-      slab(p.plaster, w.x, yy - 0.15, w.z, 0.6, 1.0, tread + 0.04, b.up, tone(yy + 0.2), 2);
+      const s = side * (width / 2 + wall / 2);
+      const beside = highest(st.front, st.back, side * (half + 0.4));
+      const top = Math.max(st.y + (i === 0 ? 0.28 : 0.6), beside + 0.12);
+      const foot = Math.min(lowest(st.front, st.back, s - wall / 2, s + wall / 2), st.y) - 0.5;
+      const w = ghatPoint(site, (st.front + st.back) / 2, s);
+      slab(p.plaster, w.x, (top + foot) / 2, w.z, wall, top - foot, run + 0.02, site.up, tone(top - 0.3), 2);
+      slab(p.plaster, w.x, top + 0.04, w.z, wall + 0.1, 0.08, run + 0.03, site.up, scaleRgb(tone(top), 1.05), 2);
     }
-  }
-  // the pavilions (chandni) at the top: four columns under a flat roof with its cornice
-  const pf = new Frame(0, 0, 0, b.up);
+  });
+  // the pavilions (chandni) either side of the landing, their floors on its level: four columns under a flat roof with its cornice
   for (const side of [-1, 1]) {
-    const c = at(reach + 1.6, side * (width / 2 + 1.6));
-    const yy = terrainHeight(c.x, c.z);
-    const f = new Frame(c.x, yy, c.z, b.up);
-    f.box(p.plaster, 0, 0.3, 0, 3, 0.7, 3, tone(0.3), 2);
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) column(f, p.plaster, sx * 1.15, sz * 1.15, 0.65, 3.4, 0.16, tone(2));
-    f.box(p.plaster, 0, 3.55, 0, 3.4, 0.3, 3.4, tone(3.5), 2);
-    f.box(p.plaster, 0, 3.8, 0, 2.8, 0.25, 2.8, tone(3.8), 2);
+    const d = steps[0].back - pavilion / 2 - 0.3;
+    const s = side * (half + pavilion / 2 + 0.3);
+    const c = ghatPoint(site, d, s);
+    const ground = lowest(d - pavilion / 2, d + pavilion / 2, s - pavilion / 2, s + pavilion / 2);
+    const floor = Math.max(land, highest(d - pavilion / 2, d + pavilion / 2, s) + 0.1);
+    const f = new Frame(c.x, floor, c.z, site.up);
+    f.box(p.plaster, 0, (ground - 0.3 - floor) / 2, 0, pavilion, floor - ground + 0.3, pavilion, tone(floor), 2);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) column(f, p.plaster, sx * (pavilion / 2 - 0.35), sz * (pavilion / 2 - 0.35), 0, 2.75, 0.16, tone(floor + 2));
+    f.box(p.plaster, 0, 2.9, 0, pavilion + 0.4, 0.3, pavilion + 0.4, tone(floor + 3), 2);
+    f.box(p.plaster, 0, 3.15, 0, pavilion - 0.2, 0.25, pavilion - 0.2, tone(floor + 3.3), 2);
   }
-  void pf;
-  // a brick walk from the top of the steps to the house's
-  const from = at(reach + 0.6);
-  const len = Math.hypot(house.x - from.x, house.z - from.z);
-  const yaw = Math.atan2(house.x - from.x, house.z - from.z);
-  for (let d = 0; d < len; d += 1.2) {
-    const q = { x: from.x + ((house.x - from.x) * d) / len, z: from.z + ((house.z - from.z) * d) / len };
-    slab(p.brick, q.x, terrainHeight(q.x, q.z) - 0.06, q.z, 2.6, 0.2, 1.24, yaw, scaleRgb(TERRACOTTA, rng.range(0.78, 0.92)), 0.6);
-  }
-  void topY;
 }
 
 /** The family's temple: a terracotta char-chala on its plinth, three arches on its front, the roof's eaves curving down to its corners. */
@@ -878,6 +878,36 @@ function mosqueGhat(p: Parts, pond: Pond, axis: { x: number; z: number; face: nu
   p.lights.push({ at: f.p(lx, ly + 0.17, 0.12), reach: 8, strength: 2 });
 }
 
+/**
+ * The village's ghat below the banyan (world/village.ts builds its steps, plan.ts HUB_GHAT): a hurricane lantern
+ * hung from a bamboo post at the back corner of its landing, where the path comes down to it. After dark its
+ * light falls on the landing, the top steps and the water, and glints on it.
+ */
+function hubLantern(p: Parts): void {
+  const site = bankAt(HUB_GHAT[0], HUB_GHAT[1]);
+  if (!site) return;
+  // (the steps are 5 m wide between walls of 0.34; the landing's back is 9.9 m up the bank: village.ts brickGhat)
+  const foot = ghatPoint(site, 10.9, -3.3);
+  const ground = terrainHeight(foot.x, foot.z);
+  const f = new Frame(foot.x, ground, foot.z, site.up);
+  const bamboo = rgb('#a39469');
+  taperedTube(p.bamboo, [f.p(0, -0.5, 0), f.p(0.02, 2.35, 0.01)], [0.045, 0.036], 6, bamboo, 1.2);
+  // its arm out over the landing, lashed to the post
+  taperedTube(p.bamboo, [f.p(-0.02, 2.2, 0), f.p(0.55, 2.24, 0)], [0.025, 0.022], 5, bamboo, 1.2);
+  // the lantern on its wire: base, corner posts round the glass, its cap and ring
+  const iron = rgb('#2e2b27');
+  const lx = 0.5;
+  const ly = 1.78;
+  taperedTube(p.bamboo, [f.p(lx, 2.22, 0), f.p(lx, ly + 0.3, 0)], [0.004, 0.004], 3, iron, 1);
+  // (as the mosque's lantern is made: its glass is the same, landmarks' lanterns)
+  f.box(p.tin, lx, ly - 0.15, 0, 0.22, 0.04, 0.22, iron, 1);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) f.box(p.tin, lx + sx * 0.095, ly, sz * 0.095, 0.02, 0.27, 0.02, iron, 1);
+  put(f, p.tin, new ConeGeometry(0.17, 0.12, 4).rotateY(Math.PI / 4), lx, ly + 0.19, 0, iron);
+  put(f, p.tin, new TorusGeometry(0.035, 0.006, 4, 10), lx, ly + 0.28, 0, iron);
+  p.lanterns.push({ at: f.p(lx, ly, 0), ry: f.ry });
+  p.lights.push({ at: f.p(lx, ly, -0.3), reach: 9, strength: 2 });
+}
+
 // ---------- the tea stall ----------
 
 function teaStall(p: Parts, rng: Rng): void {
@@ -967,14 +997,15 @@ export function buildLandmarks(): Group {
   };
   const zm = MOUNDS.find((m) => m.id === 'zamindar');
   if (zm) {
-    const house = zamindarHouse(p, zm, rng);
-    grandGhat(p, zm, house.stepsAt, rng);
+    zamindarHouse(p, zm, rng);
+    grandGhat(p, rng);
     temple(p, zm, rng);
   }
   const mm = MOUNDS.find((m) => m.id === 'mosque');
   if (mm) mosque(p, mm, rng);
   const kept = PONDS.find((k) => k.kept);
   if (mm && kept) mosqueGhat(p, kept, mosqueAxis(), rng);
+  hubLantern(p);
   const gm = MOUNDS.find((m) => m.id === 'graveyard');
   if (gm) graveyard(p, gm, rng);
   teaStall(p, rng);
@@ -1055,16 +1086,17 @@ const GLASS = patchMaterial(new MeshStandardMaterial({ color: '#e8c89a', emissiv
 /** What glows after dark, for the film's dissolves to keep each shot's own (main.ts worldLook). */
 export const NIGHT_GLOWS: readonly MeshStandardMaterial[] = [BULB, GLOW, GLASS];
 
-/** The lamps' light (globals.ts uLamp0..2): where each is is set at build; its colour, a warm white, as it darkens. */
+/** The lamps' light (globals.ts uLamp0..3): where each is is set at build; its colour, a warm white, as it darkens. */
 const LAMP_SLOTS = [
   { at: G.uLamp0, color: G.uLampColor0 },
   { at: G.uLamp1, color: G.uLampColor1 },
   { at: G.uLamp2, color: G.uLampColor2 },
+  { at: G.uLamp3, color: G.uLampColor3 },
 ];
 const LIGHTS: number[] = [];
 const LAMP_LIGHT = new Color('#ffcb95');
 
-/** The mosque's and its ghat's lamps lit as it darkens (`night` 0..1): a soft, warm glow, never harsh. */
+/** The mosque's, its ghat's and the village ghat's lamps lit as it darkens (`night` 0..1): a soft, warm glow, never harsh. */
 export function lampsGlow(night: number): void {
   const on = smoothstep(0.15, 0.7, night);
   BULB.emissiveIntensity = 2.5 * on;

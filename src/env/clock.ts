@@ -11,10 +11,15 @@ export interface SkyEvent {
   time: number;
 }
 
-/** Playback speeds the controls step through. */
-export const SPEEDS: readonly number[] = [1, 4, 16, 64];
+/**
+ * Playback speeds the controls step through, as multiples of the wall clock's: 1 is real time (the clock kept to
+ * Bangladesh's own, `Clock.live`, until the viewer turns it); faster, the sky's time-lapse.
+ */
+export const SPEEDS: readonly number[] = [1, 60, 360, 1440];
+/** The time-lapse the film's scenes run at (0.1 h of sky a second, slowing round the sky's events). */
+export const LAPSE = 360;
 
-/** Hours of sky time per real second, away from every sunrise, sunset, moonrise and moonset. */
+/** Hours of sky time per real second at `LAPSE`, away from every sunrise, sunset, moonrise and moonset. */
 const BASE_RATE = 0.1;
 /** Hours over which the clock eases into and out of a linger. */
 const RAMP = 0.25;
@@ -85,6 +90,8 @@ export class Clock {
   time: number;
   playing = true;
   speed = SPEEDS[0];
+  /** Kept to Bangladesh's own time (main.ts `follow`s it each frame) until the viewer turns the clock. */
+  live = true;
   /** Extra speed while T is held. */
   boost = 1;
   /** Moon's age (days since new moon) at time 0. */
@@ -149,11 +156,22 @@ export class Clock {
     this.playing = true;
   }
 
-  advance(dt: number): void {
-    if (this.playing) this.time += dt * this.speed * this.boost * this.rate() * HOUR;
+  /** Moves on to `hour` today, or tomorrow once it has come round past midnight: the clock kept to the wall's. */
+  follow(hour: number): void {
+    let t = this.day + hour * HOUR;
+    if (t < this.time - 0.5) t += 1;
+    else if (t > this.time + 0.5) t -= 1;
+    this.time = t;
   }
 
-  /** Hours of sky time per real second, now. */
+  advance(dt: number): void {
+    if (!this.playing) return;
+    // real time at 1; faster, the time-lapse, lingering round the sky's events
+    const hours = this.speed <= 1 ? 1 / 3600 : (this.speed / LAPSE) * this.rate();
+    this.time += dt * this.boost * hours * HOUR;
+  }
+
+  /** Hours of sky time per real second at `LAPSE`, now. */
   rate(): number {
     let r = BASE_RATE;
     for (const ev of this.events()) {

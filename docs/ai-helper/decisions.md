@@ -18,9 +18,9 @@ These are the user's decisions that still bind the work, and the reasons for the
 - **Size:** the world is cut to ≈2.15 × 1.65 km, with a ≈230 m corridor either side of the waters. Beyond that is haze and the backdrop's hills; nothing grows there and the free camera can't go there. The user found the open fields beyond empty and unneeded, and wants the project kept light.
 - **Added at the user's request:**
   - steep wooded hills right by the water (from their reference photos);
-  - a map panel to fly or sail to places;
+  - the map (redesigned 2026-10-06): every place to see on it, each shown in its own short sequence of shots;
   - the railway with Bangladesh Railway's intercity, after the train in their own history project;
-  - the salt field with its tidal creek;
+  - the salt farms with their tidal creek: several, none alike (2026-10-06);
   - the fisherman's cast net;
   - the harvest;
   - the date-palm sap.
@@ -63,11 +63,11 @@ These are the user's decisions that still bind the work, and the reasons for the
   - Wet ground is darker and a little glossy. Puddles stand where water collects.
   - Roofs, decks, wood and leaves look wet.
   - A heavier rain means more of everything: drops, rings, splashes, wetness, wind, mist and sound.
-- **Picks:** the world starts at today's date. A picked season or moon holds for one minute (`SESSION_MS`), then eases back to today. The year turns as a time-lapse, and every change is smooth.
+- **Picks:** a picked season or moon holds for one minute (`SESSION_MS`), then eases back to the journey's season and the real moon. Every change is smooth.
 
 ## The film (what the user judges the work by)
 
-- **Format:** a ≈5-minute tour (`C`, the dock's button, or after idling). It tells a year in the village as a story in five movements, round the young majhi.
+- **Format:** a ≈5-minute tour (`C` or the dock's button; it no longer starts by itself: the journey left alone is the cinematic experience). It tells a year in the village as a story in five movements, round the young majhi.
 - **Each scene:**
   - in the season where it means most;
   - shot as a cinematographer would (shot size, height, foreground, light direction);
@@ -96,6 +96,27 @@ These are the user's decisions that still bind the work, and the reasons for the
   - It may run longer than the other seasons, and the rain must not be one loop throughout.
 - **Verify every scene from its real camera path** (see verification.md). Pop-in, clipping, freezes, black artefacts and murky darkness are bugs.
 
+## The experience (2026-10-06)
+
+- **Bangla identity throughout,** premium and cinematic, never a generic 3D site or SaaS.
+- **The loader:** a still of this world itself (the bil at sunset, softened and darkened), never an illustration or a stock photo; in its middle the logo, which is the loader: its sun rises as the village is built, the river's light shimmers, the boat rides. Under it Bangladesh's season, date and hour now.
+- **The logo** (the user chose it from several, after asking for Bangla's red and green): Bangladesh's red sun on her green, set toward the hoist as on her flag, a river sweeping across under it in white, and a country boat with her majhi crossing it; the word নদী under it. The same mark is the loader (its sun rises out of the river as the village is built, the river's lines run), the favicon (in bolder strokes), the app icons, the corner brand and the help's header.
+- **The opening:** after loading, not the boat at once: a drone's descent from high over the river, over the village's bank, down to the boat; then her journey begins. 22 s (2026-10-06: the user found 32 s a little long and saw the camera catch on trees). It eases in and out, never comes near a tree or a branch, and has no visible correction. Low over the open water ahead of her, it lets her come past and turns round to behind her: the old low swing round her went through the bank's trees.
+- **Time:** Bangladesh's real date and hour now (the user's choice), the clock running in real time (the user's choice: opened at night, the journey is at night). The time-lapse speeds and the timeline stay for the viewer; `0` or `এখন` returns to now.
+- **Seasons on the journey:** she sets out in today's season and the year turns as she goes, in the calendar's order round to today's (the user's choice); the rains and Sharat have the longest stretches; the turns are smooth, never a slideshow.
+- **The camera on the journey:** never a film or a scripted move by itself. Left alone a while it turns slowly to what is beside her (a ghat, the mosque, the zamindar house, a pond, the fields, the bil, a crossing ahead), staying with her, she in the foreground, and comes back; the viewer can take it at any moment (2026-10-06, replacing moves off the boat).
+- **The map and its places:** a professional, polished map with every important place on it; a place picked is shown in its own sequence, as its place asks (the mosque first across its pond, then up to it as it rises; the zamindar house first at its ghat from the river, then its house; the graveyard along its wall, then to its banyan with the mosque beyond), in the viewer's own season and hour, joined by dissolves, then back to the boat. The boat is never stopped or slowed for it: her place is set (under the first dissolve) so that at her own pace she has not passed the place when the camera comes back to her, and goes on past it.
+- **The controls:** redesigned as part of the film's look (glass, a running stitch, the year's ring, menus over their buttons), appearing when wanted and stepping aside, on desktop and phone.
+
+## Realism and spatial logic (2026-10-06)
+
+The user asked for the world to hold together where things meet, fixed at their root, never patched:
+
+- **The salt farms:** several, none alike in size, shape, depth, embankment, water, grass and work. In the rains real water stands in their pans (reflections, the rain's rings, fish in the shallows), held by an earth embankment higher than the inner bunds, some of which the water drowns; in the salt season only the settling pond keeps water. Their people work at varied tasks at their own pace, alone and in twos and threes: raking, carrying salt on the head to the heap, looking the beds over and feeling the brine, dressing a bed with the kodal while an older man watches, and in the rains feeding the gher and casting the net.
+- **Ghats:** every ghat's steps rise evenly, clear of the ground, between walls that hold the bank back; no grass on them. The village's ghat is reached by the hub's paving and has a lantern for the night; the zamindar's has its landing, pavilions and the house's boat tied up beside it, riding the water and swinging on her line.
+- **Ways:** no road or path through water, a pond or a house; every homestead reached through its yard's open front. The zamindar house is reached from its ghat by a brick walk over its lawn (no paddy between).
+- **The boat in a storm** rides the water as it is drawn, heeling with the gusts, never above it.
+
 ## People
 
 - **General:** realistic but generic, with no likeness of any real person. Built from MakeHuman CC0 data, as game characters are.
@@ -119,7 +140,7 @@ These are the user's decisions that still bind the work, and the reasons for the
   - the MakeHuman CC0 people.
   - Ask before adding any other asset. There are no audio files (sound is Web Audio).
 - **Nothing copied:** valley.mengto's code carries no licence; koi-pond-garden (MIT) and the other koi-pond projects gave ideas only (Nagomi is PolyForm Noncommercial: never its code). The project has its own render pipeline, with no postprocessing or GSAP libraries.
-- **Target devices:** desktop and laptop (decided 2026-10-04). Phones are not a target, though the dock has been kept folding to fit 390 px.
+- **Target devices:** desktop and laptop (decided 2026-10-04) for the 3D. The controls and the loader are made for phones too (2026-10-06: the dock folds to two rows, its menus move into the more menu).
 
 ## Working agreements
 

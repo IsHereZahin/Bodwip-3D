@@ -35,11 +35,12 @@ export class MeshBuilder {
     this.idx.push(a, b, c, a, c, d);
   }
 
-  /** Appends another geometry, transformed, with a flat vertex colour. */
-  add(geometry: BufferGeometry, matrix: Matrix4, color: RGB = WHITE): void {
+  /** Appends another geometry, transformed, with a flat vertex colour, or (`'own'`) keeping the geometry's own vertex colours. */
+  add(geometry: BufferGeometry, matrix: Matrix4, color: RGB | 'own' = WHITE): void {
     const p = geometry.getAttribute('position');
     const n = geometry.getAttribute('normal');
     const uv = geometry.getAttribute('uv');
+    const own = color === 'own' ? geometry.getAttribute('color') : undefined;
     const normalMatrix = new Matrix3().getNormalMatrix(matrix);
     const base = this.vertexCount;
     const v = new Vector3();
@@ -48,7 +49,8 @@ export class MeshBuilder {
       v.fromBufferAttribute(p, i).applyMatrix4(matrix);
       if (n) vn.fromBufferAttribute(n, i).applyMatrix3(normalMatrix).normalize();
       else vn.set(0, 1, 0);
-      this.vertex(v, vn, uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0, color);
+      const c: RGB = own ? [own.getX(i), own.getY(i), own.getZ(i)] : color === 'own' ? WHITE : color;
+      this.vertex(v, vn, uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0, c);
     }
     const index = geometry.getIndex();
     if (index) for (let i = 0; i < index.count; i++) this.idx.push(base + index.getX(i));
