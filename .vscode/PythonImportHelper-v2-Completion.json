@@ -1,0 +1,205 @@
+[
+    {
+        "label": "json",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "json",
+        "description": "json",
+        "detail": "json",
+        "documentation": {}
+    },
+    {
+        "label": "os",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "os",
+        "description": "os",
+        "detail": "os",
+        "documentation": {}
+    },
+    {
+        "label": "random",
+        "kind": 6,
+        "isExtraImport": true,
+        "importPath": "random",
+        "description": "random",
+        "detail": "random",
+        "documentation": {}
+    },
+    {
+        "label": "Image",
+        "importPath": "PIL",
+        "description": "PIL",
+        "isExtraImport": true,
+        "detail": "PIL",
+        "documentation": {}
+    },
+    {
+        "label": "ImageChops",
+        "importPath": "PIL",
+        "description": "PIL",
+        "isExtraImport": true,
+        "detail": "PIL",
+        "documentation": {}
+    },
+    {
+        "label": "ImageFilter",
+        "importPath": "PIL",
+        "description": "PIL",
+        "isExtraImport": true,
+        "detail": "PIL",
+        "documentation": {}
+    },
+    {
+        "label": "ImageMath",
+        "importPath": "PIL",
+        "description": "PIL",
+        "isExtraImport": true,
+        "detail": "PIL",
+        "documentation": {}
+    },
+    {
+        "label": "to_linear",
+        "kind": 2,
+        "importPath": "scripts.humans.textures",
+        "description": "scripts.humans.textures",
+        "peekOfCode": "def to_linear(c):\n    c /= 255.0\n    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4\ndef to_srgb(c):\n    c = max(0.0, min(1.0, c))\n    c = c * 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055\n    return int(round(c * 255))\ndef hex_rgb(h):\n    h = h.lstrip('#')\n    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))",
+        "detail": "scripts.humans.textures",
+        "documentation": {}
+    },
+    {
+        "label": "to_srgb",
+        "kind": 2,
+        "importPath": "scripts.humans.textures",
+        "description": "scripts.humans.textures",
+        "peekOfCode": "def to_srgb(c):\n    c = max(0.0, min(1.0, c))\n    c = c * 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055\n    return int(round(c * 255))\ndef hex_rgb(h):\n    h = h.lstrip('#')\n    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))\ndef lum(rgb):\n    return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]\n# lookup tables between sRGB bytes and linear values",
+        "detail": "scripts.humans.textures",
+        "documentation": {}
+    },
+    {
+        "label": "hex_rgb",
+        "kind": 2,
+        "importPath": "scripts.humans.textures",
+        "description": "scripts.humans.textures",
+        "peekOfCode": "def hex_rgb(h):\n    h = h.lstrip('#')\n    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))\ndef lum(rgb):\n    return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]\n# lookup tables between sRGB bytes and linear values\nLIN = [to_linear(i) for i in range(256)]\ndef mean_linear(img, box):\n    \"\"\"Mean linear colour over a box of the texture (the chest and belly: plain skin).\"\"\"\n    raw = img.crop(box).resize((64, 64)).tobytes()",
+        "detail": "scripts.humans.textures",
+        "documentation": {}
+    },
+    {
+        "label": "lum",
+        "kind": 2,
+        "importPath": "scripts.humans.textures",
+        "description": "scripts.humans.textures",
+        "peekOfCode": "def lum(rgb):\n    return 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]\n# lookup tables between sRGB bytes and linear values\nLIN = [to_linear(i) for i in range(256)]\ndef mean_linear(img, box):\n    \"\"\"Mean linear colour over a box of the texture (the chest and belly: plain skin).\"\"\"\n    raw = img.crop(box).resize((64, 64)).tobytes()\n    n = len(raw) // 3\n    return tuple(sum(LIN[raw[i]] for i in range(k, len(raw), 3)) / n for k in range(3))\ndef skin(job, name):",
+        "detail": "scripts.humans.textures",
+        "documentation": {}
+    },
+    {
+        "label": "mean_linear",
+        "kind": 2,
+        "importPath": "scripts.humans.textures",
+        "description": "scripts.humans.textures",
+        "peekOfCode": "def mean_linear(img, box):\n    \"\"\"Mean linear colour over a box of the texture (the chest and belly: plain skin).\"\"\"\n    raw = img.crop(box).resize((64, 64)).tobytes()\n    n = len(raw) // 3\n    return tuple(sum(LIN[raw[i]] for i in range(k, len(raw), 3)) / n for k in range(3))\ndef skin(job, name):\n    light = Image.open(os.path.join(ASSETS, job['light'])).convert('RGB').resize((SKIN_SIZE, SKIN_SIZE), Image.LANCZOS)\n    dark = Image.open(os.path.join(ASSETS, job['dark'])).convert('RGB').resize((SKIN_SIZE, SKIN_SIZE), Image.LANCZOS)\n    box = (int(SKIN_SIZE * 0.36), int(SKIN_SIZE * 0.2), int(SKIN_SIZE * 0.56), int(SKIN_SIZE * 0.42))\n    ml = mean_linear(light, box)",
+        "detail": "scripts.humans.textures",
+        "documentation": {}
+    },
+    {
+        "label": "skin",
+        "kind": 2,
+        "importPath": "scripts.humans.textures",
+        "description": "scripts.humans.textures",
+        "peekOfCode": "def skin(job, name):\n    light = Image.open(os.path.join(ASSETS, job['light'])).convert('RGB').resize((SKIN_SIZE, SKIN_SIZE), Image.LANCZOS)\n    dark = Image.open(os.path.join(ASSETS, job['dark'])).convert('RGB').resize((SKIN_SIZE, SKIN_SIZE), Image.LANCZOS)\n    box = (int(SKIN_SIZE * 0.36), int(SKIN_SIZE * 0.2), int(SKIN_SIZE * 0.56), int(SKIN_SIZE * 0.42))\n    ml = mean_linear(light, box)\n    md = mean_linear(dark, box)\n    tone = tuple(LIN[c] for c in hex_rgb(job['tone']))\n    # the share of the dark skin that brings the light one's brightness to the tone's\n    t = max(0.0, min(1.0, (lum(tone) - lum(ml)) / (lum(md) - lum(ml))))\n    blend = Image.blend(light, dark, t)",
+        "detail": "scripts.humans.textures",
+        "documentation": {}
+    },
+    {
+        "label": "bleed",
+        "kind": 2,
+        "importPath": "scripts.humans.textures",
+        "description": "scripts.humans.textures",
+        "peekOfCode": "def bleed(img):\n    \"\"\"Carries the colour of the opaque texels out under the transparent ones (blurs normalised by coverage).\"\"\"\n    rgb = img.convert('RGB')\n    alpha = img.split()[3]\n    filled = alpha.point(lambda v: 255 if v > 0 else 0)\n    out = rgb\n    premult = Image.composite(rgb, Image.new('RGB', rgb.size), filled)\n    for radius in (2, 6, 16, 48):\n        blurred = filled.filter(ImageFilter.GaussianBlur(radius))\n        cover = blurred.convert('F')",
+        "detail": "scripts.humans.textures",
+        "documentation": {}
+    },
+    {
+        "label": "recolour",
+        "kind": 2,
+        "importPath": "scripts.humans.textures",
+        "description": "scripts.humans.textures",
+        "peekOfCode": "def recolour(path, tint, size, name):\n    img = Image.open(path).convert('RGBA').resize((size, size), Image.LANCZOS)\n    r, g, b, a = img.split()\n    grey = Image.merge('RGB', (r, g, b)).convert('L')\n    # the strands' light and shade about their mean, on the tint\n    hist = grey.histogram(a)\n    n = sum(hist) or 1\n    mean = sum(i * c for i, c in enumerate(hist)) / n or 1\n    tr, tg, tb = hex_rgb(tint)\n    rel = grey.point(lambda v: int(min(255, 128 * v / mean)))",
+        "detail": "scripts.humans.textures",
+        "documentation": {}
+    },
+    {
+        "label": "eyes",
+        "kind": 2,
+        "importPath": "scripts.humans.textures",
+        "description": "scripts.humans.textures",
+        "peekOfCode": "def eyes(path):\n    img = Image.open(os.path.join(ASSETS, path)).convert('RGBA').resize((512, 512), Image.LANCZOS)\n    hsv = img.convert('RGB').convert('HSV')\n    h, s, v = hsv.split()\n    # the iris is the saturated part: darken it and turn it from red-brown to a deep brown\n    iris = s.point(lambda x: 255 if x > 70 else int(x * 255 / 70) if x > 40 else 0).filter(ImageFilter.GaussianBlur(1))\n    deep = Image.merge('HSV', (h.point(lambda x: 14), s.point(lambda x: min(255, int(x * 0.9))), v.point(lambda x: int(x * 0.5)))).convert('RGB')\n    rgb = Image.composite(deep, img.convert('RGB'), iris)\n    Image.merge('RGBA', (*rgb.split(), img.split()[3])).save(os.path.join(OUT, 'eyes.webp'), 'WEBP', quality=90, method=6)\ndone = set()",
+        "detail": "scripts.humans.textures",
+        "documentation": {}
+    },
+    {
+        "label": "HERE",
+        "kind": 5,
+        "importPath": "scripts.humans.textures",
+        "description": "scripts.humans.textures",
+        "peekOfCode": "HERE = os.path.dirname(os.path.abspath(__file__))\nJOBS = json.load(open(os.path.join(HERE, 'cache', 'textures.json'), encoding='utf8'))\nOUT = JOBS['out']\nASSETS = JOBS['assets']\nSKIN_SIZE = 1024\ndef to_linear(c):\n    c /= 255.0\n    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4\ndef to_srgb(c):\n    c = max(0.0, min(1.0, c))",
+        "detail": "scripts.humans.textures",
+        "documentation": {}
+    },
+    {
+        "label": "JOBS",
+        "kind": 5,
+        "importPath": "scripts.humans.textures",
+        "description": "scripts.humans.textures",
+        "peekOfCode": "JOBS = json.load(open(os.path.join(HERE, 'cache', 'textures.json'), encoding='utf8'))\nOUT = JOBS['out']\nASSETS = JOBS['assets']\nSKIN_SIZE = 1024\ndef to_linear(c):\n    c /= 255.0\n    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4\ndef to_srgb(c):\n    c = max(0.0, min(1.0, c))\n    c = c * 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055",
+        "detail": "scripts.humans.textures",
+        "documentation": {}
+    },
+    {
+        "label": "OUT",
+        "kind": 5,
+        "importPath": "scripts.humans.textures",
+        "description": "scripts.humans.textures",
+        "peekOfCode": "OUT = JOBS['out']\nASSETS = JOBS['assets']\nSKIN_SIZE = 1024\ndef to_linear(c):\n    c /= 255.0\n    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4\ndef to_srgb(c):\n    c = max(0.0, min(1.0, c))\n    c = c * 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055\n    return int(round(c * 255))",
+        "detail": "scripts.humans.textures",
+        "documentation": {}
+    },
+    {
+        "label": "ASSETS",
+        "kind": 5,
+        "importPath": "scripts.humans.textures",
+        "description": "scripts.humans.textures",
+        "peekOfCode": "ASSETS = JOBS['assets']\nSKIN_SIZE = 1024\ndef to_linear(c):\n    c /= 255.0\n    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4\ndef to_srgb(c):\n    c = max(0.0, min(1.0, c))\n    c = c * 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055\n    return int(round(c * 255))\ndef hex_rgb(h):",
+        "detail": "scripts.humans.textures",
+        "documentation": {}
+    },
+    {
+        "label": "SKIN_SIZE",
+        "kind": 5,
+        "importPath": "scripts.humans.textures",
+        "description": "scripts.humans.textures",
+        "peekOfCode": "SKIN_SIZE = 1024\ndef to_linear(c):\n    c /= 255.0\n    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4\ndef to_srgb(c):\n    c = max(0.0, min(1.0, c))\n    c = c * 12.92 if c <= 0.0031308 else 1.055 * c ** (1 / 2.4) - 0.055\n    return int(round(c * 255))\ndef hex_rgb(h):\n    h = h.lstrip('#')",
+        "detail": "scripts.humans.textures",
+        "documentation": {}
+    },
+    {
+        "label": "LIN",
+        "kind": 5,
+        "importPath": "scripts.humans.textures",
+        "description": "scripts.humans.textures",
+        "peekOfCode": "LIN = [to_linear(i) for i in range(256)]\ndef mean_linear(img, box):\n    \"\"\"Mean linear colour over a box of the texture (the chest and belly: plain skin).\"\"\"\n    raw = img.crop(box).resize((64, 64)).tobytes()\n    n = len(raw) // 3\n    return tuple(sum(LIN[raw[i]] for i in range(k, len(raw), 3)) / n for k in range(3))\ndef skin(job, name):\n    light = Image.open(os.path.join(ASSETS, job['light'])).convert('RGB').resize((SKIN_SIZE, SKIN_SIZE), Image.LANCZOS)\n    dark = Image.open(os.path.join(ASSETS, job['dark'])).convert('RGB').resize((SKIN_SIZE, SKIN_SIZE), Image.LANCZOS)\n    box = (int(SKIN_SIZE * 0.36), int(SKIN_SIZE * 0.2), int(SKIN_SIZE * 0.56), int(SKIN_SIZE * 0.42))",
+        "detail": "scripts.humans.textures",
+        "documentation": {}
+    },
+    {
+        "label": "done",
+        "kind": 5,
+        "importPath": "scripts.humans.textures",
+        "description": "scripts.humans.textures",
+        "peekOfCode": "done = set()\nfor name, job in JOBS['characters'].items():\n    t = skin(job['skin'], name)\n    recolour(job['hair']['file'], job['hair']['tint'], 1024, f'{name}_hair.webp')\n    for kind, size in (('brows', 256), ('lashes', 256)):\n        target = os.path.basename(os.path.dirname(job[kind])) + '.webp'\n        if target in done:\n            continue\n        recolour(os.path.join(ASSETS, job[kind]), '#0c0908', size, target)\n        done.add(target)",
+        "detail": "scripts.humans.textures",
+        "documentation": {}
+    }
+]

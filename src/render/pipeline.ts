@@ -304,6 +304,16 @@ export class Pipeline {
     return { width: this.width, height: this.height };
   }
 
+  /**
+   * The scene pass's multisampling: 4, or 0 for a weak GPU, where resolving four samples of a half-float frame
+   * is near a third of the scene's cost. The target is made again at its next use.
+   */
+  setSamples(samples: number): void {
+    if (this.sceneRT.samples === samples) return;
+    this.sceneRT.samples = samples;
+    this.sceneRT.dispose();
+  }
+
   /** The mirror pass's resolution as a share of the frame's. */
   setReflectionScale(k: number): void {
     this.reflScale = k;
@@ -336,6 +346,9 @@ export class Pipeline {
   }
 
   render(renderer: WebGLRenderer, scene: Scene, camera: PerspectiveCamera, params: FrameParams): void {
+    // the world's matrices are brought up to date once, by the first pass that draws it: nothing moves
+    // between the mirror and the main pass
+    const autoUpdate = scene.matrixWorldAutoUpdate;
     // mirror pass: the reflected world, fogged only above the water (see applyAtmosphere)
     if (this.reflection.update(camera)) {
       this.reflection.camera.layers.set(0);
@@ -343,6 +356,7 @@ export class Pipeline {
       G.uReflPass.value = 1;
       renderer.setRenderTarget(this.reflection.target);
       renderer.render(scene, this.reflection.camera);
+      scene.matrixWorldAutoUpdate = false;
     }
     G.uCamPos.value.copy(camera.position);
     G.uReflPass.value = 0;
@@ -353,6 +367,7 @@ export class Pipeline {
     this.sceneRT.resolveDepthBuffer = focusing;
     renderer.setRenderTarget(this.sceneRT);
     renderer.render(scene, camera);
+    scene.matrixWorldAutoUpdate = autoUpdate;
     let shown = this.sceneRT;
     if (focusing && dof) {
       const d = this.mDof.uniforms;

@@ -1,6 +1,6 @@
 # Known issues, limits and open work
 
-These entries are current as of the review of 2026-10-06, made after commit 7181995. Remove an entry when it is fixed, and add new ones here, not in a new file.
+These entries are current as of the review of 2026-10-06, made after commit 7181995, and the speed pass of 2026-10-07. Remove an entry when it is fixed, and add new ones here, not in a new file.
 
 ## Open bugs and risks
 
@@ -17,16 +17,20 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
 
 ## Performance
 
-- **The terrain's photo-layer shader is the largest single cost.** It measured ≈7–9 ms in an earlier world, with the water ≈3 ms (1280×720, this machine).
-- **Recent headless numbers** (2026-10-06 film run): render-only frames ≈22–30 ms, ≈60 ms with screenshots.
-- **The mirror pass** redraws layer 0 (trees, kash) at half resolution. Adaptive resolution saves pixels, not vertices.
+- **Where a frame's GPU time goes** (2026-10-07, the Ryzen 5600G's integrated Radeon, 1280×720, high tier, timer queries per pass): the scene pass 18–25 ms, the mirror 4–7 ms, the post chain under 1.5 ms. Of the scene pass the trees take the most (their alpha-tested leaf cards drawn over each other), then the terrain, then the water. Multisampling is ≈27% of the scene pass: the lower tier draws without it, so its hair and garment edges (alpha to coverage) are cut hard and geometric edges alias.
+- **Headless numbers on that GPU** (2026-10-07, against the commit before the speed pass, alternate runs): load ≈7–12 s (was ≈11–16 s); the opening ≈53 fps at ≈0.93 of full size in the lower tier (was ≈29 fps at 0.73 in the high tier; frames over 50 ms 1–4 against 13–17); after it ≈55 fps (was ≈48 fps at 0.66–0.73); the film started with C ≈21 fps, worst frame 117 ms (was ≈17 fps, 267 ms), the GPU shared. A phone's size (390×844 at DPR 3) only emulated on it: ≈28 fps (was ≈18).
+- **The CPU's part of a frame** (dev build): ≈7 ms for the world (`step`: the hyacinth, the girl's cloth, the composer's ≈1 ms budget, the crops and the grass building) and ≈7–9 ms in three.js's rendering (≈450 draws in the scene pass and ≈170 in the mirror's: uniforms, culling, the skinned people's skeletons). A phone's CPU is several times slower.
+- **The load is CPU-bound:** the terrain for the opening's view (≈1.6 s on the dev server), the trees, the water's fields, the roads, the programs' JS (≈0.9 s), and the calibration (≈0.4–1.2 s; it also takes the first frames' texture uploads and shadow map off the opening). On Windows the shaders' compile (D3D) overlaps the building (`compileSoon`).
+- **The JS heap is ≈310 MB after load** (painted textures and geometry are kept in JS after upload): a phone with little memory may feel it.
+- **Measuring:** another tab or program drawing on the same GPU (the site left open in Edge from the dev server, which reloads it on every save) halves headless frame rates and stretches the load. Check `Get-Counter '\GPU Engine(*engtype_3D)\Utilization Percentage'` first, and compare against a baseline build in alternate runs (verification.md).
+- **The mirror pass** redraws layer 0 (trees, kash) at half resolution (a third in the lower tier). Adaptive resolution saves pixels, not vertices.
 - **Hyacinth is never frustum-culled.**
 - **A cut's own frame** still costs ≈130–160 ms in headless Chrome on the production build; the frames round it are 20–40 ms.
   - The cost is two shots drawn, and the new grass and crop buffers uploaded.
   - The cut's building is capped at `PREPARE_MS`, and the water's next field is uploaded ahead.
   - One shadow-depth program is still first compiled as the film starts.
   - Not measured on a real GPU.
-- **Never measured:** phones, laptop integrated GPUs, weak GPUs.
+- **Never measured:** real phones, Intel and Apple integrated GPUs, and a discrete GPU since the speed pass (one integrated Radeon only).
 - **The salt farms' people** are boatman bodies (≈10 draw calls each, with cloth): up to 13 in the salt season. The film's লবণ মাঠ shot draws ≈1050 calls, the most of any shot. They are posed within `POSED` and drawn within `DRAWN` of their farm (saltworks.ts).
 
 ## Accepted simplifications
@@ -86,7 +90,7 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
   - Live at night is dark, by the user's choice of real time; the flight's first seconds show the world's edge haze from high.
   - Live's weather is the season's own for today's date, not the weather in Bangladesh now (a weather feed would be a new external request).
   - The mode is not remembered: every visit opens in the cinematic mode.
-  - The camera's own views (rig/compose.ts) know the ground, the trees' crowns, the palms, the bamboo, the houses, the grand ghat and the bridge (sightlines.ts), as columns; not the bushes, the bananas, the landmarks' own buildings, the people or the moored boats. A shot's weights are judgement, tuned by eye on stills of the journey; left to itself the camera mostly chooses behind her and a little above (≈26 m out, ≈9.5 m up), looking down the water.
+  - The camera's own views (rig/compose.ts) know the ground, the trees' crowns, the palms, the bamboo, the houses, the grand ghat and the bridge (sightlines.ts), as columns; not the bushes, the bananas, the landmarks' own buildings, the people or the moored boats. A shot's weights are judgement, tuned by eye on stills of the journey; left to itself the camera mostly chooses behind her and a little above (≈26 m out, ≈9.5 m up), looking down the water. After the opening it looks back (at the sunrise) for ≈10 s while it comes round behind her.
   - The sights' stretches are found once at load from the village as built; which are shown is chosen again as she goes. A sight seen poorly from her way (the mosque, from the khal) gives way to her surroundings.
   - The sanko is thin bamboo: from her way the camera shows it small.
   - The dock's menus use the Popover API (Chrome 114+, Safari 17+, Firefox 125+); the SVG favicon has a PNG fallback.
@@ -111,7 +115,7 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
 
 - **Banks and river life:** roots, mud, reeds and bushes on the banks; ghat details; moored and moving boats; washing and bathing at the ghats, cattle, cooking smoke at dusk, kites overhead; banana rafts in the rains.
 - **Vegetation:** distant coconuts read as poles; the far villages' rows; homestead groves' density.
-- **A light, atmosphere, colour and performance pass:** far-tree LOD or impostors; a cheaper terrain shader far off.
+- **A light, atmosphere, colour and performance pass:** far-tree LOD or impostors; a cheaper terrain shader far off; the patched materials' numbers (wind, translucency, grime, skin) as uniforms rather than defines (115 of their programs would be 82: less to compile at load); the JS copies of the textures let go once uploaded (the heap).
 - **Remove the water shader's inert sea, ship and net parts** (`world/water.ts`'s sea mesh and ship waves, `waves.ts` swell/exposure). Do it carefully, with before/after shots.
 
 - **Sound:** a koel at dusk, distant boats, more birdsong.

@@ -66,14 +66,14 @@ export interface Sight extends Readonly<SightSpec> {
 /** Along her way, how far apart (m) a sight is looked for, and from what heights over the water (m): low by her, and over the banks. */
 const STEP = 6;
 const EYES = [3.5, 11];
-/** A sight's stretch: at least, at most (m), and how much of its best it keeps to. */
-const LEAST = 20;
-const MOST = 42;
+/** A sight's stretch: at least, at most (m: at her pace, a few seconds of the camera turned to it, the user's wish), and how much of its best it keeps to. */
+const LEAST = 12;
+const MOST = 20;
 const KEEP = 0.55;
 /** The least of her way (m) between one sight's stretch and the next: there the camera shows her surroundings. */
 const GAP = 24;
 /** Over how much of her way (m) the camera eases to a sight and back. */
-const EASE = 8;
+const EASE = 4;
 /** Where along her way sights begin (m): past where she sets out again after the mist (rig.ts LOOP_FADE). */
 const START = 6;
 /** What a sight must be worth now to be shown by itself (0..1). */

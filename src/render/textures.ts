@@ -18,6 +18,17 @@ export function setMaxAnisotropy(n: number): void {
 
 type Ctx = CanvasRenderingContext2D;
 
+/**
+ * Textures painted once and handed out as clones: each its own repeat, one image and one upload between them
+ * (every boatman's mathal was painting the same weave again).
+ */
+const painted = new Map<string, DataTexture>();
+function paintedOnce(key: string, make: () => DataTexture): DataTexture {
+  let texture = painted.get(key);
+  if (!texture) painted.set(key, (texture = make()));
+  return texture.clone();
+}
+
 function paint(w: number, h: number, draw: (ctx: Ctx) => void): Ctx {
   const canvas = document.createElement('canvas');
   canvas.width = w;
@@ -619,6 +630,10 @@ export function tinTexture(seed: number): DataTexture {
 
 /** Woven bamboo mat (the boat's chhoi canopy). Tiles. */
 export function weaveTexture(seed: number): DataTexture {
+  return paintedOnce(`weave:${seed}`, () => paintWeave(seed));
+}
+
+function paintWeave(seed: number): DataTexture {
   const S = 256;
   const N = 16;
   const rng = new Rng(seed);
@@ -666,7 +681,9 @@ export function checkTexture(base: string, stripe: string, thin: string): DataTe
 
 /**
  * Handloom cotton (lungi, gamchha, vest): a check of `stripe` and `thin` threads on `base`, with slubs in
- * the yarn, and a normal map of its plain weave (or, `knit`, of a knitted vest's ribs). Tiles.
+ * the yarn, and a normal map of its plain weave (or, `knit`, of a knitted vest's ribs). Tiles. The weave's relief
+ * is painted once for each kind (thousands of threads each; one cloth's from another's is not to be told) and
+ * handed out as a clone.
  */
 export function clothTexture(base: string, stripe: string, thin: string, seed: number, knit = false): { map: DataTexture; normal: DataTexture } {
   const S = 256;
@@ -700,22 +717,25 @@ export function clothTexture(base: string, stripe: string, thin: string, seed: n
       }
     }
   });
-  const hgt = paint(S, S, (c) => {
-    c.fillStyle = 'rgb(110,110,110)';
-    c.fillRect(0, 0, S, S);
-    for (let j = 0; j < S / CELL; j++) {
-      for (let i = 0; i < S / CELL; i++) {
-        const v = Math.round(rng.range(165, 205));
-        c.fillStyle = `rgb(${v},${v},${v})`;
-        c.beginPath();
-        // plain weave: warp over weft, then weft over warp; a knit is columns of loops
-        const vertical = knit || (i + j) % 2 === 1;
-        c.ellipse(i * CELL + CELL / 2, j * CELL + CELL / 2, vertical ? 1.2 : 2, vertical ? 2.1 : 1.2, 0, 0, Math.PI * 2);
-        c.fill();
+  const relief = () => {
+    const hgt = paint(S, S, (c) => {
+      c.fillStyle = 'rgb(110,110,110)';
+      c.fillRect(0, 0, S, S);
+      for (let j = 0; j < S / CELL; j++) {
+        for (let i = 0; i < S / CELL; i++) {
+          const v = Math.round(rng.range(165, 205));
+          c.fillStyle = `rgb(${v},${v},${v})`;
+          c.beginPath();
+          // plain weave: warp over weft, then weft over warp; a knit is columns of loops
+          const vertical = knit || (i + j) % 2 === 1;
+          c.ellipse(i * CELL + CELL / 2, j * CELL + CELL / 2, vertical ? 1.2 : 2, vertical ? 2.1 : 1.2, 0, 0, Math.PI * 2);
+          c.fill();
+        }
       }
-    }
-  });
-  return { map: toTexture(ctx, { repeat: true }), normal: normalFromHeight(hgt, 2.5) };
+    });
+    return normalFromHeight(hgt, 2.5);
+  };
+  return { map: toTexture(ctx, { repeat: true }), normal: paintedOnce(knit ? 'relief:knit' : 'relief:plain', relief) };
 }
 
 /**
@@ -793,14 +813,19 @@ export function lilyCarpetTexture(seed: number): DataTexture {
 function normalFromHeight(height: Ctx, strength: number): DataTexture {
   const { width: w, height: h } = height.canvas;
   const src = height.getImageData(0, 0, w, h).data;
-  const at = (x: number, y: number) => src[((((y + h) % h) * w + ((x + w) % w)) * 4)] / 255;
+  // (it tiles: the neighbours wrap round at the edges)
+  const at = (x: number, y: number) => src[(y * w + x) * 4] / 255;
   const out = new Uint8Array(w * h * 4);
   for (let y = 0; y < h; y++) {
+    const up = y === 0 ? h - 1 : y - 1;
+    const down = y === h - 1 ? 0 : y + 1;
     for (let x = 0; x < w; x++) {
+      const left = x === 0 ? w - 1 : x - 1;
+      const right = x === w - 1 ? 0 : x + 1;
       // canvas y runs down, texture v up: the row flip below makes +v the canvas's up
-      const dx = (at(x + 1, y) - at(x - 1, y)) * strength;
-      const dy = (at(x, y - 1) - at(x, y + 1)) * strength;
-      const l = Math.hypot(dx, dy, 1);
+      const dx = (at(right, y) - at(left, y)) * strength;
+      const dy = (at(x, up) - at(x, down)) * strength;
+      const l = Math.sqrt(dx * dx + dy * dy + 1);
       const i = ((h - 1 - y) * w + x) * 4;
       out[i] = Math.round((-dx / l * 0.5 + 0.5) * 255);
       out[i + 1] = Math.round((-dy / l * 0.5 + 0.5) * 255);

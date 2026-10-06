@@ -85,7 +85,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - Every homestead that no designed way passes gets its own footpath to the nearest way, unless it would cross water. Every homestead with a ghat gets a trodden way from its yard to the ghat's landing (`LANDING` m up from the water). A path crosses the char through its kash.
   - `buildRoads(ground)` draws the raised road on its crest and the paths laid over the ground as it is drawn (main.ts passes terrain.ts `meshGround`), from one texture atlas (`roadAtlas`), one mesh per 1300 m cell.
   - A homestead no designed way passes gets a footpath of its own, out of its yard's open front (and round the mound's side if the way lies behind it), never across water; one with a ghat, a trodden way down to its landing.
-  - `core/segmentIndex.ts`: `SegmentIndex` files segments in square cells, to find the nearest one measured against its half-width.
+  - `core/segmentIndex.ts`: `SegmentIndex` files segments in square cells, to find the nearest one measured against its half-width. A query is answered in a 4 m cell (`FINE`, built the first time it is asked about, in a table over the segments' reach) that keeps only the segments that can be the nearest to some point in it, in the order of the least `d − half` they can have there, so it stops at the first that cannot win. Its answers are exactly a scan of the filing cell's (ties to the first added). The ground asks it about every waterway at every height lookup.
   - `core/mathx.ts`: the shared small maths (`clamp`, `lerp`, `smoothstep`, `damp`, `angleDelta`, `tableAt` for a body's measured sections). Use these rather than local copies.
 
 ## Built things
@@ -162,10 +162,12 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - Two sets of meshes exist for the film's dissolves (`holdView`/`showHeld`/`releaseView`).
 - `world/meadow.ts`: `Meadow(huts, ghats)`: blade grass and wild flowers round the camera, in 8 m chunks.
   - One kind of full clump goes out to 100 m, thinning over the last stretch at each clump's own distance (`BANDS`, `THIN`).
+  - Its upload sends only the part of each layer in use, and its bounds (for the culling) come from the chunks' squares and their ground's heights (`CLUMP_OUT`, `CLUMP_TOP`), not from every clump.
   - Chunks grow in, are built in front first, and `warm` builds ahead.
   - No grass grows in the water or on the mud above it, on roads, on landmarks or round the ghats.
   - Two sets of meshes exist for the dissolves.
 - `world/drift.ts`: water hyacinth as position-based dynamics on the still fresh water round the viewer: ponds, the bil, and the slack within `EDGE` of the waterways' banks (within 0.4 of a narrow one's half, so the side khal's middle stays the boat's); none in the salt creek or the salt farms.
+  - The aground check asks the ground again only once a floater could have reached a bank since it was last measured (`STEEPEST`). Beyond `NEAR` of the viewer a floater is set on the waves every `FAR_EVERY` frames (its bobbing is under a pixel there); all of them after a jump. Height and slope come from one pass over the waves (waves.ts `waveHeightSlope`).
 - `world/ponds.ts`: `LILY_PONDS`, with pads, flowers and reed clumps.
 - `world/bil.ts`: the shapla bil's lilies (pushed aside by the hull and drawn back by their stems; only those near the boat simulate on the CPU), reeds, lotus and egrets.
 - `world/khejur.ts`: `Khejur`, the date palms along `KHEJUR_PATH`.
@@ -178,7 +180,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - Yellow and brown leaves fall in the dry months. Each falls at its own pace, carried by `windAt`.
   - A storm strips the trees.
 - `world/petals.ts`:
-  - `PetalCarpet(crowns)`: the petals fallen under each tree in flower near the camera (`REACH`, thinning from `FULL`), in drifts, browning as the flowering goes on. Each crown's carpet is laid a little each frame (`LAY_MS`) from when it comes within reach, and ahead of a cut (`warm`). It is let go past `KEEP`.
+  - `PetalCarpet(crowns)`: the petals fallen under each tree in flower near the camera (`REACH`, thinning from `FULL`), in drifts, browning as the flowering goes on. Each crown's carpet is laid a little each frame (`LAY_MS`) from when it comes within reach, only while the flowering is on (out of it none show), and ahead of a film's cut (`warm`, whatever the season). It is let go past `KEEP`.
     - A carpet's petals are laid in the order of their rank (the share of the flowering by which each has fallen), so those to show are the first so many.
     - Those that fall on water float, drifting on the current until they sink (`AFLOAT_LIFE`). A crown near a waterway also has petals gathered in the slack water along its bank (`BANKED`). None float inside the hero's hull.
   - `HeroPetal`: the film's petal. `aim` picks its bough on the crown's lower edge and a place 2.6–4.2 m out on the water downwind (`INTO`, `CARRIED`), and works out its whole fall (`HERO_FALL`, `SWING`). It swings and tips, tumbles twice, levels out near the water, touches it (the water's `uTouch` ripples) and floats off on the current.
@@ -231,6 +233,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - Flat bones and dual-quaternion skinning.
   - `flowingHair` (the `HAIR_CODE` shader): most of the hair barely stirs while a few locks lift on their own time (`aLock`), within each vertex's reach (`aFree`), never over the face (`uHairFace`).
   - Skin is a `MeshPhysicalMaterial` with a soft sheen.
+  - `cast` lays things on a body by rays through its bind pose; each ray is cast once a character (every body of one character meets it alike: the salt farms' workers lay the same ফিতা).
 - `world/cloth.ts`: `ClothTube` (lungi, skirts) and `ClothRibbon` (gamchha, ওড়না; its width may vary along it). Both are springs round the body, moved by the wind in the body's frame.
 - `world/girl.ts`: the girl on the bridge, a `Human` (`meye`, about seventeen).
   - She wears a red lehenga (a `ClothTube` with `lehengaTexture`), a deeper-red blouse shell, a cream ওড়না over her left shoulder (`ClothRibbon`), and bangles.
@@ -290,7 +293,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - The terrain's paddy plots and splat layers (`SPLAT_TILE`, `SPLAT_COLOR`).
   - The salt field's beds, bunds, brine and crust where the terrain's zone is below 0, in `SALT_FIELD`'s frame.
 - `render/surfaces.ts`: the photo ground layers (`GROUND_LAYERS`) and the bark.
-- `render/pipeline.ts`: the post chain.
+- `render/pipeline.ts`: the post chain. `render` brings the world's matrices up to date in its first pass only. `setSamples` sets the scene pass's multisampling (4, or 0 in the lower tier).
   - MSAA scene, bloom, light shafts, and a composite: ACES, a gentle S-curve and a lifted toe (moody, never murky), vignette, grain, and NaN-safe `sanitize`.
   - Depth of field for a shot that asks for it (`FrameParams.dof`, from a scene's `focus`): the scene's depth is resolved only then (`resolveDepthBuffer`), and each pixel gathers `DOF_TAPS` neighbours over a thin lens's blur. Bloom follows it.
   - The letterbox with captions.
@@ -298,7 +301,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
 - `render/reflection.ts`: the planar mirror at half resolution.
 - `render/instancing.ts`: instanced meshes split into cells (`chunk`, `across`) so off-screen cells cull.
 - `render/cull.ts`: distance culling (`cullBeyond`, `setCullReach`).
-- `render/textures.ts`: every canvas-painted texture (plaster, brick, cloth, bark, kash, rice, mustard, umbrella, and so on).
+- `render/textures.ts`: every canvas-painted texture (plaster, brick, cloth, bark, kash, rice, mustard, umbrella, and so on). One painted again with the same inputs is painted once and handed out as clones (`paintedOnce`: the weaves; the cloth's relief, one for each kind of weave): each clone has its own repeat, and they share one image and one upload.
 - `world/terrain.ts` `meshGround(x, z)`: the ground as the finest patches draw it (their 2 m lattice interpolated), for what must rest on it where the ground is cut finer.
 - `render/builder.ts`: `MeshBuilder`, `rgb`, `mixRgb`, `scaleRgb`, `taperedTube`, `card`, `slab`.
 - `render/snapshot.ts`: `WorldLook`, the fields that make a shot's world.
@@ -308,7 +311,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
 ## Environment
 
 - `env/astro.ts`: the sun and moon for a local solar hour at latitude 21.6°. The declination comes from the date; the moon walks the ecliptic, and its tilt off it is ignored. `sunDirectionOn`/`moonDirectionOn` give them on another day without moving the sun's own day (for moments weighed ahead).
-- `env/clock.ts`: sky time. `SPEEDS` are multiples of the wall clock's (1 = real time); faster, the time-lapse speeds through the middles and lingers near each rise and set (`BASE_RATE`, `LINGER`, `WATCH`); `LAPSE` (360) is the film's pace. `live`: kept to Bangladesh's own time in Live (main.ts calls `follow(hour)` each frame) until the viewer turns the clock. `events()` gives the day's events.
+- `env/clock.ts`: sky time. `SPEEDS` are multiples of the wall clock's (1 = real time); faster, the time-lapse. `advance(dt, own)`: the viewer's own clock (`own`, main.ts outside the film) passes each event's `HAPPENING` in `EVENT_SECONDS` (25) whatever the pace, eased over `EVENT_RAMP` (`ownPace`); the film's lingers near each rise and set as its scenes were shot (`BASE_RATE`, `LINGER`, `rate`). `WATCH`: when the camera may turn to an event. `LAPSE` (360) is the film's pace. `live`: kept to Bangladesh's own time in Live (main.ts calls `follow(hour)` each frame) until the viewer turns the clock. `events()` gives the day's events.
 - `env/season.ts`: the six Bangla seasons as key rows (`KEYS`, `SEASON_NAMES`, `SEASON_STARTS`). `bangladeshTime()`: the day of the year and the hour in Bangladesh now (UTC+6).
   - `water`: the rivers' rise, full in the rains and Sharat and lowest in spring.
   - `salt`: the salt season. Also crops, colours, rain, wind and blossom.
@@ -331,7 +334,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - The floor (`openingFloor`): laid once at the start from `clearance`: with the rig's `Sightlines`, `CLEAR` m over what stands within `AROUND` m (crowns, palms, bamboo, houses) and `OPEN` m over open land, `LOW` over open water past `REACH`; without them, `CANOPY` m over all land. Risen to `AHEAD` s early, eased over `SMOOTH`, and met with a soft max (`BLEND`). Its last `HANDOFF` s ease into the follow camera by a smootherstep (rig.ts `flyOpening`: a smoothstep jolted where the two poses stood apart).
 - `rig/sightlines.ts`: `Sightlines(crowns, stems, huts)`: what stands between the eye and what it would see, for the camera's own choices. The ground on a 2 m lattice and its cover (water, open field) on a 4 m one, filled as asked; the crowns (`treeCrowns`), the palms and the bamboo (`palmStems`), the houses and the grand ghat as columns in a spatial hash; the old bridge with its arch open. `sees(from, to, spare)` (how clearly, 0..1), `look(from, heading, far)` (how deep a level look runs, over what, and what ends it), `clutter` (a crown or a roof close in front of the lens), `overWater`, `standsClear` (over the water clear of the crowns, low over open field, or high over the groves).
 - `rig/showcase.ts`: the village's sights, for the camera to show by itself. `findSights` describes each once (`SightSpec`: its middle, `up`, `size`, `rank`, `front`, `reach`, `worth` by the season and the dark; a new landmark is one `add`) and places it on her way (`placeOnWay`: sampled every `STEP` m from `EYES` heights for distance, size in the frame, bearing from her, and `Sightlines.sees`): `s` where it is seen best, `best`, and `seen`, its stretch. `chooseShown` (the rig, every `CHOOSE_SECONDS`) picks which are shown by themselves by `rank × best × worth` now, each trimmed to what the others leave free `GAP` m round them; `sightWeight` eases in and out over `EASE` m; `ownReach` is a sight's own ground.
-- `rig/compose.ts`: `Composer`, the views the camera composes left to itself. Shots in her frame (`Shot`: `bearing`, `dist`, `high`, `third`; or `anchor`ed by a sight, within `LEAVE` m of her) are weighed a little each frame (`BUDGET_MS`; a weighing every `REST` s) in `rate`: the sight seen, its size and place on a third, its `front`; her and her majhi in the frame on the other third, never cut by its edge; the light (`light`: raking, the low sun to one side, `glare` in the middle); how deep the view runs (`look` rays: water, field by `fieldWorth`, a hill or a treeline behind); `clutter`; over the water (`ASHORE`). A shot is held (`HOLD`, `HOLD_SIGHT`) and left for one `BETTER` (held past `LONG`, another angle counts `FRESH`); a sight seen worse than `POOR` gives way to the surroundings. It moves on `Spring`s whose speed and acceleration are held (`ARC`, `RUN`, `DRAW`, `LIFT`, `TURN`), drawn in where the banks close in (`safeDist`), lifted over what is under it. `narrowScale`: farther out on a phone held upright.
+- `rig/compose.ts`: `Composer`, the views the camera composes left to itself. Shots in her frame (`Shot`: `bearing`, `dist`, `high`, `third`), from behind her and her quarters (`BEHIND`; her beam too for a sight, `BESIDE`), looking on ahead (`LOOK_ON`; to a sight no further round than `LOOK_ASIDE`, and turned to from about the shot held before it, `STAY`), are weighed a little each frame (`BUDGET_MS`; a weighing every `REST` s) in `rate`: the sight seen, its size and place on a third, its `front`; her and her majhi in the frame on the other third, never cut by its edge; the light (`light`: raking, the low sun to one side, `glare` in the middle); how deep the view runs (`look` rays: water, field by `fieldWorth`, a hill or a treeline behind); `clutter`; over the water (`ASHORE`). A shot is held (`HOLD`, `HOLD_SIGHT`) and left for one `BETTER` (held past `LONG`, another angle counts `FRESH`); a sight seen worse than `POOR` gives way to the surroundings. It moves on `Spring`s whose speed and acceleration are held (`ARC`, faster while it looks back `ARC_BACK`, `RUN`, `DRAW`, `LIFT`, `TURN`), drawn in where the banks close in (`safeDist`), lifted over what is under it. `narrowScale`: farther out on a phone held upright.
 - `rig/vantage.ts`: `vantages(place, lines, count)`: where any place is seen from with the land round it: rings round it (`RINGS` × its size, `NEAREST`..`FARTHEST`, `HIGHS`), weighed by `sees`, its size in the frame (`SIZE`), the depth past it, clutter and the water; the best, `APART` round it. `surfaceAt`.
 - `rig/visits.ts`: the map's places (`mapSpots(lines)`: a `Spot` each with its name, a line about it, its sign, its group and its shots). Each place's own shots (`SHOT` s, an even `glide` over the ground or the water beneath it) between its wide views (`viewShot`: `VIEW` s, an arc round it from a vantage found the first time one is posed), `before` and `after` per place. The shots after the first dissolve in over `CUT` s (director `Scene.dissolve`). The first carries the boat's place (`journey`): short of the place's `sync` (its part on her way: the zamindar's ghat) by the shots' length, the dissolve back and `LEAD` seconds more at `CRUISE`, so she has not passed it when the camera comes back to her.
 - `rig/rig.ts`: the boat's journey and the camera.
@@ -380,7 +383,9 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - Thunder still on its way is hushed when a scene changes (`hushThunder`).
   - It fades in on the first touch or key, is muted with M or the speaker (remembered as `nodi.muted`), and sleeps while the page is hidden.
 - `main.ts`: the bootstrap; the mode (`mode`: cinematic or Live; `toggleLive`, `setMode` under the dip's dark `DIP`, `keepToWall`, `takeClock`), the cinematic sunrise (`sunrise`, `riseSun`, `beginSunrise`), the season's own (`onJourney`, `seasonHeld`, `yearJourney`, `followYear`, `backToMode`, `ownMoon`); the opening flight's start; adaptive resolution and the quality tier (`setQuality`); the film's stage; `worldLook`/`drawLeaving` for dissolves; the jump under a moment of dark (`jumpAt`, `readyAround`); every keyboard shortcut; the `?debug` hooks.
-  - At load every material is compiled, the hidden ones too.
+  - At load every material is compiled, the hidden ones too. What is built starts compiling at once (`compileSoon`, for the scene's lights `sceneLights` and the scene pass's target), so the driver works on the programs while the rest is built.
+  - Groups that never move are added through `still()` (their matrices made once); the scene's own matrix is never remade.
+  - The quality: the opening's first view is readied and drawn a few times behind the loader, its GPU cost measured (`gpuCost`, by the timer query where there is one) and the starting size and tier set from it (`GPU_AIM`). Then the adaptive resolution (`ADAPT`): quick windows at first, a slow frame takes the size straight to what would hold it, never below `least` (`leastDense` on a phone's dense screen), back up a step at a time; the lower tier comes in once the picture is slow at `lowAt` or the frames wait on the CPU (`cpuBound`), where fewer pixels would not help.
   - Shader logs are checked only in development (`renderer.debug.checkShaderErrors`): checking one on a program's first use waits for the driver.
 
 ## Legacy tooling
@@ -399,12 +404,12 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
 | Moored boats and their lines | world/village.ts → `tieUp`, `mooredBoat`, `zamindarBoat`, `MOORED_DRAFT`, `SLACK`; their swing and bob in the `moored` vertex shader |
 | Waterway widths, depths, currents; the journey's line | `world/waterways.ts` |
 | Light, exposure, fog and water colour per time of day | `env/environment.ts` → `LOOKS`; moonlight and new-moon glow in `update()` (`moonE`, `glowE`) |
-| Clock speed, lingering near events, when the camera watches | `env/clock.ts` → `BASE_RATE`, `LINGER`, `WATCH`, `SPEEDS`, `LAPSE` |
+| Clock speed, how long a sky event takes, the film's lingering, when the camera watches | `env/clock.ts` → `HAPPENING`, `EVENT_SECONDS`, `EVENT_RAMP`, `BASE_RATE`, `LINGER`, `WATCH`, `SPEEDS`, `LAPSE` |
 | The seasons along the journey | `rig/yearJourney.ts` → `STRETCH`, `HOLD`, `HOLD_DAYS` |
 | The opening flight | `rig/opening.ts` → `KEYS` (its first look up the river: `up`), `ROUND`, `DOWN_BY`, `OPENING_SECONDS`, `SET_OFF`, `HANDOFF`; its floor `CLEAR`, `AROUND`, `OPEN`, `CANOPY`, `LOW`, `REACH`, `AHEAD`, `SMOOTH`; where it ends `rig/rig.ts` → `OPENING_VIEW`; the title over it main.ts `TITLE_SECONDS` |
 | The cinematic morning: what is weighed, the sunrise, the lit stage | `rig/cinematic.ts` → `planCinematic` (its terms), `SUNRISE`, `DAWN`, `LIT`, `MOON_DOWN`, `morningMoon` |
 | The sights the camera shows by itself (a new landmark: one `add`) | `rig/showcase.ts` → `findSights`, `STEP`, `EYES`, `LEAST`, `MOST`, `KEEP`, `GAP`, `EASE`, `WORTHY`; how often they are chosen `rig/rig.ts` → `CHOOSE_SECONDS` |
-| How the camera composes left to itself | `rig/compose.ts` → `BEARINGS`, `DISTS`, `HIGHS`, `LEAVE`, `HOLD`, `BETTER`, `LONG`, `POOR`, `ASHORE`, the paces (`ARC`, `RUN`, `TURN`…), `HER_Y`, `SIGHT_Y`, `HORIZON_Y`, `rate` (its weights), `narrowScale`; what hides what `rig/sightlines.ts` |
+| How the camera composes left to itself | `rig/compose.ts` → `BEHIND`, `BESIDE`, `DISTS`, `HIGHS`, `LOOK_ON`, `LOOK_ASIDE`, `STAY`, `HOLD`, `BETTER`, `LONG`, `POOR`, `ASHORE`, the paces (`ARC`, `ARC_BACK`, `RUN`, `TURN`…), `HER_Y`, `SIGHT_Y`, `HORIZON_Y`, `rate` (its weights), `narrowScale`; what hides what `rig/sightlines.ts` |
 | The map's places and their shots | `rig/visits.ts` → `mapSpots`, `glide`, `SHOT`, `VIEW`, `CUT`, `LEAD`, each place's `before`/`after`; their wide views `rig/vantage.ts` → `RINGS`, `HIGHS`, `SIZE`, `APART`; the map `ui/mapPanel.ts` → `ICONS`, `GROUPS`, `paintAt`, `drawLines`; `ui/map.css` |
 | The loader, the logo, the icons | `index.html` (`#load`), `ui/hud.ts`; `public/brand/` (`logo.svg`, `favicon.svg`, `loader.webp`); `scripts/brand/icons.mjs` |
 | The change of mode, the first fair minutes, idle times, picks' hold and turn times | `main.ts` → `DIP`, `OPENING_CLEAR_SECONDS`, `WATCH_IDLE_MS`, `SESSION_MS`, `YEAR_TURN_SECONDS`, `MOON_TURN_SECONDS` |
@@ -430,6 +435,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
 | Hyacinth | `world/drift.ts` → `PLANTS`, `EDGE` |
 | Ground photo layers and their scale | `render/surfaces.ts` → `GROUND_LAYERS`; `render/patch.ts` → `SPLAT_TILE`, `SPLAT_COLOR`; `world/terrain.ts` → `LOOK` |
 | Distance culling | `main.ts` → `cullBeyond(...)`; `render/cull.ts`; cells `render/instancing.ts` |
+| The quality tiers, the calibration at load, the adaptive resolution | `main.ts` → `setQuality`, `gpuCost`, `GPU_AIM`, `ADAPT`; the multisampling `render/pipeline.ts` `setSamples` |
 | Water level map | `world/water.ts` → `LEVEL_CELL`, `LEVEL_SPREAD`, `SPREAD_BELOW` |
 | Train frequency | `world/railway.ts` → `EVERY` |
 | Bloom, grade, letterbox, depth of field | `render/pipeline.ts`; a shot's focus `rig/tour.ts` (`focus`, `aperture`) |

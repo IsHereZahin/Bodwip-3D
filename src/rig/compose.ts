@@ -1,5 +1,5 @@
 import { Vector3, type PerspectiveCamera } from 'three';
-import { angleDelta, clamp, smoothstep } from '../core/mathx';
+import { angleDelta, clamp, lerp, smoothstep } from '../core/mathx';
 import type { SeasonState } from '../env/season';
 import { BRIDGE, SANKO, bridgeFrame, corridorDistance, sankoFrame } from '../world/geography';
 import { CORRIDOR } from '../render/glsl';
@@ -7,13 +7,14 @@ import type { LookAlong, Sightlines } from './sightlines';
 import { ownReach, sightWorth, type Sight, type SightNow } from './showcase';
 
 // The camera left to itself on the journey (the user's direction, 2026-10-07): it chooses where to stand and how
-// to frame, as a cinematographer would, for the most beautiful view there is of where she is: of the village's
-// sight she is passing (showcase.ts), or of her surroundings when there is none. She is in the frame, but it is
-// not her frame; for a sight it may go a little way off from her to the place it is seen best from, hold it there
-// as she goes by, and come back to her.
+// to frame, as a cinematographer would, for the most beautiful view there is of where she is going: always from
+// behind her or her quarter, looking on ahead past her (the user: never from in front looking back; only a rising
+// or setting sun or moon turns it round, and that is the rig's watch). She is in the frame, but it is not her
+// frame. When one of the village's sights comes by (showcase.ts) it stays about where it stood and turns to it for
+// a few seconds, framing it with her, then turns back on ahead.
 //
-// Each choice is a shot: in her own frame (round from her bow, out from her, over the water, and the side of the
-// frame she stands in), or kept to a place by the sight. Many are weighed against each other a little each frame
+// Each choice is a shot in her own frame (round from her bow, out from her, over the water, and the side of the
+// frame she stands in). Many are weighed against each other a little each frame
 // (`BUDGET_MS`), each by what it would show: whether the sight is seen past the banks, the trees and the houses,
 // how big it stands, from its front; her and her majhi in the frame on a third, the horizon high; the light raking
 // across, the sun to one side and never in the middle of the frame; how deep the view runs, over the water, the
@@ -24,15 +25,13 @@ import { ownReach, sightWorth, type Sight, type SightNow } from './showcase';
 
 /**
  * A shot: the camera `bearing` rad round from her bow (+ to her left), `dist` m out from her, `high` m over the
- * water; or (`anchor`) kept to a place by a sight as she goes by. `third`: the side of the frame she stands in (−1
- * left, +1 right).
+ * water; `third`: the side of the frame she stands in (−1 left, +1 right).
  */
 export interface Shot {
   bearing: number;
   dist: number;
   high: number;
   third: number;
-  anchor?: { x: number; z: number };
 }
 
 /** What the composer is given each frame. */
@@ -58,15 +57,23 @@ export interface Rated {
   terms: Record<string, number>;
 }
 
-/** The shots weighed round her: every 30°, out from her (m, on a landscape screen), over the water (m). */
-const BEARINGS = 12;
+/**
+ * The shots weighed: behind her and on her quarters (rad from her bow), and for a sight on her beam too; out from her
+ * (m, on a landscape screen), over the water (m).
+ */
+const DEG = Math.PI / 180;
+const BEHIND = [100, 120, 140, 160, 180, -160, -140, -120, -100].map((d) => d * DEG);
+const BESIDE = [80, -80].map((d) => d * DEG);
 const DISTS = [10, 17, 26];
 const HIGHS = [2.4, 5, 9.5, 16, 23];
-/** The places by a sight weighed: either side of the way to her (rad), at what it is seen well from and a little farther, over the water (m); within `LEAVE` m of her. */
-const ROUND_SIGHT = [-1.3, -0.8, -0.27, 0.27, 0.8, 1.3];
-const SIGHT_DISTS = [1, 1.4];
-const SIGHT_HIGHS = [3, 7, 14];
-const LEAVE = 45;
+/**
+ * How far round from her course the camera may look (rad): on her surroundings, ahead and a little aside (it gives
+ * way between the two); turned to a sight, as far as her beam and a little past, never back.
+ */
+const LOOK_ON: readonly [number, number] = [1.05, 1.3];
+const LOOK_ASIDE: readonly [number, number] = [1.65, 1.95];
+/** Turned to a sight, what a shot is worth that keeps near the one she was seen from (`STAY`..1 of its score): it turns rather than moves. */
+const STAY = 0.5;
 /** Each frame's share of the weighing (ms), and the seconds between one weighing and the next. */
 const BUDGET_MS = 1.1;
 const REST = 1;
@@ -97,6 +104,8 @@ const MAJHI_UP = 2.2;
  * lifted over what it passes over (m), and turning to its framing (rad).
  */
 const ARC: Pace = { omega: 0.7, speed: 0.16, accel: 0.05 };
+/** Round her faster while it looks back the way she has come (as the opening flight hands it over, looking back at the sunrise): it comes round behind her sooner. */
+const ARC_BACK: Pace = { omega: 0.9, speed: 0.32, accel: 0.1 };
 const RUN: Pace = { omega: 0.7, speed: 2.6, accel: 0.8 };
 const DRAW: Pace = { omega: 1.8, speed: 5, accel: 5 };
 const LIFT: Pace = { omega: 3, speed: 4, accel: 8 };
@@ -190,7 +199,10 @@ export class Composer {
   private readonly onB: OnScreen = { x: 0, y: 0, ahead: false };
   private readonly along: LookAlong = { depth: 0, water: 0, field: 0, backdrop: 0 };
   private readonly framing = { yaw: 0, pitch: 0 };
-  private readonly where = { bearing: 0, dist: 0 };
+  /** The pace round her now, between `ARC` and `ARC_BACK`. */
+  private readonly round: Pace = { ...ARC };
+  /** The shot on her surroundings held as a sight came by: the camera turns to the sight from about there. */
+  private before: Shot | null = null;
   private readonly now: SightNow = { season: null as unknown as SeasonState, night: 0 };
 
   /** `keepClear`: moves a camera place clear of the crossings (the rig's, for the follow camera too). */
@@ -246,14 +258,13 @@ export class Composer {
     }
     const a = this.aim as Shot | null;
     if (!a) return;
-    const w = this.resolve(m, a);
-    this.bearing.set(w.bearing);
-    this.dist.set(w.dist);
+    this.bearing.set(a.bearing);
+    this.dist.set(a.dist);
     this.high.set(a.high);
     this.third = a.third;
-    this.drawn.set(this.safeDist(m, w.bearing, w.dist, a.high));
+    this.drawn.set(this.safeDist(m, a.bearing, a.dist, a.high));
     this.lift.set(0);
-    this.place(m, w.bearing, this.drawn.x, a.high, this.p);
+    this.place(m, a.bearing, this.drawn.x, a.high, this.p);
     this.frame(this.p, m, a.third, this.share, this.framing);
     this.yaw.set(this.framing.yaw);
     this.pitch.set(this.framing.pitch);
@@ -278,6 +289,8 @@ export class Composer {
     const key = subject ? `${subject.name}@${Math.round(subject.s)}` : '';
     // a new subject is weighed at once
     if (key !== this.key) {
+      // (a sight is turned to from the shot on her surroundings held as it came by)
+      if (subject && !this.key) this.before = this.aim;
       this.key = key;
       this.subject = subject;
       this.list = [];
@@ -287,19 +300,18 @@ export class Composer {
       this.rest -= dt;
       return;
     }
-    if (this.list.length === 0) this.begin(m);
+    if (this.list.length === 0) this.begin();
     const until = performance.now() + budget;
     while (this.next < this.list.length && performance.now() < until) {
       const shot = this.list[this.next];
       // (where the camera may not stand, neither side of the frame is weighed)
-      const w = this.resolve(m, shot);
-      const stands = this.canStand(this.place(m, w.bearing, w.dist, shot.high, this.p));
+      const stands = this.canStand(this.place(m, shot.bearing, shot.dist, shot.high, this.p));
       for (const third of stands ? [-1, 1] : []) {
         shot.third = third;
         const r = this.rate(m, shot, this.subject, false, true);
         if (this.next === 0 && this.aim && third === this.aim.third) this.current = r.score;
         // a view held long gives way more easily to another angle on her
-        const fresh = !this.subject && this.aim && this.held > LONG && Math.abs(angleDelta(w.bearing, this.bearing.x)) > ANOTHER ? FRESH : 1;
+        const fresh = !this.subject && this.aim && this.held > LONG && Math.abs(angleDelta(shot.bearing, this.bearing.x)) > ANOTHER ? FRESH : 1;
         if (!this.best || r.score * fresh > this.best.score) this.best = { shot: { ...shot }, score: r.score * fresh, terms: {} };
       }
       this.next++;
@@ -310,33 +322,14 @@ export class Composer {
     this.rest = REST;
   }
 
-  /**
-   * A new weighing: the shot aimed for first (for its own score now), then the shots round her, and for a sight the
-   * places by it it is seen well from, within reach of her.
-   */
-  private begin(m: Moment): void {
+  /** A new weighing: the shot aimed for first (for its own score now), then the shots behind her and on her quarters (and her beam, for a sight). */
+  private begin(): void {
     this.list = [];
     if (this.aim) this.list.push({ ...this.aim });
     // (on a narrow screen a little farther out, though not as far as the follow camera: she would be lost in its height)
     const narrow = narrowScale(this.camera) ** 0.6;
-    for (let i = 0; i < BEARINGS; i++) {
-      const bearing = angleDelta(0, (i / BEARINGS) * Math.PI * 2);
+    for (const bearing of this.subject ? [...BEHIND, ...BESIDE] : BEHIND) {
       for (const dist of DISTS) for (const high of HIGHS) this.list.push({ bearing, dist: dist * narrow, high, third: 1 });
-    }
-    const s = this.subject;
-    if (s) {
-      const fov = (this.camera.fov * Math.PI) / 180;
-      // where it stands about half the frame's height
-      const seenAt = clamp(s.size / Math.tan(fov / 4), 12, 120);
-      const toHer = Math.atan2(m.boat.x - s.at.x, m.boat.z - s.at.z);
-      for (const k of ROUND_SIGHT) {
-        for (const f of SIGHT_DISTS) {
-          const x = s.at.x + Math.sin(toHer + k) * seenAt * f;
-          const z = s.at.z + Math.cos(toHer + k) * seenAt * f;
-          if (Math.hypot(x - m.boat.x, z - m.boat.z) > LEAVE) continue;
-          for (const high of SIGHT_HIGHS) this.list.push({ bearing: 0, dist: 0, high, third: 1, anchor: { x, z } });
-        }
-      }
     }
     this.next = 0;
     this.best = null;
@@ -364,21 +357,6 @@ export class Composer {
     } else this.aimScore = this.current;
   }
 
-  /** Where `shot` puts the camera from her now (bearing from her bow, distance out): its own, or its anchor's. */
-  private resolve(m: Moment, shot: Shot): { bearing: number; dist: number } {
-    const w = this.where;
-    if (shot.anchor) {
-      const dx = shot.anchor.x - m.boat.x;
-      const dz = shot.anchor.z - m.boat.z;
-      w.bearing = angleDelta(m.course, Math.atan2(dx, dz));
-      w.dist = Math.hypot(dx, dz);
-    } else {
-      w.bearing = shot.bearing;
-      w.dist = shot.dist;
-    }
-    return w;
-  }
-
   /** Where the camera stands `dist` m out at `bearing` from her bow, `high` m over the water (into `out`). */
   private place(m: Moment, bearing: number, dist: number, high: number, out: Vector3): Vector3 {
     const a = m.course + bearing;
@@ -400,8 +378,7 @@ export class Composer {
    * `subject` or of her surroundings; `terms` (`explain`) for the debug hooks.
    */
   private rate(m: Moment, shot: Shot, subject: Sight | null, explain: boolean, stands = false): Rated {
-    const w = this.resolve(m, shot);
-    const p = this.place(m, w.bearing, w.dist, shot.high, this.p);
+    const p = this.place(m, shot.bearing, shot.dist, shot.high, this.p);
     const terms: Record<string, number> = {};
     if (!stands && !this.canStand(p)) return { shot, score: -1, terms };
     const fov = (this.camera.fov * Math.PI) / 180;
@@ -443,7 +420,10 @@ export class Composer {
     }
     // and she is in the frame or out of it, never cut by its edge
     const cut = this.onA.ahead ? smoothstep(0.7, 0.9, Math.abs(this.onA.x)) * (1 - smoothstep(1.15, 1.4, Math.abs(this.onA.x))) : 0;
-    const clear = (1 - 0.65 * clutter) * (1 - 0.6 * glare) * (1 - 0.4 * cut) * (this.lines.overWater(p.x, p.z) ? 1 : ASHORE);
+    // and looking on ahead, never back the way she has come (aside only to a sight)
+    const [from, to] = subject ? LOOK_ASIDE : LOOK_ON;
+    const ahead = 1 - smoothstep(from, to, Math.abs(angleDelta(m.course, yaw)));
+    const clear = (1 - 0.65 * clutter) * (1 - 0.6 * glare) * (1 - 0.4 * cut) * ahead * (this.lines.overWater(p.x, p.z) ? 1 : ASHORE);
 
     let score: number;
     if (subject) {
@@ -464,8 +444,11 @@ export class Composer {
         front = ((1 + c) / 2) ** 1.5;
       }
       const height = 1 - 0.4 * smoothstep(12, 24, shot.high);
-      score = (0.4 * view + 0.1 * front + 0.16 * boat + 0.14 * light + 0.08 * content + 0.12 * height) * (0.35 + 0.65 * smoothstep(0.1, 0.4, seen)) * clear;
-      if (explain) Object.assign(terms, { seen, view, front, size });
+      // it turns to the sight from about where it stood, rather than moving off to it
+      const b = this.before;
+      const stay = b ? Math.exp(-((angleDelta(shot.bearing, b.bearing) / 0.6) ** 2) - ((shot.dist - b.dist) / 12) ** 2 - ((shot.high - b.high) / 6) ** 2) : 1;
+      score = (0.4 * view + 0.1 * front + 0.16 * boat + 0.14 * light + 0.08 * content + 0.12 * height) * (0.35 + 0.65 * smoothstep(0.1, 0.4, seen)) * clear * (STAY + (1 - STAY) * stay);
+      if (explain) Object.assign(terms, { seen, view, front, size, stay });
     } else {
       // her surroundings: the sights in view as well
       const height = (0.8 + 0.2 * smoothstep(2, 4, shot.high)) * (1 - 0.6 * smoothstep(5, 20, shot.high));
@@ -473,7 +456,7 @@ export class Composer {
       score = (0.34 * content + 0.22 * boat + 0.18 * light + 0.14 * height + 0.12 * marks) * clear;
       if (explain) Object.assign(terms, { height, marks });
     }
-    if (explain) Object.assign(terms, { boat, cut, light, glare, content, near, clutter, yaw, pitch, away: w.dist });
+    if (explain) Object.assign(terms, { boat, cut, light, glare, content, near, clutter, ahead, yaw, pitch });
     return { shot, score, terms };
   }
 
@@ -533,9 +516,10 @@ export class Composer {
     const horizon = -Math.atan(HORIZON_Y * tanV);
     const sight = m.sight;
     if (sight && share > 0) {
-      const w = 2.2 * share;
       const at = sight.at;
       const sYaw = Math.atan2(at.x - p.x, at.z - p.z) + Math.atan((-third / 3) * tanH);
+      // (a sight falling behind her is let go: the camera never turns back for it)
+      const w = 2.2 * share * (1 - smoothstep(LOOK_ASIDE[0], LOOK_ASIDE[1], Math.abs(angleDelta(m.course, sYaw))));
       const sPitch = Math.atan2(at.y - p.y, Math.hypot(at.x - p.x, at.z - p.z)) - Math.atan(SIGHT_Y * tanV);
       yaw = herYaw + (angleDelta(herYaw, sYaw) * w) / (1 + w);
       pitch = (herPitch + sPitch * w + horizon * 1.2) / (2.2 + w);
@@ -574,9 +558,13 @@ export class Composer {
   private pose(dt: number, m: Moment, pos: Vector3, look: Vector3): void {
     const a = this.aim;
     if (a) {
-      const w = this.resolve(m, a);
-      this.bearing.turn(w.bearing, ARC, dt);
-      this.dist.to(w.dist, RUN, dt);
+      // (eased from the one pace to the other as it comes round, so its speed is never cut short)
+      const back = smoothstep(LOOK_ON[0], LOOK_ASIDE[0], Math.abs(angleDelta(m.course, this.yaw.x)));
+      this.round.omega = lerp(ARC.omega, ARC_BACK.omega, back);
+      this.round.speed = lerp(ARC.speed, ARC_BACK.speed, back);
+      this.round.accel = lerp(ARC.accel, ARC_BACK.accel, back);
+      this.bearing.turn(a.bearing, this.round, dt);
+      this.dist.to(a.dist, RUN, dt);
       this.high.to(a.high, RUN, dt);
       this.third = a.third;
     }

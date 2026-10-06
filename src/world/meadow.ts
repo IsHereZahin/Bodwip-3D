@@ -7,6 +7,7 @@ import {
   Matrix4,
   MeshStandardMaterial,
   Quaternion,
+  Sphere,
   Vector3,
 } from 'three';
 import type { Material } from 'three';
@@ -54,6 +55,9 @@ const CACHE = 2600;
 const STEP = 0.4;
 /** Lattice spacing for the cheap height and cover lookups inside a chunk. */
 const LATTICE = 1.6;
+/** How far a clump reaches past its chunk's square, leaning and swaying (≈0.9 m in a storm), and up over its foot (m). */
+const CLUMP_OUT = 1.5;
+const CLUMP_TOP = 2.2;
 
 /** The quality tier's share of the grass's reach, for the shaders' bands. */
 const REACH = { value: 1 };
@@ -189,6 +193,9 @@ interface ChunkData {
   used: number;
   /** When it was built (the shader clock); long ago for those built out of sight. */
   born: number;
+  /** The lowest and highest ground its clumps stand on (m). */
+  low: number;
+  high: number;
 }
 
 /** A chunk a view wants: its key (x, z, level of detail), its middle, and its distance. */
@@ -219,6 +226,8 @@ export class Meadow {
   private reach = 1;
   private dirty = false;
   private frame = 0;
+  /** What the clumps uploaded stand in, for the camera's culling (one for every layer: they share their chunks). */
+  private readonly bounds = new Sphere();
 
   constructor(huts: readonly HutPlan[], ghats: readonly Ghat[]) {
     this.group.name = 'meadow';
@@ -378,10 +387,25 @@ export class Meadow {
     this.dirty = false;
     const offsets: Record<string, number> = {};
     for (const name of LAYERS) offsets[name] = 0;
+    // the bounds from the chunks' squares and their ground's heights, not from every clump
+    let x0 = Infinity;
+    let x1 = -Infinity;
+    let z0 = Infinity;
+    let z1 = -Infinity;
+    let y0 = Infinity;
+    let y1 = -Infinity;
     for (const w of this.wanted) {
       const chunk = this.cache.get(w.key);
       if (!chunk) continue;
       chunk.used = this.frame;
+      if (chunk.low <= chunk.high) {
+        x0 = Math.min(x0, w.x - CHUNK / 2 - CLUMP_OUT);
+        x1 = Math.max(x1, w.x + CHUNK / 2 + CLUMP_OUT);
+        z0 = Math.min(z0, w.z - CHUNK / 2 - CLUMP_OUT);
+        z1 = Math.max(z1, w.z + CHUNK / 2 + CLUMP_OUT);
+        y0 = Math.min(y0, chunk.low - CLUMP_OUT);
+        y1 = Math.max(y1, chunk.high + CLUMP_TOP);
+      }
       LAYERS.forEach((name, i) => {
         const part = chunk.parts[i];
         const layer = this.sets[this.cur][name];
@@ -394,13 +418,25 @@ export class Meadow {
         offsets[name] = at + n;
       });
     }
+    if (x0 <= x1) {
+      this.bounds.center.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
+      this.bounds.radius = Math.hypot(x1 - x0, y1 - y0, z1 - z0) / 2;
+    }
     for (const name of LAYERS) {
       const { mesh, colors, born } = this.sets[this.cur][name];
       mesh.count = offsets[name];
+      // only the part in use goes up to the GPU (and nothing for an empty layer: a range of none would send it all)
+      if (!mesh.count) continue;
+      mesh.instanceMatrix.clearUpdateRanges();
+      mesh.instanceMatrix.addUpdateRange(0, mesh.count * 16);
       mesh.instanceMatrix.needsUpdate = true;
+      colors.clearUpdateRanges();
+      colors.addUpdateRange(0, mesh.count * 3);
       colors.needsUpdate = true;
+      born.clearUpdateRanges();
+      born.addUpdateRange(0, mesh.count);
       born.needsUpdate = true;
-      if (mesh.count) mesh.computeBoundingSphere();
+      mesh.boundingSphere = (mesh.boundingSphere ?? new Sphere()).copy(this.bounds);
     }
     // forget the chunks not seen for a while
     if (this.cache.size > CACHE) {
@@ -416,6 +452,8 @@ export class Meadow {
     const z0 = cz * CHUNK;
     const rng = new Rng((Math.imul(cx, 73856093) ^ Math.imul(cz, 19349663) ^ (lod * 83492791)) >>> 0);
     const out = LAYERS.map(() => ({ list: [] as number[], col: [] as number[] }));
+    let low = Infinity;
+    let high = -Infinity;
     const lattice = groundLattice(x0, z0, CHUNK, LATTICE);
     const huts = this.huts.filter((h) => Math.abs(h.x - x0 - CHUNK / 2) < CHUNK && Math.abs(h.z - z0 - CHUNK / 2) < CHUNK);
     const ghats = this.ghats.filter((g) => Math.abs(g.x - x0 - CHUNK / 2) < CHUNK && Math.abs(g.z - z0 - CHUNK / 2) < CHUNK);
@@ -430,6 +468,8 @@ export class Meadow {
       q.multiply(spin.setFromAxisAngle(UP, rng.range(0, Math.PI * 2)));
       m.compose(pos.set(x, y, z), q, scl.set(s, s * sy, s));
       out[layer].list.push(...m.elements);
+      low = Math.min(low, y);
+      high = Math.max(high, y);
       out[layer].col.push(color[0], color[1], color[2]);
     };
     const step = STEP;
@@ -474,6 +514,8 @@ export class Meadow {
       key,
       used: this.frame,
       born: grown ? -1e4 : G.uTime.value,
+      low,
+      high,
       parts: out.map((o) => ({ m: new Float32Array(o.list), c: new Float32Array(o.col), n: o.col.length / 3 })),
     };
   }

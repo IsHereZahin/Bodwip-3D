@@ -131,7 +131,10 @@ export class PetalCarpet {
     const until = all ? Infinity : performance.now() + LAY_MS;
     const season = G.uSeasonA.value.z;
     const rise = waterRise();
-    const laying = this.layNear(eye, until) || (leftEye !== null && this.layNear(leftEye, until));
+    // out of the flowering none show, so none are laid (the film lays its spring shots' ahead, `warm`); as it
+    // comes on, the few to show first are the first laid
+    const flowering = season > 0.02;
+    const laying = flowering && (this.layNear(eye, until) || (leftEye !== null && this.layNear(leftEye, until)));
     if (
       all ||
       this.laidAt.distanceTo(eye) > RELAY.moved ||
@@ -144,7 +147,7 @@ export class PetalCarpet {
       this.laidRise = rise;
       this.laidTime = t;
       this.near = [];
-      if (season > 0.02) {
+      if (flowering) {
         const shares = new Map<Crown, number>();
         this.gather(eye, shares);
         if (leftEye) this.gather(leftEye, shares);

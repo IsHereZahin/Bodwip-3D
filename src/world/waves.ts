@@ -179,6 +179,31 @@ export function waveSlope(x: number, z: number, t: number, out: { x: number; z: 
   return out;
 }
 
+/**
+ * Surface height (returned) and slope (into `out`) together, sharing each wave's phase: the same as waveHeight
+ * and waveSlope at (x, z, t, shelter), for the many small things set on the water every frame.
+ */
+export function waveHeightSlope(x: number, z: number, t: number, out: { x: number; z: number }, shelter = 1): number {
+  let h = 0;
+  out.x = 0;
+  out.z = 0;
+  for (const v of WAVES) {
+    const a = ampNow(v);
+    if (!(a > 0)) continue;
+    const phase = v.k * (v.dx * x + v.dz * z) - v.w * t + v.phase;
+    h += a * Math.sin(phase);
+    const c = a * v.k * Math.cos(phase);
+    out.x += c * v.dx;
+    out.z += c * v.dz;
+  }
+  out.x *= shelter;
+  out.z *= shelter;
+  const open = exposureAt(x, z);
+  h *= shelter * (1 + OPEN_SEA * open);
+  if (open > 0.002) h += swellRaw(x, z, t) * swellFactor(x, z);
+  return h;
+}
+
 /** How a hull meets the waves: the mean height of the water over its waterline, and the water's slope along and across it. */
 export interface HullWaves {
   heave: number;

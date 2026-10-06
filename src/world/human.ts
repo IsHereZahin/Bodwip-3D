@@ -155,6 +155,9 @@ const limbHinge = new Vector3();
 const qHinge = new Quaternion();
 const qTwist = new Quaternion();
 
+/** What each ray laid on a character's body met (`Human.cast`), by the character's data. */
+const castMemo = new WeakMap<HumanData, Map<string, { point: Vector3; normal: Vector3 } | null>>();
+
 /** A side's bones that are posed every frame, looked up once. */
 interface SideBones {
   clavicle: number;
@@ -822,9 +825,20 @@ void main() {`)
 
   /**
    * The outermost skin (or garment) the ray from `origin` along `dir` meets within a metre, in the bind pose;
-   * for laying things on him (the gamchha, the orna).
+   * for laying things on him (the gamchha, the orna). Every body of one character meets the same ray alike, so
+   * each ray is cast once a character (the salt farms' many workers lay the same ফিতা, each ray through the
+   * whole body). The result is the caller's own to change.
    */
   cast(origin: Vector3, dir: Vector3): { point: Vector3; normal: Vector3 } | null {
+    let memo = castMemo.get(this.data);
+    if (!memo) castMemo.set(this.data, (memo = new Map()));
+    const key = `${origin.x},${origin.y},${origin.z},${dir.x},${dir.y},${dir.z}`;
+    let hit = memo.get(key);
+    if (hit === undefined) memo.set(key, (hit = this.castThrough(origin, dir)));
+    return hit && { point: hit.point.clone(), normal: hit.normal.clone() };
+  }
+
+  private castThrough(origin: Vector3, dir: Vector3): { point: Vector3; normal: Vector3 } | null {
     if (!this.surfaces) {
       const cover = new MeshBasicMaterial({ side: DoubleSide });
       this.surfaces = Object.entries(this.data.parts)

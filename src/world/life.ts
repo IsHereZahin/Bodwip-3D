@@ -140,8 +140,11 @@ export class Life {
   private readonly ffInland: Float32Array;
   private readonly ffHeight: Float32Array;
   private readonly ffZ: Float32Array;
-  /** Where along the khal each firefly was last laid, and where the boat was. */
-  private readonly ffAt: Float32Array;
+  /**
+   * Where along the khal each firefly was last laid, and where the boat was. (Doubles: rounded to single
+   * precision a place never equalled itself again, and every firefly was laid afresh every frame.)
+   */
+  private readonly ffAt: Float64Array;
   private lastAlong = 0;
   private readonly ffGeometry: BufferGeometry;
   private readonly pr = { value: 1 };
@@ -191,7 +194,7 @@ export class Life {
     this.ffInland = new Float32Array(F);
     this.ffHeight = new Float32Array(F);
     this.ffZ = new Float32Array(F).fill(Number.NaN);
-    this.ffAt = new Float32Array(F).fill(Number.NaN);
+    this.ffAt = new Float64Array(F).fill(Number.NaN);
     const fs = new Float32Array(F);
     for (let i = 0; i < F; i++) {
       this.ffSide[i] = this.rng.sign();
@@ -288,7 +291,9 @@ export class Life {
     const top = at + 60;
     let moved = false;
     for (let i = 0; i < this.ffZ.length; i++) {
-      const s = Math.min(JOURNEY.length, Math.max(0, top - ((((top - this.ffZ[i]) % FIREFLY_WINDOW) + FIREFLY_WINDOW) % FIREFLY_WINDOW)));
+      // (from how many windows it has wrapped: the very same place frame after frame until it wraps again; taken
+      // back from the moving window's top, rounding moved it a hair now and then and it was laid afresh)
+      const s = Math.min(JOURNEY.length, Math.max(0, this.ffZ[i] + Math.floor((top - this.ffZ[i]) / FIREFLY_WINDOW) * FIREFLY_WINDOW));
       const k = i * 3;
       if (this.ffAt[i] === s && !Number.isNaN(this.ffBase[k])) continue;
       this.ffAt[i] = s;

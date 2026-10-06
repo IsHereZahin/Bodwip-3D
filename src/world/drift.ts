@@ -9,7 +9,7 @@ import type { BoatBody } from './boatPhysics';
 import { PONDS, SALT_CREEK, WATER_LEVEL, inlandWaterAt, meanWaterLevelAt, pondReach, risenLevel, saltFarmAt, terrainHeight, waterLevelAt, waterwayAt } from './geography';
 import { HERO_HULL, heroBeamAtWater, hullHalfWidthAt, type HullShape } from './hull';
 import { wakeHeight } from './wake';
-import { INLAND, SHELTERED, waveHeight, waveSlope } from './waves';
+import { INLAND, SHELTERED, waveHeightSlope } from './waves';
 
 // Water hyacinth (kochuripana), each plant its own floating body, held to its neighbours in loose mats by
 // tangled roots; and fallen leaves. It floats on the still fresh water round the viewer (the khal, the bil, the
@@ -51,6 +51,17 @@ const WIND_DRIFT = [0.0125, 0.0075];
 const SNAP = 2.2;
 const CELL = 0.9;
 const TABLE = 4096;
+/**
+ * The steepest the ground rises toward a floater (m a m, a bank's face with room to spare): one that floated
+ * `clear` m over the ground where last measured cannot run aground before it has moved `clear / STEEPEST`.
+ */
+const STEEPEST = 3;
+/**
+ * Within this of the viewer (m) a floater is set on the waves every frame; farther off, where its bobbing of a
+ * few millimetres is less than a pixel, every FAR_EVERY frames, each on its own.
+ */
+const NEAR = 40;
+const FAR_EVERY = 4;
 const HALF_LEN = HERO_HULL.len / 2;
 
 const COLORS = {
@@ -187,6 +198,10 @@ export class Drift {
   /** The mean level of the water each floats on (still fresh water keeps its own), found when it is set down; the season raises it (risenLevel). */
   private readonly levelOf = new Float32Array(N);
   private readonly radius = new Float32Array(N);
+  /** Where each was last measured against the ground, and the ground there (the aground check). */
+  private readonly groundX = new Float32Array(N).fill(Number.NaN);
+  private readonly groundZ = new Float32Array(N).fill(Number.NaN);
+  private readonly ground = new Float32Array(N);
   /** Held up by a net that rose under it, and how high above the water. */
   private readonly scale = new Float32Array(N);
   private readonly meshOf = new Uint8Array(N);
@@ -276,7 +291,7 @@ export class Drift {
     this.recycle(view.x, view.z, jumped);
     const h = Math.min(dt, 0.05);
     if (h > 0) this.simulate(h, boat, blade, obstacles);
-    this.draw(t, boat);
+    this.draw(t, boat, view, jumped);
   }
 
   /** Pushes floater `i` out sideways from a hull's waterline, so it slides along her flank. */
@@ -380,7 +395,13 @@ export class Drift {
     // floaters collect along the banks the way they do
     for (let i = this.frame % 4; i < N; i += 4) {
       if (Number.isNaN(pz[i])) continue;
-      if (terrainHeight(px[i], pz[i]) > risenLevel(this.levelOf[i]) - 0.08) {
+      const top = risenLevel(this.levelOf[i]) - 0.08;
+      // (well afloat where last measured, and not moved far enough since to have reached a bank)
+      if (top - this.ground[i] > Math.hypot(px[i] - this.groundX[i], pz[i] - this.groundZ[i]) * STEEPEST) continue;
+      this.groundX[i] = px[i];
+      this.groundZ[i] = pz[i];
+      this.ground[i] = terrainHeight(px[i], pz[i]);
+      if (this.ground[i] > top) {
         px[i] = ox[i];
         pz[i] = oz[i];
       }
@@ -517,8 +538,11 @@ export class Drift {
     }
   }
 
-  /** Sets each floater on the shared waves (and on the water the boat pushes aside), tilted with the surface. */
-  private draw(t: number, boat: BoatBody): void {
+  /**
+   * Sets each floater on the shared waves (and on the water the boat pushes aside), tilted with the surface;
+   * `all`: every one now (after a jump, they are all somewhere new).
+   */
+  private draw(t: number, boat: BoatBody, view: Vector3, all: boolean): void {
     const ch = Math.cos(boat.heading);
     const sh = Math.sin(boat.heading);
     for (let i = 0; i < N; i++) {
@@ -530,12 +554,12 @@ export class Drift {
         this.meshes[this.meshOf[i]].setMatrixAt(this.slot[i], this.m);
         continue;
       }
+      if (!all && (i + this.frame) % FAR_EVERY !== 0 && Math.abs(x - view.x) + Math.abs(z - view.z) > NEAR) continue;
       // on its water's ripples
-      let y = risenLevel(this.levelOf[i]) + waveHeight(x, z, t, RIPPLES);
+      let y = risenLevel(this.levelOf[i]) + waveHeightSlope(x, z, t, this.slope, RIPPLES);
       const bx = x - boat.pos.x;
       const bz = z - boat.pos.z;
       if (Math.abs(bx) + Math.abs(bz) < 150) y += wakeHeight(bx * ch - bz * sh, bx * sh + bz * ch, boat.speed);
-      waveSlope(x, z, t, this.slope, RIPPLES);
       const sl = Math.hypot(this.slope.x, this.slope.z);
       this.q.setFromAxisAngle(UP, this.yaw[i]);
       if (sl > 1e-5) {

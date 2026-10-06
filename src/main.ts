@@ -1,4 +1,4 @@
-import { Color, Matrix4, PCFShadowMap, PerspectiveCamera, Quaternion, SRGBColorSpace, Scene, Sphere, Triangle, Vector3, Vector4, WebGLRenderer, type RenderTarget } from 'three';
+import { Color, DirectionalLight, HemisphereLight, Matrix4, PCFShadowMap, PerspectiveCamera, PointLight, Quaternion, SRGBColorSpace, Scene, Sphere, Triangle, Vector3, Vector4, WebGLRenderer, type RenderTarget } from 'three';
 import type { InstancedMesh, Light, Mesh, Object3D } from 'three';
 import { Soundscape } from './audio/soundscape';
 import { G, LAYER_NO_REFLECT, LAYER_WATER } from './core/globals';
@@ -118,11 +118,24 @@ const PREPARE_MS = 30;
 /** Lets the loader repaint between build steps. */
 const nextTask = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+/**
+ * A group that never moves once built (the trees, the houses, the landmarks): its matrices are made once, and
+ * the frame's matrix update passes over it (thousands of objects otherwise remade every pass).
+ */
+const still = <T extends Object3D>(group: T): T => {
+  group.updateMatrixWorld(true);
+  group.matrixWorldAutoUpdate = false;
+  return group;
+};
+
 const isSun = (kind: SkyEventKind) => kind === 'sunrise' || kind === 'sunset';
 const hourOf = (ev: SkyEvent) => (ev.time - Math.floor(ev.time)) * 24;
 const notice = (ev: SkyEvent) => `${EVENT_NOW[ev.kind]} · ${clockLabel(hourOf(ev))}`;
 
 async function main(hud: Hud): Promise<void> {
+  // the mosque's inscription is painted in its calligraphic face, waited for before the landmarks are built: its
+  // file is asked for now, so it comes down while the land is built rather than holding the load up there
+  document.fonts.load(`700 64px ${KALIMA_FONT}`, 'لا إله').catch(() => []);
   // the site opens in the cinematic mode (the user's direction): the morning the system finds the most beautiful,
   // weighed over the whole year (rig/cinematic.ts); Live is Bangladesh's own date and hour, at a press. The loader
   // says which morning it is: its season, its date and the dawn
@@ -158,10 +171,28 @@ async function main(hud: Hud): Promise<void> {
   const surfacesLoading = loadSurfaces(Math.min(aniso, 8));
 
   const scene = new Scene();
+  // the scene itself never moves: left to update its own matrix, it would push every object's matrices to be
+  // remade every frame, the groups that never move (`still`) too
+  scene.matrixAutoUpdate = false;
   const camera = new PerspectiveCamera(48, innerWidth / innerHeight, 0.5, 6000);
   camera.layers.enable(LAYER_WATER);
   camera.layers.enable(LAYER_NO_REFLECT);
   const pipeline = new Pipeline(0.5);
+  // what is built starts compiling at once, the GPU's driver working on its programs while the rest is built (the
+  // load's longest wait was for them all at its end). They are made for the lights the scene will have (the sun with
+  // its shadow and the sky, env/environment.ts; the hero boat's lantern) and drawn into the scene pass's target, as
+  // its frames are, so the compile at the end finds them made. (Only while the scene has no lights of its own.)
+  const sceneLights = new Scene();
+  {
+    const sun = new DirectionalLight();
+    sun.castShadow = true;
+    sceneLights.add(sun, new HemisphereLight(), new PointLight());
+  }
+  const compileSoon = () => {
+    renderer.setRenderTarget(pipeline.sceneTarget);
+    renderer.compile(scene, camera, sceneLights);
+    renderer.setRenderTarget(null);
+  };
 
   hud.progress(0.05);
   await nextTask();
@@ -169,9 +200,9 @@ async function main(hud: Hud): Promise<void> {
   scene.add(sky.mesh);
   // beyond the world's edges only the haze and the hills on the horizon; past the land the village keeps to
   // (the boat's way and the bil) the land fades into the haze too
-  scene.add(buildBackdrop());
+  scene.add(still(buildBackdrop()));
   // the cloud that gathers on the hills in winter
-  scene.add(buildHillMist());
+  scene.add(still(buildHillMist()));
   buildCorridorMap();
   const surfaces = await surfacesLoading;
   hud.progress(0.15);
@@ -191,23 +222,24 @@ async function main(hud: Hud): Promise<void> {
   // the homesteads: their houses round their yards, their haystacks, their ghats and boats
   const huts = planHuts();
   const ghats = planGhats();
-  const villages = buildVillages(huts, ghats);
+  const villages = still(buildVillages(huts, ghats));
   scene.add(villages);
-  scene.add(buildYards(huts));
+  scene.add(still(buildYards(huts)));
   // the banyan at the hub, the zamindar house, its ghat and temple, the mosque, the tea stall
-  scene.add(buildBanyan(surfaces.bark));
+  scene.add(still(buildBanyan(surfaces.bark)));
   // and the old banyan by the mosque's graveyard
-  scene.add(buildBanyan(surfaces.bark, GRAVEYARD_BANYAN));
+  scene.add(still(buildBanyan(surfaces.bark, GRAVEYARD_BANYAN)));
   // the mosque's inscription is painted in its calligraphic face: wait for it a moment (offline, a system Arabic face stands in)
   await Promise.race([document.fonts.load(`700 64px ${KALIMA_FONT}`, 'لا إله').catch(() => []), new Promise((r) => setTimeout(r, 4000))]);
-  scene.add(buildLandmarks());
+  scene.add(still(buildLandmarks()));
+  compileSoon();
   // everything standing, for the trees and the grass to keep clear of
   const standing = huts;
   hud.progress(0.52);
   await nextTask();
   // the trees (left undrawn beyond the haze: render/cull.ts)
   const vegetation = buildVegetation(standing, surfaces.bark, [BRIDGE_CLEARING, BANYAN_CLEARING, GRAVE_BANYAN_CLEARING], [...bridgeTrees(), ...MOSQUE_POND_TREES]);
-  scene.add(vegetation);
+  scene.add(still(vegetation));
   cullBeyond(vegetation, 1900);
   // the leaves and petals the trees round the camera let fall (the banyan's too)
   const leaves = new FallingLeaves(treeCrowns());
@@ -240,7 +272,7 @@ async function main(hud: Hud): Promise<void> {
   scene.add(heroPetal.mesh);
   const blossomCrown = blossom.tree ? crownDetail(blossom.tree) : null;
   if (blossomCrown) {
-    scene.add(blossomCrown);
+    scene.add(still(blossomCrown));
     cullBeyond(blossomCrown, 1900);
   }
   // the fisherman casting his net on the river below the khal's mouth (his net's rings are the fish's)
@@ -254,21 +286,21 @@ async function main(hud: Hud): Promise<void> {
   // the ways, in 1.3 km cells: the far ones are left undrawn; the paths laid on the ground as it is drawn (its
   // lattice's), or they floated over its hollows and sank under its crowns by a hand's breadth
   const roads = buildRoads(meshGround);
-  scene.add(roads);
+  scene.add(still(roads));
   cullBeyond(roads, 2600);
-  scene.add(buildBridge());
-  scene.add(buildSanko());
+  scene.add(still(buildBridge()));
+  scene.add(still(buildSanko()));
   // stones along the banks and at the water's edge, and the khal's rocks the boat goes round; the kept pond's
   // pebbles, small, drawn only near
   const stones = buildStones();
-  scene.add(stones.group);
+  scene.add(still(stones.group));
   cullBeyond(stones.pebbles, 160);
   // the salt field by where she sets out, and the men raking its salt in the dry months
   const saltWorks = new SaltWorks(ripples);
   saltWorks.bindWater(water.nets.a[1], water.nets.b[1]);
   scene.add(saltWorks.group);
   // the railway across the fields north of the bil, and its train now and then
-  scene.add(buildRailway());
+  scene.add(still(buildRailway()));
   const train = new Train();
   scene.add(train.group);
   const girl = new Girl();
@@ -280,7 +312,7 @@ async function main(hud: Hud): Promise<void> {
   const splash = new PaddleSplash();
   scene.add(splash.points);
   const splashBack = new Vector3();
-  scene.add(buildPondLife());
+  scene.add(still(buildPondLife()));
   const bil = new Bil();
   scene.add(bil.group);
   const meadow = new Meadow(standing, ghats);
@@ -289,6 +321,7 @@ async function main(hud: Hud): Promise<void> {
   scene.add(crops.group);
   const drift = new Drift();
   scene.add(drift.group);
+  compileSoon();
   hud.progress(0.78);
   await nextTask();
 
@@ -593,13 +626,15 @@ async function main(hud: Hud): Promise<void> {
   await nextTask();
 
   // ---- quality: the detail the device can afford (D7: in full on a good GPU, 30 fps on an ordinary laptop) ----
-  /** `?quality=low|high` holds a tier; without it the low one comes in by itself if even the smallest picture is slow. */
+  /** `?quality=low|high` holds a tier; without it the low one comes in by itself when the picture is slow at ADAPT.lowAt. */
   const QUALITY_ASKED = new URLSearchParams(location.search).get('quality');
   let quality: 'high' | 'low' = 'high';
   const setQuality = (q: 'high' | 'low') => {
     quality = q;
     const low = q === 'low';
-    // less drawn far off, a coarser mirror, a smaller shadow map, the grass kept closer
+    // no multisampling (the dearest part of a frame on a weak GPU), less drawn far off, a coarser mirror, a
+    // smaller shadow map, the grass kept closer
+    pipeline.setSamples(low ? 0 : 4);
     setCullReach(low ? 0.7 : 1);
     pipeline.setReflectionScale(low ? 0.33 : 0.5);
     env.setShadowMapSize(low ? 2048 : SHADOW_BEST);
@@ -609,11 +644,25 @@ async function main(hud: Hud): Promise<void> {
   if (QUALITY_ASKED === 'low') setQuality('low');
 
   // ---- size and adaptive resolution ----
-  const perf = { scale: 1, acc: 0, n: 0, frames: 0, cool: 0, locked: false, ms: 16, driftMs: 0 };
+  /**
+   * How the picture's size follows the frame rate. Frames are averaged over `quick` frames at first (the opening),
+   * then over `steady`; slower than `slow` s a frame, the size goes straight to what would hold `aim` (a frame's
+   * cost goes nearly with its pixels), never below `least` (on a dense screen, a phone's, `leastDense`: still
+   * nearly a pixel to each of its CSS pixels); under `fast` it grows back a step at a time. Still slow at `lowAt`,
+   * the lower tier. A frame whose own work on the CPU is `cpuBound` of it waits on the CPU: fewer pixels would not
+   * help it, so the size is kept.
+   */
+  const ADAPT = { quick: 20, steady: 60, quickFor: 600, slow: 0.024, fast: 0.0175, aim: 0.018, least: 0.6, leastDense: 0.5, lowAt: 0.75, cpuBound: 0.8 };
+  /** Device pixels to a CSS pixel at full size (a denser screen is drawn at most this fine). */
+  const densest = () => Math.min(devicePixelRatio || 1, 1.75);
+  const leastScale = () => (densest() >= 1.5 ? ADAPT.leastDense : ADAPT.least);
+  /** The GPU's milliseconds for a frame the calibration at load aims under (it leaves room for the CPU's part). */
+  const GPU_AIM = 14;
+  const perf = { scale: 1, acc: 0, cpu: 0, n: 0, frames: 0, cool: 0, locked: false, ms: 16, driftMs: 0 };
   const resize = () => {
     const w = Math.max(1, innerWidth);
     const h = Math.max(1, innerHeight);
-    const k = Math.max(0.5, Math.min(devicePixelRatio || 1, 1.75) * perf.scale);
+    const k = Math.max(0.5, densest() * perf.scale);
     const W = Math.round(w * k);
     const H = Math.round(h * k);
     renderer.setPixelRatio(1);
@@ -1244,7 +1293,8 @@ async function main(hud: Hud): Promise<void> {
     // at the pace the viewer chose
     if (sunrise && !filming()) riseSun(dt);
     else if (clock.live && !filming() && !held.has('KeyT')) clock.follow(bangladeshTime().hour);
-    else if (!scrubbing) clock.advance(dt);
+    // (the viewer's own clock passes each sky event in seconds; the film keeps the pace its scenes were shot at)
+    else if (!scrubbing) clock.advance(dt, !filming());
     if (held.has('KeyT')) takeClock();
     turn(dt);
     followYear();
@@ -1332,6 +1382,10 @@ async function main(hud: Hud): Promise<void> {
   };
   updateSky(0, true);
   step(0);
+  // the opening: a drone's flight down to the boat before her journey begins. Its first view is readied now (the
+  // follow camera's, where it ends, is built as it comes down), and drawn a few times behind the loader (below)
+  rig.beginOpening();
+  step(0);
   terrain.update(camera.position, true);
   water.update(camera.position.x, camera.position.z, true);
   renderer.setRenderTarget(pipeline.sceneTarget);
@@ -1348,6 +1402,51 @@ async function main(hud: Hud): Promise<void> {
   for (const o of unhidden) o.visible = false;
   renderer.setRenderTarget(null);
   hud.progress(1);
+
+  // the opening's first view drawn a few times behind the loader to learn what a frame of it costs this device's
+  // GPU, so the flight starts at a size (and a tier) the device can hold rather than stuttering until the adaptive
+  // resolution finds it
+  const gpuCost = async (): Promise<number> => {
+    const gl = renderer.getContext() as WebGL2RenderingContext;
+    const timer = gl.getExtension('EXT_disjoint_timer_query_webgl2');
+    const pixel = new Uint8Array(4);
+    const costs: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      updateCulling(camera.position);
+      const query = timer ? gl.createQuery() : null;
+      if (timer && query) gl.beginQuery(timer.TIME_ELAPSED_EXT, query);
+      const t0 = performance.now();
+      pipeline.render(renderer, scene, camera, { exposure: env.exposure, fade: 1, fadeColor: BLACK, night: env.night, letterbox: rig.openingBars });
+      if (timer && query) gl.endQuery(timer.TIME_ELAPSED_EXT);
+      // reading a pixel back waits for the GPU to finish the frame: without the timer, that wait is the cost
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+      let ms = performance.now() - t0;
+      // (a timer's result is given only after the page has had its turn: a frame, or a moment in a hidden tab)
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+        setTimeout(resolve, 50);
+      });
+      if (timer && query) {
+        if (gl.getQueryParameter(query, gl.QUERY_RESULT_AVAILABLE) && !gl.getParameter(timer.GPU_DISJOINT_EXT)) ms = gl.getQueryParameter(query, gl.QUERY_RESULT) / 1e6;
+        gl.deleteQuery(query);
+      }
+      // (the first frames upload textures, draw the shadow map and finish programs)
+      if (i >= 2) costs.push(ms);
+    }
+    return costs.sort((a, b) => a - b)[1];
+  };
+  {
+    let ms = await gpuCost();
+    // too slow even at three quarters of the picture: the lower tier, and its cost measured again
+    if (!QUALITY_ASKED && ms * ADAPT.lowAt ** 2 > GPU_AIM) {
+      setQuality('low');
+      ms = await gpuCost();
+    }
+    if (ms > GPU_AIM) {
+      perf.scale = Math.max(leastScale(), Math.sqrt(GPU_AIM / ms));
+      resize();
+    }
+  }
 
   let readyAt = performance.now();
   let last = performance.now();
@@ -1397,34 +1496,36 @@ async function main(hud: Hud): Promise<void> {
     camera.getWorldDirection(forward);
     map.update(rig.boat.pos.x, rig.boat.pos.z, rig.boat.course, t);
 
-    // adaptive resolution: hold ~45–60 fps by trading pixels, never below 60% scale
+    // adaptive resolution: hold ~45–60 fps by trading pixels (ADAPT)
     perf.frames++;
-    // (not through a dissolve, which draws two shots a frame for a moment)
-    if (perf.frames > 90 && !perf.locked && !document.hidden && !leaving) {
+    // (not through a dissolve, which draws two shots a frame for a moment; the first frames settle in)
+    if (perf.frames > 10 && !perf.locked && !document.hidden && !leaving) {
       perf.acc += raw;
-      if (++perf.n >= 60) {
+      perf.cpu += (performance.now() - now) / 1000;
+      if (++perf.n >= (perf.frames < ADAPT.quickFor ? ADAPT.quick : ADAPT.steady)) {
         const avg = perf.acc / perf.n;
+        const cpuBound = perf.cpu / perf.n > avg * ADAPT.cpuBound;
         perf.acc = 0;
+        perf.cpu = 0;
         perf.n = 0;
         const before = perf.scale;
-        if (avg > 0.024 && perf.scale > 0.6) {
-          perf.scale = Math.max(0.6, perf.scale * (avg > 0.045 ? 0.82 : 0.9));
-          perf.cool = now + 6000;
-        } else if (avg < 0.0175 && perf.scale < 1 && now > perf.cool) {
+        if (avg > ADAPT.slow && perf.scale > leastScale() && !cpuBound) {
+          perf.scale = Math.max(leastScale(), perf.scale * clamp(Math.sqrt(ADAPT.aim / avg), 0.7, 0.92));
+          perf.cool = now + 3000;
+        } else if (avg < ADAPT.fast && perf.scale < 1 && now > perf.cool) {
           perf.scale = Math.min(1, perf.scale + 0.06);
           perf.cool = now + 3000;
         }
-        // at the smallest picture and still under 30 fps: the lower tier, once, unless a tier was asked for
-        if (perf.scale <= 0.6 && avg > 0.034 && quality === 'high' && !QUALITY_ASKED) {
+        // still slow with the picture at three quarters (or waiting on the CPU): the lower tier, once, unless a
+        // tier was asked for; it frees enough that the picture may grow again
+        if ((perf.scale <= ADAPT.lowAt || cpuBound) && avg > ADAPT.slow && quality === 'high' && !QUALITY_ASKED) {
           setQuality('low');
-          perf.cool = now + 6000;
+          perf.cool = now + 3000;
         }
         if (before !== perf.scale) resize();
       }
     }
   };
-  // the opening: a drone's flight down to the boat before her journey begins
-  rig.beginOpening();
   let wasFlying = true;
   renderer.setAnimationLoop(frame);
   readyAt = performance.now();
@@ -1514,7 +1615,15 @@ async function main(hud: Hud): Promise<void> {
             updateSky(0, true);
           }
           director.letterbox = o.film ? 1 : 0;
+          // a still is drawn whole: at full size and in the tier asked for (the high one by default), whatever
+          // the calibration at load or the adaptive resolution had chosen for this device
           perf.locked = true;
+          const tier = QUALITY_ASKED === 'low' ? 'low' : 'high';
+          if (quality !== tier) setQuality(tier);
+          if (perf.scale !== 1) {
+            perf.scale = 1;
+            resize();
+          }
           readyAt = -1e9;
           lastInput = performance.now();
           debug.freeze = false;
