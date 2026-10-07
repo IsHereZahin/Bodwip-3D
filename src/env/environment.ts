@@ -38,11 +38,11 @@ const LOOKS: Look[] = [
   { elev: -24, zenith: '#0e1a3c', zenithK: 0.05, horizon: '#1e2c4a', horizonK: 0.07, fog: '#1a2440', fogK: 0.06, glow: '#000000', glowK: 0, sun: '#000000', sunE: 0, hemiSky: '#4a5f96', hemiGround: '#181410', hemiE: 0.42, water: '#4a4636', exposure: 5.0, mist: 0.004 },
   { elev: -10, zenith: '#18295a', zenithK: 0.07, horizon: '#4a4064', horizonK: 0.11, fog: '#3c3656', fogK: 0.09, glow: '#ff6a3a', glowK: 0.05, sun: '#000000', sunE: 0, hemiSky: '#53608f', hemiGround: '#20160e', hemiE: 0.4, water: '#5a5040', exposure: 3.2, mist: 0.004 },
   { elev: -4, zenith: '#203468', zenithK: 0.15, horizon: '#d98a6c', horizonK: 0.32, fog: '#a57a72', fogK: 0.26, glow: '#ff6a2e', glowK: 0.45, sun: '#ff5a1e', sunE: 0, hemiSky: '#6a74a2', hemiGround: '#3a2a1c', hemiE: 0.5, water: '#6a5a42', exposure: 1.9, mist: 0.0036 },
-  { elev: 0, zenith: '#33508f', zenithK: 0.34, horizon: '#ffa070', horizonK: 0.62, fog: '#e39a76', fogK: 0.52, glow: '#ff7a30', glowK: 1.0, sun: '#ff7838', sunE: 1.1, hemiSky: '#8a90b8', hemiGround: '#5a3e24', hemiE: 0.75, water: '#7a6644', exposure: 1.4, mist: 0.003 },
-  { elev: 5, zenith: '#3f6cb8', zenithK: 0.5, horizon: '#ffc28a', horizonK: 0.9, fog: '#eeb48c', fogK: 0.78, glow: '#ffa050', glowK: 0.95, sun: '#ffac68', sunE: 2.5, hemiSky: '#9aa6c8', hemiGround: '#6a4c2c', hemiE: 0.95, water: '#7d6a46', exposure: 1.12, mist: 0.0024 },
-  { elev: 12, zenith: '#4a7ac4', zenithK: 0.6, horizon: '#ffd9b0', horizonK: 1.0, fog: '#e6c6a6', fogK: 0.9, glow: '#ffc080', glowK: 0.55, sun: '#ffcf98', sunE: 3.1, hemiSky: '#a8b8d8', hemiGround: '#6a5232', hemiE: 1.05, water: '#7a6a48', exposure: 1.0, mist: 0.0016 },
-  { elev: 30, zenith: '#4a7fd0', zenithK: 0.7, horizon: '#c8d8ea', horizonK: 1.1, fog: '#c4cfdc', fogK: 1.0, glow: '#fff0d8', glowK: 0.15, sun: '#fff0dc', sunE: 3.8, hemiSky: '#b0c4e4', hemiGround: '#5e5434', hemiE: 1.2, water: '#76694a', exposure: 0.88, mist: 0.0008 },
-  { elev: 80, zenith: '#3f78d4', zenithK: 0.75, horizon: '#c0d4ec', horizonK: 1.15, fog: '#bccbdc', fogK: 1.05, glow: '#ffffff', glowK: 0.05, sun: '#fff6ea', sunE: 4.2, hemiSky: '#b4c8e8', hemiGround: '#5e5434', hemiE: 1.3, water: '#74694c', exposure: 0.84, mist: 0.0006 },
+  { elev: 0, zenith: '#33508f', zenithK: 0.34, horizon: '#ffa070', horizonK: 0.62, fog: '#e39a76', fogK: 0.52, glow: '#ff7a30', glowK: 1.0, sun: '#ff7838', sunE: 1.1, hemiSky: '#8a90b8', hemiGround: '#5a3e24', hemiE: 0.9, water: '#7a6644', exposure: 1.4, mist: 0.003 },
+  { elev: 5, zenith: '#3f6cb8', zenithK: 0.5, horizon: '#ffc28a', horizonK: 0.9, fog: '#eeb48c', fogK: 0.78, glow: '#ffa050', glowK: 0.95, sun: '#ffac68', sunE: 2.5, hemiSky: '#9aa6c8', hemiGround: '#6a4c2c', hemiE: 1.18, water: '#7d6a46', exposure: 1.12, mist: 0.0024 },
+  { elev: 12, zenith: '#4a7ac4', zenithK: 0.6, horizon: '#ffd9b0', horizonK: 1.0, fog: '#e6c6a6', fogK: 0.9, glow: '#ffc080', glowK: 0.55, sun: '#ffcf98', sunE: 3.1, hemiSky: '#a8b8d8', hemiGround: '#6a5232', hemiE: 1.32, water: '#7a6a48', exposure: 1.0, mist: 0.0016 },
+  { elev: 30, zenith: '#4a7fd0', zenithK: 0.7, horizon: '#c8d8ea', horizonK: 1.1, fog: '#c4cfdc', fogK: 1.0, glow: '#fff0d8', glowK: 0.15, sun: '#fff0dc', sunE: 3.8, hemiSky: '#b0c4e4', hemiGround: '#5e5434', hemiE: 1.5, water: '#76694a', exposure: 0.88, mist: 0.0008 },
+  { elev: 80, zenith: '#3f78d4', zenithK: 0.75, horizon: '#c0d4ec', horizonK: 1.15, fog: '#bccbdc', fogK: 1.05, glow: '#ffffff', glowK: 0.05, sun: '#fff6ea', sunE: 4.2, hemiSky: '#b4c8e8', hemiGround: '#5e5434', hemiE: 1.6, water: '#74694c', exposure: 0.84, mist: 0.0006 },
 ];
 
 /** Where the faint light of a moonless sky seems to come from: high, a little off the zenith. */
@@ -124,7 +124,11 @@ export class Environment {
   }
 
   setShadowMapSize(size: number): void {
+    if (this.key.shadow.mapSize.x === size) return;
     this.key.shadow.mapSize.set(size, size);
+    // a map already made keeps its size until it is let go
+    this.key.shadow.map?.dispose();
+    this.key.shadow.map = null;
   }
 
   /** `hour` is local solar time (12 = noon); `moonAge` is days since new moon. */
@@ -151,17 +155,28 @@ export class Environment {
     toGrey(this.sky.horizon, overcast * 0.7);
     toGrey(G.uFogColor.value, overcast * 0.6);
     G.uGlow.value.multiplyScalar(1 - 0.8 * overcast);
-    this.sky.zenith.addScalar(flash * 0.25);
+    // lightning: the sky a little paler for an instant (the cloud round the strike is the sky shader's)
+    this.sky.zenith.addScalar(flash * 0.06);
+    this.sky.horizon.addScalar(flash * 0.04);
     this.sky.cloud.value = cloud;
     G.uOvercast.value = overcast;
     // the season's sunlight: harsher in the summer, cooler in the winter
     const warm = s ? s.warm : 0;
     this.sunColor.multiply(tmpB.setRGB(1 + 0.4 * warm, 1, 1 - 0.6 * warm));
+    // the evening's last colour: as the sun nears the horizon and for a while after it has gone, the low sky,
+    // its glow and the sun itself deepen through orange to crimson (the morning's turn is the fog's, below)
+    const dusk = hour > 12 ? smoothstep(4, 0.5, elev) * smoothstep(-8, -3, elev) * (1 - 0.7 * overcast) : 0;
+    if (dusk > 0) {
+      this.sky.horizon.multiply(tmpB.setRGB(1 + 0.12 * dusk, 1 - 0.32 * dusk, 1 - 0.42 * dusk));
+      G.uGlow.value.multiply(tmpB.setRGB(1 + 0.3 * dusk, 1 - 0.35 * dusk, 1 - 0.5 * dusk));
+      G.uFogColor.value.multiply(tmpB.setRGB(1 + 0.06 * dusk, 1 - 0.14 * dusk, 1 - 0.2 * dusk));
+      this.sunColor.multiply(tmpB.setRGB(1, 1 - 0.3 * dusk, 1 - 0.45 * dusk));
+    }
     // the disc sinks below the horizon over the last degree
     const visible = smoothstep(-1.2, 0.6, elev);
     G.uSunColor.value.copy(this.sunColor).multiplyScalar(sunE * visible * (s ? s.light : 1) * (1 - 0.8 * overcast));
     G.uSunDir.value.copy(this.sunDir);
-    this.exposure = (a.exposure + (b.exposure - a.exposure) * t) * (1 + 0.15 * overcast + 0.6 * flash);
+    this.exposure = (a.exposure + (b.exposure - a.exposure) * t) * (1 + 0.15 * overcast + 0.25 * flash);
     // mist gathers on the river before sunrise and burns off as the sun climbs; evenings stay clear. In
     // the winter and late autumn the mornings drown in fog; dust and rain thicken the air
     const dawn = hour < 12 ? smoothstep(-14, -4, elev) * smoothstep(12, 2, elev) : 0;
@@ -203,7 +218,7 @@ export class Environment {
     this.hemi.color.set(a.hemiSky).lerp(tmpB.set(b.hemiSky), t);
     toGrey(this.hemi.color, overcast * 0.6);
     this.hemi.groundColor.set(a.hemiGround).lerp(tmpB.set(b.hemiGround), t);
-    this.hemi.intensity = (a.hemiE + (b.hemiE - a.hemiE) * t) * (1 + 0.3 * overcast) + flash * 2.5;
+    this.hemi.intensity = (a.hemiE + (b.hemiE - a.hemiE) * t) * (1 + 0.3 * overcast) + flash * 0.8;
 
     this.water.color.set(a.water).lerp(tmpB.set(b.water), t);
     // the season's silt, against the autumn the looks were made for

@@ -35,11 +35,12 @@ export class MeshBuilder {
     this.idx.push(a, b, c, a, c, d);
   }
 
-  /** Appends another geometry, transformed, with a flat vertex colour. */
-  add(geometry: BufferGeometry, matrix: Matrix4, color: RGB = WHITE): void {
+  /** Appends another geometry, transformed, with a flat vertex colour, or (`'own'`) keeping the geometry's own vertex colours. */
+  add(geometry: BufferGeometry, matrix: Matrix4, color: RGB | 'own' = WHITE): void {
     const p = geometry.getAttribute('position');
     const n = geometry.getAttribute('normal');
     const uv = geometry.getAttribute('uv');
+    const own = color === 'own' ? geometry.getAttribute('color') : undefined;
     const normalMatrix = new Matrix3().getNormalMatrix(matrix);
     const base = this.vertexCount;
     const v = new Vector3();
@@ -48,7 +49,8 @@ export class MeshBuilder {
       v.fromBufferAttribute(p, i).applyMatrix4(matrix);
       if (n) vn.fromBufferAttribute(n, i).applyMatrix3(normalMatrix).normalize();
       else vn.set(0, 1, 0);
-      this.vertex(v, vn, uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0, color);
+      const c: RGB = own ? [own.getX(i), own.getY(i), own.getZ(i)] : color === 'own' ? WHITE : color;
+      this.vertex(v, vn, uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0, c);
     }
     const index = geometry.getIndex();
     if (index) for (let i = 0; i < index.count; i++) this.idx.push(base + index.getX(i));
@@ -81,6 +83,32 @@ export function mixRgb(a: RGB, b: RGB, t: number): RGB {
 
 export function scaleRgb(a: RGB, s: number): RGB {
   return [a[0] * s, a[1] * s, a[2] * s];
+}
+
+/** A box (centre, size, yaw) whose faces carry texture coordinates in metres over `tile`, so plaster and tin keep their scale on every face. */
+export function slab(b: MeshBuilder, cx: number, cy: number, cz: number, sx: number, sy: number, sz: number, ry: number, c: RGB, tile = 3): void {
+  const cos = Math.cos(ry);
+  const sin = Math.sin(ry);
+  const P = (x: number, y: number, z: number) => new Vector3(cx + x * cos + z * sin, cy + y, cz - x * sin + z * cos);
+  const N = (x: number, y: number, z: number) => new Vector3(x * cos + z * sin, y, -x * sin + z * cos);
+  const hx = sx / 2;
+  const hy = sy / 2;
+  const hz = sz / 2;
+  const face = (k: readonly (readonly [number, number, number])[], n: readonly [number, number, number], w: number, h: number) => {
+    const nn = N(n[0], n[1], n[2]);
+    const s = b.vertexCount;
+    b.vertex(P(...k[0]), nn, 0, 0, c);
+    b.vertex(P(...k[1]), nn, w / tile, 0, c);
+    b.vertex(P(...k[2]), nn, w / tile, h / tile, c);
+    b.vertex(P(...k[3]), nn, 0, h / tile, c);
+    b.quad(s, s + 1, s + 2, s + 3);
+  };
+  face([[-hx, -hy, hz], [hx, -hy, hz], [hx, hy, hz], [-hx, hy, hz]], [0, 0, 1], sx, sy);
+  face([[hx, -hy, -hz], [-hx, -hy, -hz], [-hx, hy, -hz], [hx, hy, -hz]], [0, 0, -1], sx, sy);
+  face([[hx, -hy, hz], [hx, -hy, -hz], [hx, hy, -hz], [hx, hy, hz]], [1, 0, 0], sz, sy);
+  face([[-hx, -hy, -hz], [-hx, -hy, hz], [-hx, hy, hz], [-hx, hy, -hz]], [-1, 0, 0], sz, sy);
+  face([[-hx, hy, hz], [hx, hy, hz], [hx, hy, -hz], [-hx, hy, -hz]], [0, 1, 0], sx, sz);
+  face([[-hx, -hy, -hz], [hx, -hy, -hz], [hx, -hy, hz], [-hx, -hy, hz]], [0, -1, 0], sx, sz);
 }
 
 const tmpT = new Vector3();

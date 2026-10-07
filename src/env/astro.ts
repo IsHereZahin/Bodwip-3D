@@ -1,12 +1,12 @@
 import type { Vector3 } from 'three';
 import { DEG, clamp } from '../core/mathx';
 
-// Sun and moon over Bengal (latitude 23.7° N). The sun's place on the ecliptic follows the day of the
-// year (`setSunDay`), so summer days are long and the sun high, winter days short and the sun low, and
-// sunrise and sunset move through the year. The moon walks the ecliptic about 12° a day ahead of the
-// sun, so it rises roughly 50 minutes later each night and passes through its phases.
+// Sun and moon over Moheshkhali (latitude 21.6° N, the island's middle). The sun's place on the ecliptic
+// follows the day of the year (`setSunDay`), so summer days are long and the sun high, winter days short and
+// the sun low, and sunrise and sunset move through the year. The moon walks the ecliptic about 12° a day
+// ahead of the sun, so it rises roughly 50 minutes later each night and passes through its phases.
 
-const LATITUDE = 23.7 * DEG;
+const LATITUDE = 21.6 * DEG;
 const OBLIQUITY = 23.44 * DEG;
 /** Days from one new moon to the next. */
 export const SYNODIC_MONTH = 29.53;
@@ -14,15 +14,13 @@ export const SYNODIC_MONTH = 29.53;
 const rightAscension = (lon: number) => Math.atan2(Math.cos(OBLIQUITY) * Math.sin(lon), Math.cos(lon));
 const declination = (lon: number) => Math.asin(Math.sin(OBLIQUITY) * Math.sin(lon));
 
-/** The sun's ecliptic longitude now, and its right ascension and declination from it. */
+/** The sun's ecliptic longitude now, and its declination from it. */
 let sunLongitude = 0;
-let sunRA = 0;
 let sunDec = 0;
 
 /** Puts the sun where it stands on a day of the year (0 = 1 January); the March equinox is about day 79. */
 export function setSunDay(day: number): void {
   sunLongitude = ((day - 79) / 365.2422) * Math.PI * 2;
-  sunRA = rightAscension(sunLongitude);
   sunDec = declination(sunLongitude);
 }
 setSunDay(257);
@@ -51,11 +49,26 @@ export function sunDirection(hour: number, out: Vector3): Vector3 {
   return horizonDirection(sunHourAngle(hour), sunDec, out);
 }
 
+/** The sun's direction on another `day` at `hour`, leaving the sun's own day as it is (for places worked out ahead). */
+export function sunDirectionOn(day: number, hour: number, out: Vector3): Vector3 {
+  return horizonDirection(sunHourAngle(hour), declination(((day - 79) / 365.2422) * Math.PI * 2), out);
+}
+
+/** The moon's direction from the sun's ecliptic longitude `sun` (rad), at `hour` and `age`. */
+function moonFrom(sun: number, hour: number, age: number, out: Vector3): Vector3 {
+  const lon = sun + (age / SYNODIC_MONTH) * Math.PI * 2;
+  const H = sunHourAngle(hour) - (rightAscension(lon) - rightAscension(sun));
+  return horizonDirection(H, declination(lon), out);
+}
+
 /** `age` is days since new moon. The moon's small tilt off the ecliptic is ignored. */
 export function moonDirection(hour: number, age: number, out: Vector3): Vector3 {
-  const lon = sunLongitude + (age / SYNODIC_MONTH) * Math.PI * 2;
-  const H = sunHourAngle(hour) - (rightAscension(lon) - sunRA);
-  return horizonDirection(H, declination(lon), out);
+  return moonFrom(sunLongitude, hour, age, out);
+}
+
+/** The moon's direction on another `day`, leaving the sun's own day as it is (for moments weighed ahead). */
+export function moonDirectionOn(day: number, hour: number, age: number, out: Vector3): Vector3 {
+  return moonFrom(((day - 79) / 365.2422) * Math.PI * 2, hour, age, out);
 }
 
 /** Lit fraction of the moon's face: 0 at new moon, 1 at full. */

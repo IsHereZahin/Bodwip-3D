@@ -19,7 +19,7 @@ import {
   Vector4,
 } from 'three';
 import type { Material } from 'three';
-import { G, LAYER_NO_REFLECT } from '../core/globals';
+import { LAYER_NO_REFLECT } from '../core/globals';
 import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
 import { Rng } from '../core/rng';
@@ -28,9 +28,10 @@ import { instanced, type Placement } from '../render/instancing';
 import { patchMaterial, type PatchOptions } from '../render/patch';
 import { lilyCarpetTexture } from '../render/textures';
 import type { BoatBody } from './boatPhysics';
-import { BIL, BIL_ROUTE_SPAN, bilDepth, bilReach, riverX, routeGap, routeOffset } from './geography';
+import { BIL, bilDepth, bilReach, routeGap, terrainHeight, waterRise } from './geography';
+import { bilLocal, bilPoint } from './waterways';
 import { HERO_HULL, heroBeamAtWater } from './hull';
-import { SHELTERED, waveHeightGlsl, waveSlopeGlsl } from './waves';
+import { INLAND, SHELTERED, SHOAL_DEPTH, waveHeightGlsl, waveSlopeGlsl } from './waves';
 
 // The shapla bil: a broad, shallow wetland behind the left bank, its water still and glassy. Water lilies
 // (white, pink and red shapla) grow in rafts across it, thickest in water between knee and chest deep;
@@ -321,19 +322,30 @@ class Egret {
     }
   }
 
-  /** The wading spots have moved with the water: keep standing if this one is still a spot, else fly to another. */
-  reclaim(spots: Spot[]): void {
+  /**
+   * The wading spots have moved with the water: keep standing if this one is still a spot, else fly to the
+   * nearest free one (or, with `jump`, be standing there already).
+   */
+  reclaim(spots: Spot[], jump: boolean): void {
     const same = spots.find((s) => !s.busy && Math.hypot(s.x - this.spot.x, s.z - this.spot.z) < 3);
-    if (same) {
-      this.spot = this.next = same;
-      same.busy = true;
-      if (!this.flying) this.group.position.set(same.x, same.y, same.z);
+    const free = spots.filter((s) => !s.busy);
+    free.sort((a, b) => Math.hypot(a.x - this.spot.x, a.z - this.spot.z) - Math.hypot(b.x - this.spot.x, b.z - this.spot.z));
+    const near = same ?? (jump ? free[0] : undefined);
+    if (near) {
+      this.spot = this.next = near;
+      near.busy = true;
+      if (jump) this.land();
+      else if (!this.flying) this.group.position.set(near.x, near.y, near.z);
       return;
     }
-    const free = spots.filter((s) => !s.busy);
-    if (!free.length) return;
-    free.sort((a, b) => Math.hypot(a.x - this.spot.x, a.z - this.spot.z) - Math.hypot(b.x - this.spot.x, b.z - this.spot.z));
-    this.flyTo(free[0]);
+    if (free.length) this.flyTo(free[0]);
+  }
+
+  /** Standing on its spot at once (out of any flight). */
+  private land(): void {
+    this.flying = false;
+    this.group.position.set(this.spot.x, this.spot.y, this.spot.z);
+    for (const w of this.wings) w.visible = false;
   }
 
   /** Off to somewhere along the edge well away from the boat. */
@@ -356,13 +368,14 @@ class Egret {
   }
 }
 
-/** How thickly the painted rafts cover (z, u): patchy, in water deep enough, clear of the boat's way. */
-function carpetCover(x: number, z: number, u: number): number {
-  const e = bilReach(z, u);
+/** How thickly the painted rafts cover (x, z): patchy, in water deep enough, clear of the boat's way. */
+function carpetCover(x: number, z: number): number {
+  const e = bilReach(x, z);
   if (e > 0.99) return 0;
+  const { a, c } = bilLocal(x, z);
   return (
-    smoothstep(0.38, 0.52, fbm(z * 0.028 + 5, u * 0.028, 3, 91)) *
-    smoothstep(0.2, 0.45, bilDepth(z, u)) *
+    smoothstep(0.38, 0.52, fbm(a * 0.028 + 5, c * 0.028, 3, 91)) *
+    smoothstep(0.2, 0.45, bilDepth(x, z)) *
     smoothstep(0.985, 0.9, e) *
     smoothstep(9, 16, routeGap(x, z))
   );
@@ -371,8 +384,9 @@ function carpetCover(x: number, z: number, u: number): number {
 /** A mesh over the bil whose painted pads show where `carpetCover` says; its colours' alpha carries the cover. */
 function carpetGeometry(): BufferGeometry {
   const STEP = 3;
-  const z0 = BIL.z - BIL.halfLen * 1.35;
-  const u0 = BIL.u - BIL.halfWid * 1.4;
+  // a grid along the bil's long axis (j) and across it (i)
+  const a0 = -BIL.halfLen * 1.35;
+  const c0 = -BIL.halfWid * 1.4;
   const nz = Math.ceil((BIL.halfLen * 2.7) / STEP) + 1;
   const nu = Math.ceil((BIL.halfWid * 2.8) / STEP) + 1;
   const pos = new Float32Array(nz * nu * 3);
@@ -382,14 +396,11 @@ function carpetGeometry(): BufferGeometry {
   const bed = new Float32Array(nz * nu);
   const cover = new Float32Array(nz * nu);
   for (let j = 0; j < nz; j++) {
-    const z = z0 + j * STEP;
-    const cx = riverX(z);
     for (let i = 0; i < nu; i++) {
-      const u = u0 + i * STEP;
-      const x = cx + u;
+      const { x, z } = bilPoint(a0 + j * STEP, c0 + i * STEP);
       const k = j * nu + i;
-      cover[k] = carpetCover(x, z, u);
-      bed[k] = bilDepth(z, u);
+      cover[k] = carpetCover(x, z);
+      bed[k] = bilDepth(x, z);
       pos.set([x, 0.022, z], k * 3);
       uv.set([x / 6, z / 6], k * 2);
       col.set([1, 1, 1, cover[k]], k * 4);
@@ -417,12 +428,14 @@ function carpetGeometry(): BufferGeometry {
 }
 
 /**
- * The lilies' life on the GPU: they float on the season's water, rising and falling with it, and are not
- * there where it has left their bed dry; flowers open only in their months (G.uSeasonB.x); they ride the
+ * The lilies' life on the GPU: they float on the bil's water (BIL.level, raised or lowered by the season's
+ * uWaterRise), and are not there where their bed lies too shallow (stranded where the water has drawn back); flowers open only in their months (G.uSeasonB.x); they ride the
  * bil's sheltered swell and the boat's wash spreading from her, and rock in the breeze.
  */
 function lilyMotion(wash: Vector4, perVertex: boolean, flower = false): NonNullable<PatchOptions['vertex']> {
-  const s = SHELTERED.toFixed(2);
+  // the waves as the bil's surface is drawn round them (waves.ts surfaceShare: still water, inland water's
+  // share, dying out on the shallows)
+  const s = (SHELTERED * INLAND).toFixed(4);
   return {
     key: perVertex ? 'lily-carpet' : flower ? 'lily-flower' : 'lily-plant',
     uniforms: { uWash: { value: wash } },
@@ -439,18 +452,20 @@ function lilyMotion(wash: Vector4, perVertex: boolean, flower = false): NonNulla
   vec3 lilyAt = ${perVertex ? '(lilyM * vec4(transformed, 1.0)).xyz' : '(lilyM * vec4(0.0, 0.0, 0.0, 1.0)).xyz'};
   ${perVertex ? 'lilyOff = vec3(0.0);' : ''}
   float lilyScale = length(lilyM[0].xyz);
+  float lilyBed = aBed + uWaterRise;
+  float lilyShare = ${s} * smoothstep(0.0, ${SHOAL_DEPTH.toFixed(2)}, lilyBed);
   vec2 toWash = lilyAt.xz - uWash.xy;
   float wd = length(toWash);
   float wa = 0.025 * min(uWash.z / 1.5, 1.2) * exp(-wd / 4.0);
   float wph = wd * 2.4 - uTime * 4.2;
-  vec2 tilt = waveSlope(lilyAt.xz) * ${s} + toWash / max(wd, 0.001) * wa * (2.4 * cos(wph) - 0.25 * sin(wph));
+  vec2 tilt = waveSlope(lilyAt.xz) * lilyShare + toWash / max(wd, 0.001) * wa * (2.4 * cos(wph) - 0.25 * sin(wph));
   tilt += uWind.xy * (0.02 * uWind.z) * sin(uTime * 1.7 + dot(lilyAt.xz, vec2(0.61, 0.37)));
-  float lift = waveHeight(lilyAt.xz) * ${s} + wa * sin(wph) + dot(tilt, lilyOff.xz);
-  transformed.y += (lift + uWaterLevel) / lilyScale;
+  float lift = waveHeight(lilyAt.xz) * lilyShare + wa * sin(wph) + dot(tilt, lilyOff.xz);
+  transformed.y += (lift + ${BIL.level.toFixed(3)} + uWaterRise) / lilyScale;
   ${
     perVertex
-      ? '#ifdef USE_COLOR_ALPHA\n  vColor.a *= smoothstep(0.05, 0.2, uWaterLevel + aBed);\n  #endif'
-      : `transformed *= smoothstep(0.03, 0.1, uWaterLevel + aBed)${flower ? ' * smoothstep(-0.05, 0.05, uSeasonB.x - hash12(floor(lilyAt.xz * 3.0)))' : ''};`
+      ? '#ifdef USE_COLOR_ALPHA\n  vColor.a *= smoothstep(0.05, 0.2, lilyBed);\n  #endif'
+      : `transformed *= smoothstep(0.03, 0.1, lilyBed)${flower ? ' * smoothstep(-0.05, 0.05, uSeasonB.x - hash12(floor(lilyAt.xz * 3.0)))' : ''};`
   }
 }`,
   };
@@ -481,8 +496,9 @@ export class Bil {
   private readonly lo: number[] = [];
   private readonly hi: number[] = [];
   private readonly spots: Spot[] = [];
+  /** The water's rise the spots were found at. */
+  private spotsRise = 0;
   private readonly egrets: Egret[] = [];
-  private spotLevel = 0;
   private readonly rng = new Rng(404);
   private readonly m = new Matrix4();
   private readonly q = new Quaternion();
@@ -519,17 +535,14 @@ export class Bil {
       return r < 0.55 ? WHITE : r < 0.8 ? PINK : RED;
     };
     for (let r = 0; r < RAFTS && xs.length < MAX_PLANTS; r++) {
-      // a raft's middle: beside the boat's way, a few metres to a few tens off it
+      // a raft's middle: anywhere out on the open water
       let cx = 0;
       let cz = 0;
       let found = false;
       for (let tries = 0; tries < 30 && !found; tries++) {
-        const z = BIL.z + rng.range(-0.95, 0.95) * BIL.halfLen;
-        if (z > BIL_ROUTE_SPAN.z0 || z < BIL_ROUTE_SPAN.z1) continue;
-        const u = routeOffset(z) + rng.sign() * rng.range(3.5, 30);
-        const x = riverX(z) + u;
-        const d = bilDepth(z, u);
-        if (bilReach(z, u) < 0.93 && d > 0.35 && d < 2.1 && routeGap(x, z) > 2.5) {
+        const { x, z } = bilPoint(rng.range(-0.95, 0.95) * BIL.halfLen, rng.range(-0.95, 0.95) * BIL.halfWid);
+        const d = bilDepth(x, z);
+        if (bilReach(x, z) < 0.93 && d > 0.35 && d < 2.1 && routeGap(x, z) > 2.5) {
           cx = x;
           cz = z;
           found = true;
@@ -546,8 +559,7 @@ export class Bil {
         const a = k * 2.39996 + turn;
         const x = cx + Math.cos(a) * rr + rng.range(-0.12, 0.12);
         const z = cz + Math.sin(a) * rr * stretch + rng.range(-0.12, 0.12);
-        const u = x - riverX(z);
-        if (bilReach(z, u) > 0.985 || bilDepth(z, u) < 0.12) continue;
+        if (bilReach(x, z) > 0.985 || bilDepth(x, z) < 0.12) continue;
         // thinner along the boat's way, where boats have kept a lane open
         const g = routeGap(x, z);
         if (g < 1.4 || (g < 4.5 && rng.next() > smoothstep(1.4, 4.5, g))) continue;
@@ -559,10 +571,8 @@ export class Bil {
     }
     // flowers and buds held up out of the painted rafts farther off
     for (let k = 0; k < 2400; k++) {
-      const z = BIL.z + rng.range(-1, 1) * BIL.halfLen;
-      const u = BIL.u + rng.range(-1.3, 1.3) * BIL.halfWid;
-      const x = riverX(z) + u;
-      if (carpetCover(x, z, u) < 0.7 || rng.next() < 0.6) continue;
+      const { x, z } = bilPoint(rng.range(-1, 1) * BIL.halfLen, rng.range(-1.3, 1.3) * BIL.halfWid);
+      if (carpetCover(x, z) < 0.7 || rng.next() < 0.6) continue;
       if (rng.next() < 0.8) add(x, z, flowerKind(), rng.range(1.0, 1.35), 0.15);
       else add(x, z, BUD, rng.range(0.9, 1.3), 0.15);
     }
@@ -592,7 +602,7 @@ export class Bil {
       this.az[i] = this.pz[i] = zs[src];
       this.meshOf[i] = kind;
       this.slot[i] = counts[kind]++;
-      beds[kind].push(bilDepth(zs[src], xs[src] - riverX(zs[src])));
+      beds[kind].push(bilDepth(xs[src], zs[src]));
       this.scale[i] = sizes[src];
       this.slack[i] = slacks[src];
       const pad = kind === PAD_A || kind === PAD_B;
@@ -648,13 +658,13 @@ export class Bil {
     const reedShapes = [0, 1, 2].map((i) => reedClump(new Rng(500 + i)));
     const reeds: Placement[][] = reedShapes.map(() => []);
     for (let k = 0; k < 9000 && reeds.reduce((a, l) => a + l.length, 0) < 420; k++) {
-      const z = BIL.z + rng.range(-1.1, 1.1) * BIL.halfLen;
-      const u = BIL.u + rng.range(-1.4, 1.4) * BIL.halfWid;
-      const e = bilReach(z, u);
-      if (e < 0.88 || e > 1.03 || fbm(z * 0.02, u * 0.02, 2, 97) < 0.45) continue;
-      const x = riverX(z) + u;
+      const la = rng.range(-1.1, 1.1) * BIL.halfLen;
+      const lc = rng.range(-1.4, 1.4) * BIL.halfWid;
+      const { x, z } = bilPoint(la, lc);
+      const e = bilReach(x, z);
+      if (e < 0.88 || e > 1.03 || fbm(la * 0.02, lc * 0.02, 2, 97) < 0.45) continue;
       if (routeGap(x, z) < 12) continue;
-      reeds[rng.int(0, reeds.length - 1)].push({ x, y: -bilDepth(z, u) * 0.5, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.8, 1.2) });
+      reeds[rng.int(0, reeds.length - 1)].push({ x, y: BIL.level - bilDepth(x, z) * 0.5, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.8, 1.2) });
     }
     const reedMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.7, side: DoubleSide }), {
       wind: 0.12,
@@ -665,30 +675,31 @@ export class Bil {
 
     const leaves: Placement[] = [];
     const blooms: Placement[] = [];
-    const lotusZ = BIL.z - 140;
-    const lotusU = BIL.u - 60;
+    // the lotus stand to one side of the boat's way, a little in from where the khal comes in
     for (let k = 0; k < 900 && leaves.length < 160; k++) {
-      const z = lotusZ + rng.range(-1, 1) * 16;
-      const u = lotusU + rng.range(-1, 1) * 11;
-      const d = bilDepth(z, u);
-      if (d < 0.4 || bilReach(z, u) > 0.95) continue;
-      const x = riverX(z) + u;
+      const { x, z } = bilPoint(-40 + rng.range(-1, 1) * 16, -42 + rng.range(-1, 1) * 11);
+      const d = bilDepth(x, z);
+      if (d < 0.4 || bilReach(x, z) > 0.95) continue;
       if (routeGap(x, z) < 14) continue;
-      if (rng.next() < 0.13) blooms.push({ x, y: rng.range(0.6, 0.95), z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.9, 1.2) });
-      else leaves.push({ x, y: rng.range(0.12, 0.6), z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.24, 0.4), tx: rng.range(-0.25, 0.25), tz: rng.range(-0.25, 0.25) });
+      if (rng.next() < 0.13) blooms.push({ x, y: BIL.level + rng.range(0.6, 0.95), z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.9, 1.2) });
+      else leaves.push({ x, y: BIL.level + rng.range(0.12, 0.6), z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.24, 0.4), tx: rng.range(-0.25, 0.25), tz: rng.range(-0.25, 0.25) });
     }
+    // the lotus's stalks grow with the water: its leaves and flowers stand as high above it in every season
     const lotusMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.45, side: DoubleSide }), {
       wind: 0.06,
       windHeight: 0.6,
       translucency: 1.1,
-      // a lotus's stalks grow with the water: leaves and flowers stand the same height above it
-      vertex: { key: 'afloat', pars: '', code: 'transformed.y += uWaterLevel / length(instanceMatrix[0].xyz);' },
+      vertex: {
+        key: 'lotus-rise',
+        pars: '',
+        code: `transformed.y += uWaterRise / length((modelMatrix * instanceMatrix)[0].xyz);`,
+      },
     });
     if (leaves.length) this.group.add(instanced(lotusLeaf(), lotusMat, leaves, { receive: true }));
     if (blooms.length) this.group.add(instanced(lotusFlower(), lotusMat, blooms, { receive: true }));
 
     // ---- egrets wading in the shallows ----
-    this.findSpots(G.uWaterLevel.value);
+    this.findSpots(true);
     const egretMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.75, side: DoubleSide }), { translucency: 0.6 });
     const body = egretBody();
     const neck = egretNeck();
@@ -703,40 +714,42 @@ export class Bil {
   }
 
   /**
-   * Where an egret can wade at this water level: points round the edge where the water is between ankle
-   * and knee deep, away from the boat's way. Egrets standing where it has gone too deep or dry move on.
+   * Where an egret can wade: points round the edge where the water is between ankle and knee deep, at this
+   * season's level (out over the drowned rim in the rains, in on the bil's bed in spring). `jump`: the water
+   * moved all at once (a new season shown), so the egrets are put on their spots rather than flying there.
    */
-  private findSpots(level: number): void {
-    this.spotLevel = level;
+  private findSpots(jump: boolean): void {
     for (const s of this.spots) s.busy = false;
     this.spots.length = 0;
+    this.spotsRise = waterRise();
+    const level = BIL.level + this.spotsRise;
     const rng = new Rng(91);
     for (let k = 0; k < 160 && this.spots.length < 18; k++) {
       const a = rng.range(0, Math.PI * 2);
-      const dz = Math.cos(a) * BIL.halfLen;
-      const du = Math.sin(a) * BIL.halfWid;
-      const edge = bilReach(BIL.z + dz, BIL.u + du);
-      for (let e = 1.3; e > 0.6; e -= 0.03) {
-        const z = BIL.z + (dz * e) / edge;
-        const u = BIL.u + (du * e) / edge;
-        // the bed here, as a height (the bil's own, or the marsh beyond its edge)
-        const bed = e < 1 ? -bilDepth(z, u) : -0.04 + 0.3 * (e - 1);
-        const depth = level - bed;
-        if (depth < 0.06 || depth > 0.32) continue;
-        const x = riverX(z) + u;
+      const da = Math.cos(a) * BIL.halfLen;
+      const dc = Math.sin(a) * BIL.halfWid;
+      const rim = bilPoint(da, dc);
+      const edge = bilReach(rim.x, rim.z);
+      for (let e = 1.6; e > 0.5; e -= 0.03) {
+        const { x, z } = bilPoint((da * e) / edge, (dc * e) / edge);
+        const bed = terrainHeight(x, z);
+        const deep = level - bed;
+        if (deep < 0.06 || deep > 0.32) continue;
         if (routeGap(x, z) >= 8) this.spots.push({ x, y: bed, z, busy: false });
         break;
       }
     }
-    for (const egret of this.egrets) egret.reclaim(this.spots);
+    for (const egret of this.egrets) egret.reclaim(this.spots, jump);
   }
 
   /** `blade` and `bladeWet`: the paddle's blade (world) and how much of it is in the water. */
   update(dt: number, t: number, boat: BoatBody, blade: Vector3, bladeWet: number): void {
     this.wash.set(boat.pos.x, boat.pos.z, Math.max(0, boat.speed), 0);
-    if (Math.abs(G.uWaterLevel.value - this.spotLevel) > 0.08) this.findSpots(G.uWaterLevel.value);
+    // the water has risen or fallen enough to move the shallows: the egrets find them again
+    const moved = Math.abs(waterRise() - this.spotsRise);
+    if (moved > 0.05) this.findSpots(moved > 0.2);
     const h = Math.min(dt, 1 / 30);
-    const near = bilReach(boat.pos.z, boat.pos.x - riverX(boat.pos.z)) < 1.15;
+    const near = bilReach(boat.pos.x, boat.pos.z) < 1.15;
     if (h > 0 && (near || this.awakeList.length)) this.simulate(h, boat, blade, bladeWet > 0.3, near);
     for (const egret of this.egrets) egret.update(dt, t, boat.pos, boat.speed, this.spots, this.rng);
   }

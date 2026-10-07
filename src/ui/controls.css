@@ -1,27 +1,44 @@
-/* The control dock (time, sky events, camera, view), the event notice and the help sheet.
-   Glass over the scene, matching the loader and title; the dock steps aside when nobody uses it. */
+/* The control dock (the year's ring and the hour, the day's timeline, the camera and the rest), its menus, the
+   event notice, the film's navigation and the help sheet. A thin pane of glass over the scene, a running stitch
+   along its top as on a kantha; it steps aside when nobody uses it. */
 
 #dock {
+  --line: rgba(236, 211, 168, 0.13);
+  --glass: rgba(12, 11, 10, 0.42);
   position: fixed;
   left: 50%;
-  bottom: max(14px, env(safe-area-inset-bottom));
-  transform: translate(-50%, 10px);
-  /* wide enough for the tools in one row on a laptop screen (season and weather made it longer) */
-  width: min(1080px, calc(100vw - 32px));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  transform: translate(-50%, 12px);
+  width: min(1180px, calc(100vw - 32px));
   box-sizing: border-box;
-  padding: 8px 14px 10px;
-  border-radius: 16px;
-  background: rgba(14, 12, 10, 0.5);
-  border: 1px solid rgba(236, 211, 168, 0.14);
-  -webkit-backdrop-filter: blur(10px) saturate(1.15);
-  backdrop-filter: blur(10px) saturate(1.15);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 9px 14px 8px;
+  border-radius: 18px;
+  background: var(--glass);
+  border: 1px solid var(--line);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: 0 14px 44px rgba(0, 0, 0, 0.32);
   color: var(--ink);
   font-size: 14px;
   z-index: 2;
   opacity: 0;
   pointer-events: none;
-  transition: opacity 0.6s ease, transform 0.6s ease;
+  transition: opacity 0.7s ease, transform 0.7s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+/* the kantha's running stitch along its top */
+#dock::before {
+  content: '';
+  position: absolute;
+  left: 22px;
+  right: 22px;
+  top: 4px;
+  height: 1px;
+  background: repeating-linear-gradient(90deg, rgba(236, 211, 168, 0.26) 0 7px, transparent 7px 13px);
+  pointer-events: none;
 }
 #dock.show {
   opacity: 1;
@@ -30,77 +47,89 @@
 }
 #dock.show.idle {
   opacity: 0;
-  transform: translate(-50%, 10px);
+  transform: translate(-50%, 12px);
   pointer-events: none;
 }
 
-.dock-time {
+.dock-when,
+.dock-day,
+.dock-tools {
   display: flex;
   align-items: center;
+  min-width: 0;
+}
+.dock-when {
+  gap: 10px;
+}
+.dock-day {
   gap: 10px;
 }
 .dock-tools {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px;
-  margin-top: 6px;
-}
-.dock-tools .spacer {
-  flex: 1;
+  gap: 6px;
+  justify-content: flex-end;
 }
 
 .ibtn,
 .chip,
 .seg button,
-.pick select,
+.live,
 #toast button {
   font: inherit;
   color: var(--ink);
   cursor: pointer;
-  border: 1px solid rgba(236, 211, 168, 0.22);
-  background: rgba(236, 211, 168, 0.04);
-  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  border: 1px solid transparent;
+  background: transparent;
+  transition: background 0.25s ease, border-color 0.25s ease, color 0.25s ease, opacity 0.25s ease;
 }
 .ibtn {
   flex: none;
-  width: 38px;
-  height: 38px;
+  width: 36px;
+  height: 36px;
   padding: 0;
   border-radius: 50%;
   display: grid;
   place-items: center;
+  color: rgba(236, 211, 168, 0.82);
 }
 .chip,
 #toast button {
   flex: none;
-  height: 32px;
-  padding: 0 12px;
+  height: 28px;
+  padding: 0 11px;
   border-radius: 999px;
-  font-size: 13px;
+  font-size: 12.5px;
+  border-color: var(--line);
 }
 .ibtn:hover,
 .chip:hover,
-.pick select:hover,
 #toast button:hover {
-  background: rgba(236, 211, 168, 0.14);
+  background: rgba(236, 211, 168, 0.12);
+  color: var(--ink);
 }
 .ibtn:focus-visible,
 .chip:focus-visible,
 .seg button:focus-visible,
-.pick select:focus-visible,
+.live:focus-visible,
+.ring-btn:focus-visible,
 .tl-mark:focus-visible,
+.pop-item:focus-visible,
 #toast button:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 2px;
 }
 .ibtn[aria-pressed='true'] {
-  background: rgba(236, 211, 168, 0.18);
+  background: rgba(236, 211, 168, 0.16);
+  color: var(--ink);
 }
 .ibtn[hidden] {
   display: none;
 }
 
+#play {
+  width: 32px;
+  height: 32px;
+  border-color: var(--line);
+}
 #play .i-play,
 #play.paused .i-pause {
   display: none;
@@ -109,7 +138,7 @@
   display: block;
 }
 #speed {
-  min-width: 48px;
+  min-width: 44px;
   font-variant-numeric: tabular-nums;
 }
 #sound .waves {
@@ -127,14 +156,122 @@
   display: block;
 }
 
+/* the year's ring: six seasons in their colours, the journey's day marked on it */
+.ring-btn {
+  flex: none;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: transform 0.4s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.ring-btn:hover {
+  transform: scale(1.06);
+}
+.ring-btn svg {
+  width: 40px;
+  height: 40px;
+  overflow: visible;
+}
+.ring-arc {
+  fill: none;
+  stroke-width: 3;
+  stroke-linecap: round;
+  opacity: 0.38;
+  transition: opacity 0.8s ease, stroke-width 0.8s ease;
+}
+.ring-arc.now {
+  opacity: 1;
+  stroke-width: 4.2;
+}
+#ring-mark {
+  fill: #fff4de;
+  filter: drop-shadow(0 0 3px rgba(255, 220, 170, 0.9));
+}
+
+.when {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  min-width: 0;
+}
+#clock {
+  font-size: 16.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  letter-spacing: 0.01em;
+}
+#bdate {
+  font-size: 12px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+/* Live: off in the cinematic morning; on (a red dot's soft pulse) while it is Bangladesh's own date and hour now;
+   a hollow ring when the viewer has taken the clock elsewhere (a press goes back to now) */
+.live {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border-color: var(--line);
+  font-size: 12px;
+  color: var(--ink);
+}
+.live i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: rgba(236, 211, 168, 0.5);
+}
+.live:hover {
+  background: rgba(236, 211, 168, 0.12);
+}
+.live.on {
+  border-color: rgba(240, 92, 80, 0.55);
+  background: rgba(240, 92, 80, 0.12);
+}
+.live.on:hover {
+  background: rgba(240, 92, 80, 0.2);
+}
+.live.on i {
+  background: #f05c50;
+  animation: live-pulse 2.6s ease-out infinite;
+}
+.live.on.behind i {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px #f05c50;
+  animation: none;
+}
+@keyframes live-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(240, 92, 80, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(240, 92, 80, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(240, 92, 80, 0);
+  }
+}
+
 /* camera: one of three */
 .seg {
   display: inline-flex;
   padding: 3px;
   gap: 2px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.22);
-  border: 1px solid rgba(236, 211, 168, 0.14);
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--line);
+  margin-right: 4px;
 }
 .seg button {
   display: inline-flex;
@@ -142,9 +279,7 @@
   gap: 6px;
   height: 30px;
   padding: 0 12px;
-  border-color: transparent;
   border-radius: 999px;
-  background: transparent;
   color: var(--ink-dim);
   font-size: 13px;
 }
@@ -152,57 +287,16 @@
   color: var(--ink);
 }
 .seg button[aria-pressed='true'] {
-  background: rgba(236, 211, 168, 0.18);
+  background: rgba(236, 211, 168, 0.16);
   color: var(--ink);
 }
 
-/* dropdowns: viewpoints and the moon's phase */
-.pick {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
+#moon-btn .moon-dark,
+.pop .moon-dark {
+  fill: rgba(236, 211, 168, 0.16);
 }
-.pick select {
-  appearance: none;
-  -webkit-appearance: none;
-  height: 32px;
-  max-width: 220px;
-  padding: 0 30px 0 12px;
-  border-radius: 999px;
-  font-size: 13px;
-  text-overflow: ellipsis;
-}
-.pick select option {
-  background: #1b1815;
-  color: var(--ink);
-}
-.pick::after {
-  content: '';
-  position: absolute;
-  right: 13px;
-  top: 50%;
-  width: 6px;
-  height: 6px;
-  margin-top: -5px;
-  border-right: 1.5px solid var(--ink-dim);
-  border-bottom: 1.5px solid var(--ink-dim);
-  transform: rotate(45deg);
-  pointer-events: none;
-}
-.moonpick select {
-  padding-left: 34px;
-}
-.moonpick svg {
-  position: absolute;
-  left: 11px;
-  width: 16px;
-  height: 16px;
-  pointer-events: none;
-}
-.moonpick .moon-dark {
-  fill: rgba(236, 211, 168, 0.14);
-}
-.moonpick .moon-lit {
+#moon-btn .moon-lit,
+.pop .moon-lit {
   fill: #e9eefc;
 }
 
@@ -211,13 +305,13 @@
   position: relative;
   flex: 1;
   min-width: 0;
-  height: 64px;
+  height: 46px;
 }
 .tl-row {
   position: absolute;
   left: 0;
   right: 0;
-  height: 24px;
+  height: 18px;
 }
 .tl-sun {
   top: 0;
@@ -229,17 +323,17 @@
   position: absolute;
   left: 0;
   right: 0;
-  top: 26px;
-  height: 12px;
-  border-radius: 6px;
-  box-shadow: inset 0 0 0 1px rgba(236, 211, 168, 0.18);
+  top: 20px;
+  height: 6px;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px rgba(236, 211, 168, 0.16);
 }
 .tl-tick {
   position: absolute;
-  top: 3px;
-  bottom: 3px;
+  top: 1px;
+  bottom: 1px;
   width: 1px;
-  background: rgba(255, 255, 255, 0.28);
+  background: rgba(255, 255, 255, 0.3);
   pointer-events: none;
 }
 .tl-band {
@@ -252,14 +346,14 @@
   bottom: -5px;
   height: 2px;
   border-radius: 1px;
-  background: rgba(214, 224, 255, 0.7);
+  background: rgba(214, 224, 255, 0.65);
 }
 #tl {
   position: absolute;
   left: 0;
   top: 50%;
   width: 100%;
-  height: 28px;
+  height: 26px;
   margin: 0;
   transform: translateY(-50%);
   background: transparent;
@@ -271,47 +365,47 @@
   outline: none;
 }
 #tl::-webkit-slider-runnable-track {
-  height: 28px;
+  height: 26px;
   background: transparent;
 }
 #tl::-webkit-slider-thumb {
   -webkit-appearance: none;
-  width: 6px;
-  height: 24px;
-  margin-top: 2px;
-  border-radius: 3px;
-  background: #fff3dc;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55), 0 0 12px rgba(255, 214, 160, 0.8);
+  width: 12px;
+  height: 12px;
+  margin-top: 7px;
+  border-radius: 50%;
+  background: #fff4de;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 0 10px rgba(255, 214, 160, 0.9);
 }
 #tl::-moz-range-track {
-  height: 28px;
+  height: 26px;
   background: transparent;
 }
 #tl::-moz-range-thumb {
-  width: 6px;
-  height: 24px;
+  width: 12px;
+  height: 12px;
   border: 0;
-  border-radius: 3px;
-  background: #fff3dc;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.55), 0 0 12px rgba(255, 214, 160, 0.8);
+  border-radius: 50%;
+  background: #fff4de;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 0 10px rgba(255, 214, 160, 0.9);
 }
 #tl:focus-visible::-webkit-slider-thumb {
-  box-shadow: 0 0 0 2px var(--ink), 0 0 12px rgba(255, 214, 160, 0.8);
+  box-shadow: 0 0 0 2px var(--ink), 0 0 10px rgba(255, 214, 160, 0.9);
 }
 #tl:focus-visible::-moz-range-thumb {
-  box-shadow: 0 0 0 2px var(--ink), 0 0 12px rgba(255, 214, 160, 0.8);
+  box-shadow: 0 0 0 2px var(--ink), 0 0 10px rgba(255, 214, 160, 0.9);
 }
 .tl-mark {
   position: absolute;
   top: 0;
-  width: 28px;
-  height: 24px;
+  width: 24px;
+  height: 18px;
   padding: 0;
   transform: translateX(-50%);
   display: grid;
   place-items: center;
   border: 0;
-  border-radius: 6px;
+  border-radius: 5px;
   background: transparent;
   color: #f3c27e;
   cursor: pointer;
@@ -324,28 +418,115 @@
   background: rgba(236, 211, 168, 0.14);
 }
 .tl-mark svg {
-  width: 18px;
-  height: 18px;
+  width: 15px;
+  height: 15px;
 }
 
-.readout {
-  flex: none;
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  min-width: 112px;
-  line-height: 1.3;
+/* the dock's menus: small glass sheets over their buttons */
+.pop {
+  position: fixed;
+  inset: auto;
+  margin: 0;
+  box-sizing: border-box;
+  min-width: 210px;
+  max-width: calc(100vw - 16px);
+  padding: 8px;
+  border-radius: 14px;
+  border: 1px solid rgba(236, 211, 168, 0.16);
+  background: rgba(16, 14, 12, 0.86);
+  -webkit-backdrop-filter: blur(16px) saturate(1.2);
+  backdrop-filter: blur(16px) saturate(1.2);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 13.5px;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.25s ease, transform 0.3s cubic-bezier(0.2, 0.7, 0.2, 1), overlay 0.3s allow-discrete, display 0.3s allow-discrete;
 }
-#clock {
-  font-size: 16px;
-  font-weight: 500;
-  white-space: nowrap;
+.pop:popover-open {
+  opacity: 1;
+  transform: translateY(0);
 }
-#tithi,
-#bdate {
+@starting-style {
+  .pop:popover-open {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.pop-title {
+  margin: 2px 8px 8px;
   font-size: 12px;
   color: var(--ink-dim);
-  white-space: nowrap;
+  letter-spacing: 0.04em;
+}
+.pop-seasons,
+.pop-moons {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 2px;
+}
+.pop-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.pop-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+.pop-item:hover {
+  background: rgba(236, 211, 168, 0.1);
+}
+.pop-item[aria-checked='true'] {
+  background: rgba(236, 211, 168, 0.16);
+}
+.pop-item span {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+.pop-item small {
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+.pop-item kbd {
+  margin-left: auto;
+  font-family: inherit;
+  font-size: 11px;
+  border: 1px solid rgba(236, 211, 168, 0.3);
+  border-radius: 4px;
+  padding: 0 5px;
+  color: var(--ink-dim);
+}
+.pop-item .dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.25);
+}
+/* (on a phone only: the view, the moon and the map in the "more" menu) */
+.pop-item.phone-only {
+  display: none;
+}
+.pop-item.journey {
+  margin-top: 6px;
+  border-top: 1px dashed rgba(236, 211, 168, 0.16);
+  border-radius: 0 0 9px 9px;
+  padding-top: 10px;
 }
 
 /* a sky event is happening */
@@ -388,7 +569,78 @@
   display: none;
 }
 
+/* the film's way back and on through its scenes: at the top while it plays, resting with the dock */
+#film-nav {
+  position: fixed;
+  left: 50%;
+  top: max(14px, env(safe-area-inset-top));
+  transform: translate(-50%, -10px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border-radius: 999px;
+  background: rgba(14, 12, 10, 0.5);
+  border: 1px solid rgba(236, 211, 168, 0.14);
+  -webkit-backdrop-filter: blur(10px) saturate(1.15);
+  backdrop-filter: blur(10px) saturate(1.15);
+  color: var(--ink);
+  font-size: 14px;
+  z-index: 2;
+  opacity: 0;
+  pointer-events: none;
+  /* hidden for the keyboard too once it has faded (no focus on buttons nobody can see) */
+  visibility: hidden;
+  transition: opacity 0.6s ease, transform 0.6s ease, visibility 0s linear 0.6s;
+}
+#film-nav.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+  pointer-events: auto;
+  visibility: visible;
+  transition-delay: 0s;
+}
+#film-nav.show.idle {
+  opacity: 0;
+  transform: translate(-50%, -10px);
+  pointer-events: none;
+  visibility: hidden;
+  transition: opacity 0.6s ease, transform 0.6s ease, visibility 0s linear 0.6s;
+}
+#film-nav button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(236, 211, 168, 0.22);
+  background: rgba(236, 211, 168, 0.04);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+#film-nav button:hover {
+  background: rgba(236, 211, 168, 0.16);
+}
+#film-nav button:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+#film-count {
+  min-width: 4.5em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+}
+@media (max-width: 520px) {
+  #film-nav button span {
+    display: none;
+  }
+}
+
 /* everything but the film's captions can be hidden for a clean view */
+body.ui-off #film-nav,
 body.ui-off #dock,
 body.ui-off #hint,
 body.ui-off #toast {
@@ -421,6 +673,7 @@ body.ui-off #ui-restore:focus-visible {
 #help {
   width: min(760px, calc(100vw - 32px));
   max-height: calc(100vh - 48px);
+  max-height: calc(100dvh - 48px);
   box-sizing: border-box;
   padding: 22px 26px 24px;
   border-radius: 18px;
@@ -432,6 +685,28 @@ body.ui-off #ui-restore:focus-visible {
 }
 #help::backdrop {
   background: rgba(5, 4, 3, 0.45);
+}
+#help .help-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px dashed rgba(236, 211, 168, 0.18);
+}
+#help .help-brand div {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+}
+#help .help-brand b {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+#help .help-brand span {
+  font-size: 12.5px;
+  color: var(--ink-dim);
 }
 #help h2 {
   margin: 0 0 16px;
@@ -473,6 +748,25 @@ body.ui-off #ui-restore:focus-visible {
   font-size: 13px;
   color: var(--ink-dim);
 }
+/* the data's sources, small, as each asks to be credited */
+#help .help-sources {
+  margin-top: 16px;
+  font-size: 11.5px;
+  color: var(--ink-dim);
+}
+#help .help-sources p {
+  margin: 0 0 6px;
+}
+#help .help-sources ul {
+  margin: 0;
+  padding-left: 18px;
+}
+#help .help-sources ul + p {
+  margin-top: 6px;
+}
+#help .help-sources a {
+  color: inherit;
+}
 #help kbd {
   font-family: inherit;
   font-size: 12px;
@@ -481,45 +775,95 @@ body.ui-off #ui-restore:focus-visible {
   padding: 0 5px;
 }
 
+/* narrower: the hour and the tools above, the day's timeline across the full width below */
+@media (max-width: 980px) {
+  #dock {
+    grid-template-columns: auto 1fr;
+    grid-template-areas: 'when tools' 'day day';
+    gap: 6px 12px;
+  }
+  .dock-when {
+    grid-area: when;
+  }
+  .dock-tools {
+    grid-area: tools;
+  }
+  .dock-day {
+    grid-area: day;
+  }
+}
+/* a phone: the camera's words go, the buttons draw in */
 @media (max-width: 640px) {
   #dock {
     width: calc(100vw - 16px);
     bottom: max(8px, env(safe-area-inset-bottom));
-    padding: 6px 10px 8px;
-    border-radius: 14px;
+    padding: 8px 8px 6px;
+    border-radius: 16px;
   }
-  .dock-time {
-    gap: 8px;
+  #dock::before {
+    left: 16px;
+    right: 16px;
   }
-  .seg button span,
-  #tithi {
+  .dock-when {
+    gap: 6px;
+  }
+  .ring-btn {
+    width: 38px;
+    height: 38px;
+  }
+  .ring-btn svg {
+    width: 34px;
+    height: 34px;
+  }
+  .seg button span {
     display: none;
+  }
+  .seg button {
+    padding: 0 7px;
+  }
+  .seg {
+    margin-right: 0;
+  }
+  #clock {
+    font-size: 14.5px;
   }
   #bdate {
     font-size: 11px;
   }
-  .seg button {
-    padding: 0 10px;
+  .live span {
+    display: none;
   }
-  .readout {
-    min-width: 0;
-  }
-  #clock {
-    font-size: 14px;
-  }
-  .ibtn {
-    width: 34px;
-    height: 34px;
-  }
-  #speed {
-    min-width: 40px;
+  .live {
     padding: 0 8px;
   }
-  .pick select {
-    max-width: 150px;
+  .ibtn {
+    width: 32px;
+    height: 32px;
+  }
+  .dock-tools {
+    gap: 2px;
+  }
+  #views-btn,
+  #moon-btn,
+  #fullscreen {
+    display: none;
+  }
+  .pop-item.phone-only {
+    display: flex;
+  }
+  .pop-item.phone-only.tiny-only {
+    display: none;
   }
   #help {
     padding: 18px 18px 20px;
+  }
+}
+@media (max-width: 380px) {
+  #map-btn {
+    display: none;
+  }
+  .pop-item.phone-only.tiny-only {
+    display: flex;
   }
 }
 
@@ -527,5 +871,8 @@ body.ui-off #ui-restore:focus-visible {
   #dock,
   #toast {
     transition: opacity 0.2s ease;
+  }
+  .live.on i {
+    animation: none;
   }
 }

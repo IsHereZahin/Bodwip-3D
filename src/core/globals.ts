@@ -1,4 +1,5 @@
 import { Color, Vector2, Vector3, Vector4 } from 'three';
+import type { Texture } from 'three';
 
 /**
  * Uniforms every scene shader shares. Materials hold references to these objects, so a single
@@ -26,7 +27,7 @@ export const G = {
   uWaterBody: { value: new Color() },
   /** xy: the way the wind blows toward, z: its strength (1 ≈ 4 m/s), w: how gusty (see env/wind.ts). */
   uWind: { value: new Vector4(0.97, 0.24, 1, 0.5) },
-  /** x: phase of the gust fronts rolling downwind. */
+  /** x: phase of the gust fronts rolling downwind; y: how far they roll in a second (m), for the plants that answer them late. */
   uGust: { value: new Vector2(0, 0) },
   /** Each wave's amplitude now (world/waves.ts): the swell and the chop the wind and the rain have raised. */
   uWaveA: { value: new Vector4() },
@@ -34,12 +35,40 @@ export const G = {
   uWaveC: { value: new Vector4() },
   /** How much of each quarter's wave set is running (x toward +z, y +x, z −z, w −x): the waves run with the wind. */
   uWaveDir: { value: new Vector4(0, 0, 1, 0) },
+  /** The Bay's swell (world/waves.ts): its three trains' amplitudes (m), and w their sum (a crest's height). */
+  uSwell: { value: new Vector4() },
   /** The sea state: x its significant wave height (m), y the length of its main waves (m). */
   uSea: { value: new Vector2(0, 3) },
-  /** Height of the water's surface (m): high in the monsoon, low in the dry season (see env/season.ts). */
+  /** The sea's surface (m about mean sea level). This world has no sea: main.ts holds it at the khal's level, for what still reads it. */
   uWaterLevel: { value: 0 },
-  /** How fast the river runs, against its autumn pace. */
+  /** The last high water's level (m): the flats below it are still wet. Held at the khal's level too. */
+  uTideHigh: { value: 0 },
+  /**
+   * Which water stands where, over the map (world/water.ts levelTexture): r inland water's level, g the sea's
+   * cells, b inland water's; and where the map lies (`uLevelMap`: its west and north edges, 1 / its extent).
+   */
+  tLevel: { value: null as Texture | null },
+  uLevelMap: { value: new Vector4() },
+  /**
+   * How far each place lies from the land the village keeps to (world/corridor.ts: the boat's way and the bil),
+   * and where that map lies (`uCorridorMap`: its west and north edges, 1 / its extent): the haze thickens past it.
+   */
+  tCorridor: { value: null as Texture | null },
+  uCorridorMap: { value: new Vector4() },
+  /**
+   * The plane the mirror pass reflects about (m): the level of the water nearest the eye, the sea's or a
+   * pond's, the bil's or the khal's (world/water.ts mirrorLevelAt); water at other levels shows the sky.
+   */
+  uMirrorLevel: { value: 0 },
+  /** The khal's current against its mean (world/khal.ts KHAL_CURRENT): the season's runoff (main.ts). */
   uFlowScale: { value: 1 },
+  /**
+   * The season's rise of the waters above their mean level (m, env/season.ts `water`): the river, the khals and
+   * the bil rise and fall by all of it, the ponds by `POND_RISE` (geography.ts waterLevelAt, GLSL waterLevels).
+   */
+  uWaterRise: { value: 0 },
+  /** How much of the rains' water stands in the salt farms (0..1: drained for the salt work, full as a gher in the rains; geography.ts setSaltWet). */
+  uSaltWet: { value: 0 },
   /** The season on the land: x leafiness, y dryness, z share of trees in flower, w kash in plume. */
   uSeasonA: { value: new Vector4(0.95, 0.1, 0, 1) },
   /** x lilies in flower, y water standing in the paddy plots, z wet soil, w salt pans at work. */
@@ -51,6 +80,23 @@ export const G = {
   uRain: { value: 0 },
   /** 0..1: how far the sky has closed over with rain cloud (no sun glitter, soft light). */
   uOvercast: { value: 0 },
+  /**
+   * The village's lamps after dark (world/landmarks.ts lampsGlow): where each stands (xyz) and how far its light
+   * reaches (w, m), and its colour times its strength (black by day). Lit materials take their soft light
+   * (render/glsl.ts lampsAt), the water their glints.
+   */
+  uLamp0: { value: new Vector4() },
+  uLamp1: { value: new Vector4() },
+  uLamp2: { value: new Vector4() },
+  uLamp3: { value: new Vector4() },
+  uLampColor0: { value: new Color(0, 0, 0) },
+  uLampColor1: { value: new Color(0, 0, 0) },
+  uLampColor2: { value: new Color(0, 0, 0) },
+  uLampColor3: { value: new Color(0, 0, 0) },
+  /** How much cloud lies on the hills (0..1): winter's mornings and evenings most, some in the rains (main.ts). */
+  uHillCloud: { value: 0 },
+  /** A lightning strike's light (world/lightning.ts): xyz the way to where it lights the cloud from within, w how bright now. */
+  uLightning: { value: new Vector4(0, 1, 0, 0) },
 };
 
 /** Drawn by the main camera only: never seen in the mirror pass. */

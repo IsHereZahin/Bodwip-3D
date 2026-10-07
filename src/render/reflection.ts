@@ -2,7 +2,7 @@ import { HalfFloatType, Matrix4, PerspectiveCamera, Plane, Vector3, Vector4, Web
 import { G } from '../core/globals';
 
 /**
- * Mirror camera for the river surface (at the season's water level, G.uWaterLevel), as three's Reflector
+ * Mirror camera for the water's surface (at G.uMirrorLevel, the level of the water nearest the eye), as three's Reflector
  * does it: a reflected camera, a projective texture matrix, and an oblique near plane that clips the
  * riverbed away.
  */
@@ -30,7 +30,7 @@ export class PlanarReflection {
 
   /** Returns false when the camera is at or below the surface (nothing to mirror). */
   update(camera: PerspectiveCamera): boolean {
-    const level = G.uWaterLevel.value;
+    const level = G.uMirrorLevel.value;
     this.origin.set(0, level, 0);
     const pos = this.camPos.setFromMatrixPosition(camera.matrixWorld);
     if (pos.y <= level + 0.02) return false;

@@ -1,14 +1,16 @@
 import { Vector3 } from 'three';
 import type { PerspectiveCamera } from 'three';
 import { angleDelta, clamp, damp } from '../core/mathx';
-import { G } from '../core/globals';
-import { WORLD_Z0, WORLD_Z1, riverX, terrainHeight } from '../world/geography';
+import { CORRIDOR } from '../render/glsl';
+import { WORLD_X0, WORLD_X1, WORLD_Z0, WORLD_Z1, corridorDistance, terrainHeight, waterLevelAt } from '../world/geography';
 
-/** How far the free camera may roam: across the river from its centre line, along it, and up. */
-const REACH = 900;
-const Z_MAX = WORLD_Z0 - 60;
-const Z_MIN = WORLD_Z1 + 260;
-const CEILING = 140;
+/**
+ * How far the free camera may roam: over the khal and its village, well inside the world's edges (so they stay
+ * beyond the haze), and no higher than a tall tree's crown and a little more: this is a river to be looked at
+ * from near it, not a map.
+ */
+const EDGE = 220;
+const CEILING = 90;
 /** Metres kept above the ground and the water. */
 const CLEARANCE = 1.6;
 /** Metres per second near the ground; faster higher up, and four times faster with Shift. */
@@ -32,6 +34,8 @@ export class FlyCam {
   private pitchT = 0;
   /** Metres still to travel from wheel or pinch nudges. */
   private push = 0;
+  /** A still placed by hand (the debug views) is not held inside the viewer's bounds. */
+  private still = false;
 
   /** Takes over from wherever the camera is now. */
   startFrom(camera: PerspectiveCamera): void {
@@ -41,6 +45,7 @@ export class FlyCam {
     this.pitch = this.pitchT = Math.asin(clamp(this.fwd.y, -1, 1));
     this.vel.set(0, 0, 0);
     this.push = 0;
+    this.still = false;
   }
 
   /** Puts the camera at a point looking along `yaw` (radians, 0 = +z) and `pitch`; for stills. */
@@ -50,6 +55,7 @@ export class FlyCam {
     this.pitch = this.pitchT = clamp(pitch, -PITCH_LIMIT, PITCH_LIMIT);
     this.vel.set(0, 0, 0);
     this.push = 0;
+    this.still = true;
   }
 
   /** Drag deltas in pixels; the view follows the hand, like turning a photo sphere. */
@@ -85,7 +91,7 @@ export class FlyCam {
     const ahead = Number(has('KeyW') || has('ArrowUp')) - Number(has('KeyS') || has('ArrowDown'));
     const side = Number(has('KeyD')) - Number(has('KeyA'));
     const lift = Number(has('KeyE') || has('PageUp')) - Number(has('KeyQ') || has('PageDown'));
-    const ground = Math.max(terrainHeight(this.pos.x, this.pos.z), G.uWaterLevel.value);
+    const ground = Math.max(terrainHeight(this.pos.x, this.pos.z), waterLevelAt(this.pos.x, this.pos.z));
     const speed = SPEED * (1 + (this.pos.y - ground) / 25) * (has('ShiftLeft') || has('ShiftRight') ? 4 : 1);
     this.want.copy(this.fwd).multiplyScalar(ahead).addScaledVector(this.right, side);
     if (this.want.lengthSq() > 1) this.want.normalize();
@@ -95,14 +101,33 @@ export class FlyCam {
     this.vel.lerp(this.want, k);
     const step = this.push * k;
     this.push -= step;
+    const fromX = this.pos.x;
+    const fromZ = this.pos.z;
     this.pos.addScaledVector(this.vel, dt).addScaledVector(this.fwd, step);
+    // never out over the land beyond the village: a move that would take it farther out slides along the
+    // limit, or stops (placed outside, it may still come back in)
+    const limit = CORRIDOR.camera;
+    const outNow = corridorDistance(this.pos.x, this.pos.z);
+    if (outNow > limit && outNow > corridorDistance(fromX, fromZ)) {
+      if (corridorDistance(this.pos.x, fromZ) <= limit) this.pos.z = fromZ;
+      else if (corridorDistance(fromX, this.pos.z) <= limit) this.pos.x = fromX;
+      else {
+        this.pos.x = fromX;
+        this.pos.z = fromZ;
+      }
+      this.vel.x *= 0.5;
+      this.vel.z *= 0.5;
+    }
 
     // stay inside the world, above the ground and the water
-    this.pos.z = clamp(this.pos.z, Z_MIN, Z_MAX);
-    const cx = riverX(this.pos.z);
-    this.pos.x = clamp(this.pos.x, cx - REACH, cx + REACH);
-    const floor = Math.max(terrainHeight(this.pos.x, this.pos.z), G.uWaterLevel.value) + CLEARANCE;
-    this.pos.y = clamp(this.pos.y, floor, CEILING);
+    if (ahead || side || lift || step) this.still = false;
+    const floor = Math.max(terrainHeight(this.pos.x, this.pos.z), waterLevelAt(this.pos.x, this.pos.z)) + CLEARANCE;
+    if (this.still) this.pos.y = Math.max(this.pos.y, floor);
+    else {
+      this.pos.z = clamp(this.pos.z, WORLD_Z1 + EDGE, WORLD_Z0 - EDGE);
+      this.pos.x = clamp(this.pos.x, WORLD_X0 + EDGE, WORLD_X1 - EDGE);
+      this.pos.y = clamp(this.pos.y, floor, floor + CEILING);
+    }
 
     camera.position.copy(this.pos);
     camera.lookAt(this.look.copy(this.pos).add(this.fwd));

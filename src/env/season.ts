@@ -4,8 +4,8 @@ import { smoothstep } from '../core/mathx';
 import { compass } from './astro';
 
 // The six seasons (ষড়ঋতু) of the Bangla year. A day of the year (0 = 1 January) gives every seasonal
-// quantity by easing between six keys, one in the middle of each season: how high the river stands and
-// how fast it runs, how silty it is, how green or dusty the land, which crops stand in the paddy plots,
+// quantity by easing between six keys, one in the middle of each season: how much the land's runoff
+// quickens the khal's drift, how silty the water is, how green or dusty the land, which crops stand in the paddy plots,
 // which trees are in flower, whether the kash is in plume and the lilies in bloom, how cloudy and rainy
 // and foggy it is, and the wind. The land, the water, the sky, the weather and the wind all read it, so a
 // season is one state of the whole world rather than a change of paint.
@@ -38,9 +38,13 @@ export interface SeasonState {
   day: number;
   /** Which of SEASON_NAMES it is. */
   index: number;
-  /** Height of the water (m), and the river's pace against autumn's. */
-  water: number;
+  /** The land's runoff down the khal, against autumn's: in the rains its drift quickens (main.ts). */
   flow: number;
+  /**
+   * The rivers', the khals' and the bil's rise above their mean level (m): full to the banks' tops from the
+   * rains into autumn, falling through the dry months to their lowest in spring, the mud and the char showing.
+   */
+  water: number;
   /** The river's colour (its silt), as a multiplier on the light it sends back. */
   readonly silt: Color;
   /** Leafiness and dryness of the land, 0..1. */
@@ -69,6 +73,11 @@ export interface SeasonState {
   warm: number;
   /** Salt pans at work (dry, white with salt) rather than idle or flooded (0..1). */
   salt: number;
+  /**
+   * The Bay's swell reaching the coast (significant height outside the breakers, m): about half the open
+   * sea's (Mansur et al. 2017: Dec–Feb 0.99 m, Mar–May 1.77, Jun–Aug 3.32, Sep–Nov 2.01) [মডেল].
+   */
+  swell: number;
 }
 
 interface Key extends Omit<SeasonState, 'day' | 'index' | 'silt'> {
@@ -85,17 +94,17 @@ const TOWARD_W = compass(0.24, -0.97);
 
 const KEYS: readonly Key[] = [
   // শীত (mid January): low clear water, mustard and boro seedbeds, dry pale land, morning fog, still air
-  { at: 14, water: -0.42, flow: 0.7, silt: '#727a5a', green: 0.55, dry: 0.55, blossom: 0, kash: 0, lily: 0.2, crops: [0.25, 0.1, 0, 0.35], flood: 0.25, soilWet: 0.2, cloud: 0.1, rain: 0, fog: 1, haze: 0.2, wind: 0.45, gusts: 0.35, windAngle: TOWARD_SW, light: 0.95, warm: -0.15, salt: 1 },
+  { at: 14, flow: 0.7, water: -0.35, silt: '#727a5a', green: 0.55, dry: 0.55, blossom: 0, kash: 0, lily: 0.2, crops: [0.25, 0.1, 0, 0.35], flood: 0.25, soilWet: 0.2, cloud: 0.1, rain: 0, fog: 1, haze: 0.2, wind: 0.45, gusts: 0.35, windAngle: TOWARD_SW, light: 0.95, warm: -0.15, salt: 1, swell: 0.5 },
   // বসন্ত (mid March): lowest water, new leaves, shimul and palash in flower, green boro, dry breezes
-  { at: 73, water: -0.5, flow: 0.7, silt: '#7a7656', green: 0.78, dry: 0.45, blossom: 0.35, kash: 0, lily: 0.35, crops: [0.1, 0.65, 0.05, 0.05], flood: 0.4, soilWet: 0.25, cloud: 0.2, rain: 0.02, fog: 0.25, haze: 0.35, wind: 0.75, gusts: 0.6, windAngle: TOWARD_N, light: 1, warm: 0.05, salt: 1 },
+  { at: 73, flow: 0.7, water: -0.4, silt: '#7a7656', green: 0.78, dry: 0.45, blossom: 0.35, kash: 0, lily: 0.35, crops: [0.1, 0.65, 0.05, 0.05], flood: 0.4, soilWet: 0.25, cloud: 0.2, rain: 0.02, fog: 0.25, haze: 0.35, wind: 0.75, gusts: 0.6, windAngle: TOWARD_N, light: 1, warm: 0.05, salt: 1, swell: 0.75 },
   // গ্রীষ্ম (mid May): boro harvest, dust and heat haze, krishnachura, sudden squalls (kalboishakhi)
-  { at: 134, water: -0.3, flow: 0.8, silt: '#7e7050', green: 0.7, dry: 0.7, blossom: 0.25, kash: 0, lily: 0.55, crops: [0.1, 0.25, 0.45, 0], flood: 0.15, soilWet: 0.15, cloud: 0.35, rain: 0.12, fog: 0, haze: 0.6, wind: 0.95, gusts: 1, windAngle: TOWARD_N, light: 1.08, warm: 0.12, salt: 0.85 },
+  { at: 134, flow: 0.8, water: -0.25, silt: '#7e7050', green: 0.7, dry: 0.7, blossom: 0.25, kash: 0, lily: 0.55, crops: [0.1, 0.25, 0.45, 0], flood: 0.15, soilWet: 0.15, cloud: 0.35, rain: 0.12, fog: 0, haze: 0.6, wind: 0.95, gusts: 1, windAngle: TOWARD_N, light: 1.08, warm: 0.12, salt: 0.85, swell: 0.95 },
   // বর্ষা (mid July): the river high, fast and brown, aman seedlings in flooded plots, lilies everywhere, rain
-  { at: 195, water: 0.55, flow: 1.6, silt: '#8a6a40', green: 1, dry: 0, blossom: 0, kash: 0, lily: 1, crops: [0.55, 0.3, 0, 0], flood: 0.9, soilWet: 1, cloud: 0.85, rain: 0.55, fog: 0.1, haze: 0.3, wind: 1.1, gusts: 0.8, windAngle: TOWARD_NE, light: 0.65, warm: -0.05, salt: 0 },
+  { at: 195, flow: 1.6, water: 0.65, silt: '#8a6a40', green: 1, dry: 0, blossom: 0, kash: 0, lily: 1, crops: [0.6, 0.38, 0, 0], flood: 0.9, soilWet: 1, cloud: 0.85, rain: 0.55, fog: 0.1, haze: 0.3, wind: 1.1, gusts: 0.8, windAngle: TOWARD_NE, light: 0.65, warm: -0.05, salt: 0, swell: 1.6 },
   // শরৎ (mid September): white clouds in a blue sky, kash in plume on the chars, lush green aman
-  { at: 257, water: 0.4, flow: 1.2, silt: '#7d6a46', green: 0.95, dry: 0.1, blossom: 0, kash: 1, lily: 0.9, crops: [0.1, 0.85, 0, 0], flood: 0.45, soilWet: 0.55, cloud: 0.45, rain: 0.08, fog: 0.3, haze: 0.15, wind: 0.75, gusts: 0.5, windAngle: TOWARD_W, light: 1, warm: 0, salt: 0.2 },
+  { at: 257, flow: 1.2, water: 0.8, silt: '#7d6a46', green: 0.95, dry: 0.1, blossom: 0, kash: 1, lily: 0.9, crops: [0.08, 0.9, 0, 0], flood: 0.45, soilWet: 0.55, cloud: 0.45, rain: 0.08, fog: 0.3, haze: 0.15, wind: 0.75, gusts: 0.5, windAngle: TOWARD_W, light: 1, warm: 0, salt: 0.2, swell: 1.1 },
   // হেমন্ত (mid November): golden aman and the harvest, mist in the mornings, the water falling
-  { at: 318, water: 0, flow: 0.95, silt: '#786a4c', green: 0.8, dry: 0.3, blossom: 0, kash: 0.45, lily: 0.55, crops: [0, 0.25, 0.6, 0], flood: 0.15, soilWet: 0.35, cloud: 0.2, rain: 0.02, fog: 0.6, haze: 0.2, wind: 0.55, gusts: 0.35, windAngle: TOWARD_SW, light: 0.98, warm: 0.06, salt: 0.7 },
+  { at: 318, flow: 0.95, water: 0.15, silt: '#786a4c', green: 0.8, dry: 0.3, blossom: 0, kash: 0.45, lily: 0.55, crops: [0, 0.25, 0.6, 0], flood: 0.15, soilWet: 0.35, cloud: 0.2, rain: 0.02, fog: 0.6, haze: 0.2, wind: 0.55, gusts: 0.35, windAngle: TOWARD_SW, light: 0.98, warm: 0.06, salt: 0.7, swell: 0.75 },
 ];
 
 const tmpA = new Color();
@@ -118,8 +127,8 @@ export function makeSeasonState(): SeasonState {
   return {
     day: 0,
     index: 0,
-    water: 0,
     flow: 1,
+    water: 0,
     silt: new Color(),
     green: 1,
     dry: 0,
@@ -139,11 +148,12 @@ export function makeSeasonState(): SeasonState {
     light: 1,
     warm: 0,
     salt: 0,
+    swell: 0.8,
   };
 }
 
 type Scalar = Exclude<keyof Key, 'at' | 'silt' | 'crops' | 'windAngle'>;
-const SCALARS: readonly Scalar[] = ['water', 'flow', 'green', 'dry', 'blossom', 'kash', 'lily', 'flood', 'soilWet', 'cloud', 'rain', 'fog', 'haze', 'wind', 'gusts', 'light', 'warm', 'salt'];
+const SCALARS: readonly Scalar[] = ['flow', 'water', 'green', 'dry', 'blossom', 'kash', 'lily', 'flood', 'soilWet', 'cloud', 'rain', 'fog', 'haze', 'wind', 'gusts', 'light', 'warm', 'salt', 'swell'];
 
 /** The season on `day` (day of the year, fractional). */
 export function seasonAt(day: number, out: SeasonState): SeasonState {
@@ -159,12 +169,12 @@ export function seasonAt(day: number, out: SeasonState): SeasonState {
   return out;
 }
 
-/** Writes the season's land and water into the shared uniforms (the water level is eased by the caller). */
+/** Writes the season's land into the shared uniforms (the khal's current comes from its runoff, in main.ts). */
 export function applySeason(s: SeasonState): void {
-  G.uFlowScale.value = s.flow;
   G.uSeasonA.value.set(s.green, s.dry, s.blossom, s.kash);
   G.uSeasonB.value.set(s.lily, s.flood, s.soilWet, s.salt);
   G.uCrops.value.set(s.crops[0], s.crops[1], s.crops[2], s.crops[3]);
+  G.uWaterRise.value = s.water;
 }
 
 /** Which season (index into SEASON_NAMES) a day of the year falls in. */
@@ -203,6 +213,20 @@ export function banglaDate(day: number): { month: string; date: number } {
 }
 
 /** Day of the year (0 = 1 January) of a calendar date, with the time of day as a fraction. */
+/** Bangladesh's offset from UTC (h): Bangladesh Standard Time, with no summer time. */
+const BD_OFFSET = 6;
+
+/**
+ * The village's own date and hour now, as in Bangladesh (whatever the viewer's own time zone): the day of the
+ * year (0 = 1 January) and the hour. The sky follows them (its solar hour is Bangladesh's clock, the country
+ * lying about the meridian of UTC+6).
+ */
+export function bangladeshTime(at = Date.now()): { day: number; hour: number } {
+  const bd = new Date(at + BD_OFFSET * 3600e3);
+  const day = (Date.UTC(bd.getUTCFullYear(), bd.getUTCMonth(), bd.getUTCDate()) - Date.UTC(bd.getUTCFullYear(), 0, 1)) / 864e5;
+  return { day, hour: bd.getUTCHours() + bd.getUTCMinutes() / 60 + bd.getUTCSeconds() / 3600 };
+}
+
 export function dayOfYear(date: Date): number {
   const start = new Date(date.getFullYear(), 0, 1);
   return (date.getTime() - start.getTime()) / 86400000;

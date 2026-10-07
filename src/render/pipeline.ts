@@ -2,6 +2,7 @@ import {
   BufferAttribute,
   BufferGeometry,
   Color,
+  DepthTexture,
   HalfFloatType,
   LinearFilter,
   Mesh,
@@ -87,6 +88,45 @@ void main() {
   gl_FragColor = vec4(texture2D(tPrev, vUv).rgb + c / 12.0, 1.0);
 }`;
 
+/** Taps the depth of field gathers per pixel. */
+const DOF_TAPS = 40;
+
+// depth of field, as a lens has it: each pixel gathers what of its neighbours would be spread over it (a disc of
+// golden-angle taps as wide as the frame's widest blur), so a blurred foreground spreads over what is behind it
+// but a blurred background never over a sharper thing in front of it. The blur grows with how far a thing is from
+// the focus in dioptres (a thin lens): nothing at the focus, uBlur pixels at infinity.
+const DOF = /* glsl */ `${GLSL_SANITIZE}
+uniform sampler2D tSrc; uniform sampler2D tDepth; uniform vec2 uTexel;
+uniform float uNear; uniform float uFar; uniform float uFocus; uniform float uBlur; uniform float uMaxBlur;
+varying vec2 vUv;
+float viewDepth(vec2 uv) {
+  float z = texture2D(tDepth, uv).x * 2.0 - 1.0;
+  return 2.0 * uNear * uFar / (uFar + uNear - z * (uFar - uNear));
+}
+float blurOf(float d) { return min(uMaxBlur, uBlur * abs(1.0 - uFocus / d)); }
+float hash(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+void main() {
+  vec3 c0 = sanitize(texture2D(tSrc, vUv).rgb);
+  float d0 = viewDepth(vUv);
+  float b0 = blurOf(d0);
+  vec3 sum = c0;
+  float n = 1.0;
+  // each pixel's disc turned its own way: the taps' pattern becomes a fine grain, not rings
+  float spin = hash(gl_FragCoord.xy) * 6.2832;
+  for (int i = 0; i < ${DOF_TAPS}; i++) {
+    float r = sqrt((float(i) + 0.5) / ${DOF_TAPS}.0) * uMaxBlur;
+    float a = float(i) * 2.39996 + spin;
+    vec2 uv = vUv + vec2(cos(a), sin(a)) * r * uTexel;
+    float d = viewDepth(uv);
+    float b = blurOf(d);
+    if (d > d0) b = min(b, b0 * 2.0);
+    float m = smoothstep(r - 0.5, r + 0.5, b);
+    sum += mix(sum / n, sanitize(texture2D(tSrc, uv).rgb), m);
+    n += 1.0;
+  }
+  gl_FragColor = vec4(sum / n, 1.0);
+}`;
+
 // light shafts: the bright sky round the sun smeared radially; anything in front of it blocks them
 const RAYS = /* glsl */ `
 uniform sampler2D tSrc; uniform vec2 uSun; uniform float uAspect;
@@ -137,14 +177,16 @@ void main() {
   col = mix(col, col * vec3(0.9, 1.0, 1.08), 1.0 - smoothstep(0.0, 0.14, lum));
   col = mix(col, vec3(lum) * vec3(0.72, 0.88, 1.22), uNight * 0.5 * (1.0 - smoothstep(0.03, 0.4, lum)));
   vec3 m = aces(col);
-  // painterly grade: teal in the shadows, amber in the highlights, a firm S-curve
+  // painterly grade: teal in the shadows, amber in the highlights, a gentle S-curve; the deepest shadows
+  // lifted a little (a film's toe), so what stands in the shade under a veranda or a grove still reads
   float l = dot(m, vec3(0.299, 0.587, 0.114));
   m += vec3(0.0, 0.012, 0.022) * (1.0 - smoothstep(0.0, 0.35, l));
   m = mix(m, m * vec3(1.04, 0.99, 0.9), smoothstep(0.45, 1.0, l));
-  m = clamp(mix(vec3(l), m, 1.1), 0.0, 1.0);
-  m = mix(m, m * m * (3.0 - 2.0 * m), 0.32);
+  m = clamp(mix(vec3(l), m, 1.08), 0.0, 1.0);
+  m = mix(m, m * m * (3.0 - 2.0 * m), 0.2);
+  m += 0.009 * (1.0 - smoothstep(0.0, 0.22, m)) * (1.0 - uNight * 0.6);
   float vig = 1.0 - smoothstep(0.38, 1.05, length(cc * vec2(1.05, 1.25)));
-  m *= mix(0.7, 1.0, vig);
+  m *= mix(0.78, 1.0, vig);
   m = toSRGB(m);
   // film grain and dither against banding in the smooth sky
   float g = hash(gl_FragCoord.xy + fract(uFrame * 0.618) * 311.0) - 0.5;
@@ -164,15 +206,20 @@ export interface FrameParams {
   night: number;
   /** 0..1: letterbox bars closing in. */
   letterbox: number;
-  /** Keep this frame (as it is shown) for a dissolve into whatever comes next. */
-  hold?: boolean;
-  /** 0..1: how much of the held frame still shows over this one. */
+  /**
+   * Draw this frame into the held target only, not to the screen: the shot a dissolve leaves, drawn live each
+   * frame (still moving) just before the shot it gives way to.
+   */
+  toHeld?: boolean;
+  /** 0..1: how much of the held frame (the shot being left) still shows over this one. */
   dissolve?: number;
+  /** A shallow depth of field: the distance in focus (m), and how open the lens is (rig/director.ts `Dof`; 0 or absent: all sharp). */
+  dof?: { focus: number; aperture: number };
 }
 
 /**
- * Mirror pass → scene (MSAA, HDR) → bloom chain → light shafts → one composite pass
- * (tone map, grade, vignette, grain) straight to the canvas.
+ * Mirror pass → scene (MSAA, HDR) → depth of field (when a shot asks for it) → bloom chain → light shafts → one
+ * composite pass (tone map, grade, vignette, grain) straight to the canvas.
  */
 export class Pipeline {
   readonly reflection: PlanarReflection;
@@ -181,7 +228,9 @@ export class Pipeline {
   private readonly down: WebGLRenderTarget[] = [];
   private readonly up: WebGLRenderTarget[] = [];
   private readonly rays: WebGLRenderTarget;
-  /** The last frame of a shot, held for a dissolve. */
+  /** The scene through the depth of field. */
+  private readonly focused: WebGLRenderTarget;
+  /** The shot a dissolve leaves, drawn this frame. */
   private readonly held: WebGLRenderTarget;
   private readonly quad: Mesh;
   private readonly quadScene = new Scene();
@@ -190,6 +239,16 @@ export class Pipeline {
   private readonly mDown = pass(DOWN, { tSrc: { value: null }, uTexel: { value: new Vector2() } });
   private readonly mUp = pass(UP, { tSrc: { value: null }, tPrev: { value: null }, uTexel: { value: new Vector2() } });
   private readonly mRays = pass(RAYS, { tSrc: { value: null }, uSun: { value: new Vector2() }, uAspect: { value: 1 } });
+  private readonly mDof = pass(DOF, {
+    tSrc: { value: null },
+    tDepth: { value: null },
+    uTexel: { value: new Vector2() },
+    uNear: { value: 0.5 },
+    uFar: { value: 6000 },
+    uFocus: { value: 10 },
+    uBlur: { value: 0 },
+    uMaxBlur: { value: 1 },
+  });
   private readonly mComposite = pass(COMPOSITE, {
     tScene: { value: null },
     tBloom: { value: null },
@@ -210,13 +269,17 @@ export class Pipeline {
   private width = 1;
   private height = 1;
   private frame = 0;
-  private readonly reflScale: number;
+  private reflScale: number;
   /** Height of one letterbox bar as a fraction of the frame. */
   bar = 0.12;
 
   constructor(reflScale = 0.5) {
     this.reflScale = reflScale;
     this.sceneRT = rt(1, 1, 4, true);
+    // its depth resolved only for a frame with a depth of field (render())
+    this.sceneRT.depthTexture = new DepthTexture(1, 1);
+    this.sceneRT.resolveDepthBuffer = false;
+    this.focused = rt(1, 1);
     this.bright = rt(1, 1);
     for (let i = 0; i < BLOOM_LEVELS; i++) {
       this.down.push(rt(1, 1));
@@ -241,10 +304,27 @@ export class Pipeline {
     return { width: this.width, height: this.height };
   }
 
+  /**
+   * The scene pass's multisampling: 4, or 0 for a weak GPU, where resolving four samples of a half-float frame
+   * is near a third of the scene's cost. The target is made again at its next use.
+   */
+  setSamples(samples: number): void {
+    if (this.sceneRT.samples === samples) return;
+    this.sceneRT.samples = samples;
+    this.sceneRT.dispose();
+  }
+
+  /** The mirror pass's resolution as a share of the frame's. */
+  setReflectionScale(k: number): void {
+    this.reflScale = k;
+    this.reflection.setSize(Math.round(this.width * k), Math.round(this.height * k));
+  }
+
   setSize(width: number, height: number): void {
     this.width = width;
     this.height = height;
     this.sceneRT.setSize(width, height);
+    this.focused.setSize(width, height);
     this.reflection.setSize(Math.round(width * this.reflScale), Math.round(height * this.reflScale));
     let w = Math.max(1, width >> 1);
     let h = Math.max(1, height >> 1);
@@ -266,6 +346,9 @@ export class Pipeline {
   }
 
   render(renderer: WebGLRenderer, scene: Scene, camera: PerspectiveCamera, params: FrameParams): void {
+    // the world's matrices are brought up to date once, by the first pass that draws it: nothing moves
+    // between the mirror and the main pass
+    const autoUpdate = scene.matrixWorldAutoUpdate;
     // mirror pass: the reflected world, fogged only above the water (see applyAtmosphere)
     if (this.reflection.update(camera)) {
       this.reflection.camera.layers.set(0);
@@ -273,14 +356,35 @@ export class Pipeline {
       G.uReflPass.value = 1;
       renderer.setRenderTarget(this.reflection.target);
       renderer.render(scene, this.reflection.camera);
+      scene.matrixWorldAutoUpdate = false;
     }
     G.uCamPos.value.copy(camera.position);
     G.uReflPass.value = 0;
+    // the far distance's blur in pixels, at most 1.3% of the frame's height (the lens's widest)
+    const dof = params.dof;
+    const blur = dof && dof.aperture > 0 ? (dof.aperture / dof.focus) * this.height : 0;
+    const focusing = blur > 0.6;
+    this.sceneRT.resolveDepthBuffer = focusing;
     renderer.setRenderTarget(this.sceneRT);
     renderer.render(scene, camera);
+    scene.matrixWorldAutoUpdate = autoUpdate;
+    let shown = this.sceneRT;
+    if (focusing && dof) {
+      const d = this.mDof.uniforms;
+      d.tSrc.value = this.sceneRT.texture;
+      d.tDepth.value = this.sceneRT.depthTexture;
+      (d.uTexel.value as Vector2).set(1 / this.width, 1 / this.height);
+      d.uNear.value = camera.near;
+      d.uFar.value = camera.far;
+      d.uFocus.value = dof.focus;
+      d.uMaxBlur.value = Math.min(blur * 1.25, this.height * 0.013);
+      d.uBlur.value = blur;
+      this.run(this.mDof, renderer, this.focused);
+      shown = this.focused;
+    }
 
     // bloom: bright pass, then down and back up a mip chain
-    this.mBright.uniforms.tSrc.value = this.sceneRT.texture;
+    this.mBright.uniforms.tSrc.value = shown.texture;
     (this.mBright.uniforms.uTexel.value as Vector2).set(1 / this.width, 1 / this.height);
     this.run(this.mBright, renderer, this.bright);
     let src = this.bright;
@@ -313,7 +417,7 @@ export class Pipeline {
     }
 
     const u = this.mComposite.uniforms;
-    u.tScene.value = this.sceneRT.texture;
+    u.tScene.value = shown.texture;
     u.tBloom.value = upSrc.texture;
     u.tRays.value = this.rays.texture;
     u.uRays.value = rayAmount * 0.55;
@@ -327,12 +431,13 @@ export class Pipeline {
     const aspect = this.width / this.height;
     this.bar = aspect > 1 ? Math.max(0, (1 - aspect / 2.35) / 2) : 0.06;
     u.uLetter.value = params.letterbox * this.bar;
-    if (params.hold) {
-      // keep this frame as it is shown, for the dissolve to come (the held texture unbound meanwhile: a
-      // pass may not read the target it writes)
+    if (params.toHeld) {
+      // the shot being left, as it is shown, for the one after it to dissolve from (the held texture unbound
+      // meanwhile: a pass may not read the target it writes)
       u.tHeld.value = null;
       u.uDissolve.value = 0;
       this.run(this.mComposite, renderer, this.held);
+      return;
     }
     u.tHeld.value = this.held.texture;
     u.uDissolve.value = params.dissolve ?? 0;

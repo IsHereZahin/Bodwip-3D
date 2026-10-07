@@ -4,6 +4,7 @@ import {
   ConeGeometry,
   CylinderGeometry,
   DoubleSide,
+  Euler,
   Group,
   LatheGeometry,
   Matrix4,
@@ -24,8 +25,8 @@ import { MeshBuilder, rgb, scaleRgb, taperedTube } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { checkTexture, hullPlankTexture, softSpotTexture, weaveTexture } from '../render/textures';
 import { windAt } from '../env/wind';
-import { Boatman, type OarPose } from './boatman';
-import type { BoatBody } from './boatPhysics';
+import { Boatman, TARUN_OUTFIT, type OarPose } from './boatman';
+import { REST_PHASE, type BoatBody } from './boatPhysics';
 import { HERO_HULL, HERO_SINK, buildHull, hullHalfWidthAt, hullStation } from './hull';
 import {
   BLADE_LENGTH,
@@ -63,6 +64,31 @@ const LOWER_HOLD = 0.5;
 const LOWER_HOLD_RADIUS = SHAFT_TOP + ((SHAFT_THROAT - SHAFT_TOP) * LOWER_HOLD) / (PADDLE_REACH - BLADE_LENGTH / 2);
 /** Middle of the boatman's feet on the stern platform: toward the side he paddles on (+x). */
 const STANCE = new Vector3(0.24, 0.33, -2.95);
+
+/**
+ * His mathal, when it is off: set down on the stern's deck just behind him and to his right, tipped with the
+ * stern's rise (boat frame; its height found on the hull). Where his hand takes it (the rim nearest him, in the
+ * hat's frame, set down and on his head), and the seconds that putting it on and taking it off take.
+ */
+const HAT_DOWN = { x: -0.1, z: -3.4, tip: -0.3, yaw: 0.35 };
+const GRASP_DOWN = new Vector3(0.0, -0.01, 0.33);
+const GRASP_HEAD = new Vector3(-0.14, -0.012, 0.3);
+const HAT_ON_S = 3.8;
+const HAT_OFF_S = 3.4;
+/**
+ * He answers the weather a little late, as anyone does (s), and does not change it again for a while (s): the
+ * mathal goes on in a hard sun or the rain and comes off when it is mild, never on a whim.
+ */
+const HAT_REACT = 2.5;
+const HAT_HOLD = 16;
+
+/** Where along a run of keyed times (s) a moment lies: the key it is in and how far through it, eased. */
+function keyed(t: number, keys: readonly number[]): { k: number; e: number } {
+  let k = 0;
+  while (k < keys.length - 2 && t > keys[k + 1]) k++;
+  const f = Math.min(1, Math.max(0, (t - keys[k]) / (keys[k + 1] - keys[k])));
+  return { k, e: f * f * (3 - 2 * f) };
+}
 /** Basis vectors for setting the paddle's turn. */
 const basisX = new Vector3();
 const basisY = new Vector3();
@@ -314,9 +340,10 @@ export class HeroBoat {
   /** The eddy the blade left where it last came out: world x, z, seconds since, strength. */
   readonly swirl = new Vector4(0, 0, 99, 0);
 
-  private readonly glass: MeshStandardMaterial;
+  /** The lantern's glass, glowing as the light in it does (the film keeps a shot's glow while it dissolves away). */
+  readonly glass: MeshStandardMaterial;
   private readonly paddle = new Group();
-  private readonly man: Boatman;
+  readonly man: Boatman;
   private readonly lanternPivot = new Group();
   private readonly shadow: Mesh;
   private readonly stroke = makePaddlePose();
@@ -341,6 +368,23 @@ export class HeroBoat {
   private readonly air = { x: 0, z: 0 };
   private readonly gravity = new Vector3();
   private readonly inverse = new Quaternion();
+  // the mathal: on his head or set down; what he is doing with it; what the weather asks of it
+  private hatOn = false;
+  private hatWant = false;
+  private wantFor = 0;
+  private sinceHat = HAT_HOLD;
+  private hatAct: { put: boolean; t: number } | null = null;
+  private readonly lastPos = new Vector3(Number.NaN, 0, 0);
+  private readonly downPos = new Vector3();
+  private readonly downQ = new Quaternion();
+  private readonly headPos = new Vector3();
+  private readonly headQ = new Quaternion();
+  private readonly carryQ = new Quaternion();
+  private readonly hand0 = new Vector3();
+  private readonly handA = new Vector3();
+  private readonly handB = new Vector3();
+  private readonly grasp = new Vector3();
+  private readonly hv = new Vector3();
 
   constructor() {
     const g = this.group;
@@ -379,7 +423,8 @@ export class HeroBoat {
     g.add(new Mesh(bambooGeometry(cz0, cz1), bamboo));
 
     this.addCargo(cz0);
-    this.glass = new MeshStandardMaterial({ color: '#ffe2b0', emissive: new Color('#ffb257'), emissiveIntensity: 0, roughness: 0.15 });
+    // (through patchMaterial, as everything is: seen from across the water it takes the haze)
+    this.glass = patchMaterial(new MeshStandardMaterial({ color: '#ffe2b0', emissive: new Color('#ffb257'), emissiveIntensity: 0, roughness: 0.15 }), {});
     this.lantern = this.addLantern(cz1, this.glass);
 
     // the boatman's shadow on his platform: the boat does not cast into the shadow map, so a soft spot
@@ -391,8 +436,125 @@ export class HeroBoat {
     g.add(this.shadow);
 
     this.buildPaddle(wood);
-    this.man = new Boatman(STANCE, [CROSS_RADIUS, LOWER_HOLD_RADIUS]);
+    // the young majhi the film follows
+    this.man = new Boatman(STANCE, [CROSS_RADIUS, LOWER_HOLD_RADIUS], TARUN_OUTFIT, 'tarun');
     g.add(this.man.group);
+    // where his mathal is set down: on the stern's rising deck behind him
+    const s = sAt(HAT_DOWN.z);
+    const { sheer } = hullStation(HERO_HULL, s);
+    this.downPos.set(HAT_DOWN.x, sheer - 0.015, HAT_DOWN.z);
+    this.downQ.setFromEuler(new Euler(HAT_DOWN.tip, HAT_DOWN.yaw, 0, 'YXZ'));
+  }
+
+  /** What the sky and the weather ask of his mathal now: on (a hard sun, rain) or off (main.ts, each frame). */
+  wantHat(on: boolean): void {
+    this.hatWant = on;
+  }
+
+  /** Puts the mathal where the weather wants it at once (a new scene, a jump), or, with `on`, there. */
+  settleHat(on = this.hatWant): void {
+    this.hatOn = on;
+    this.hatAct = null;
+    this.wantFor = 0;
+    // from here he answers the weather when it changes, after a moment; and the boat put somewhere just now
+    // (a scene opening) is no jump that would settle it again
+    this.sinceHat = HAT_HOLD;
+    this.lastPos.x = Number.NaN;
+  }
+
+  /**
+   * His right hand and the mathal while he puts it on or takes it off (the stroke is at rest, the paddle held up
+   * in his left hand): to where it lies, lifted over his head and settled on it with a touch at the brim, and back
+   * to the paddle's grip; or the other way round. Sets the hand's hold and how his body turns and bends to it;
+   * returns how far from where it lies to his head the mathal is carried (0..1), or −1 while it is not carried.
+   */
+  private hatHand(drive: { twist: number; bend: number; crouch: number }): number {
+    const act = this.hatAct;
+    const right = this.hands.holds[0];
+    if (!act || act.t < 0) return -1;
+    this.man.hatOnHead(this.headPos, this.headQ);
+    const downRim = this.handA.copy(GRASP_DOWN).applyQuaternion(this.downQ).add(this.downPos);
+    const headRim = this.handB.copy(GRASP_HEAD).applyQuaternion(this.headQ).add(this.headPos);
+    const above = this.hv.copy(headRim).add(this.grasp.set(0, 0.2, 0.06));
+    const g0 = this.hand0.copy(right.at);
+    const at = right.at;
+    let carry = -1;
+    // how near the place behind him his hand is: he turns and bends to it
+    let reachBack = 0;
+    if (act.put) {
+      const { k, e } = keyed(act.t, [0, 0.8, 1.0, 2.0, 2.4, 2.9, 3.6, HAT_ON_S]);
+      if (k === 0) (at.lerpVectors(g0, downRim, e), (reachBack = e));
+      else if (k === 1) (at.copy(downRim), (reachBack = 1));
+      else if (k === 2) (at.lerpVectors(downRim, above, e), (carry = e), (reachBack = 1 - e));
+      else if (k === 3) (at.lerpVectors(above, headRim, e), (carry = 1));
+      else if (k === 4) at.copy(headRim).addScaledVector(this.grasp.set(0, 0, 1).applyQuaternion(this.headQ), 0.012 * Math.sin(e * Math.PI * 2));
+      else if (k === 5) at.lerpVectors(headRim, g0, e);
+      else at.copy(g0);
+    } else {
+      const { k, e } = keyed(act.t, [0, 0.7, 0.85, 1.5, 2.5, 2.7, 3.3, HAT_OFF_S]);
+      if (k === 0) at.lerpVectors(g0, headRim, e);
+      else if (k === 1) at.copy(headRim);
+      else if (k === 2) (at.lerpVectors(headRim, above, e), (carry = 1));
+      else if (k === 3) (at.lerpVectors(above, downRim, e), (carry = 1 - e), (reachBack = e));
+      else if (k === 4) (at.copy(downRim), (reachBack = 1));
+      else if (k === 5) (at.lerpVectors(downRim, g0, e), (reachBack = 1 - e));
+      else at.copy(g0);
+    }
+    // the thumb along the brim where he holds it
+    right.thumb.set(1, 0.25, 0).applyQuaternion(carry >= 0 ? this.carryQ.slerpQuaternions(this.downQ, this.headQ, carry) : this.headQ).normalize();
+    drive.twist = drive.twist * (1 - reachBack) - 0.55 * reachBack;
+    drive.bend += 0.22 * reachBack;
+    drive.crouch += 0.07 * reachBack;
+    return carry;
+  }
+
+  /** The mathal where it is this instant (after he is posed): on his head, in his hand, or set down. */
+  private placeHat(carry: number): void {
+    const hat = this.man.hat;
+    if (!hat) return;
+    const act = this.hatAct;
+    // on his head while it is on and he is not taking it off yet; or putting it on, once it is there
+    const onHead = carry < 0 && (act ? (act.put ? act.t > 2.4 : act.t < 0.85) : this.hatOn);
+    if (onHead) {
+      this.man.hatOnHead(hat.position, hat.quaternion);
+      // settled with a touch: it rocks a hair as he lets go
+      if (act?.put && act.t < 3.1) hat.quaternion.multiply(this.carryQ.setFromAxisAngle(this.grasp.set(1, 0, 0), 0.04 * Math.sin((act.t - 2.4) * 9) * Math.max(0, 1 - (act.t - 2.4) / 0.7)));
+    } else if (carry >= 0) {
+      this.carryQ.slerpQuaternions(this.downQ, this.headQ, carry);
+      hat.quaternion.copy(this.carryQ);
+      this.grasp.lerpVectors(GRASP_DOWN, GRASP_HEAD, carry).applyQuaternion(this.carryQ);
+      hat.position.copy(this.hands.holds[0].at).sub(this.grasp);
+    } else {
+      hat.position.copy(this.downPos);
+      hat.quaternion.copy(this.downQ);
+    }
+    // the air lifts less of his hair under it
+    this.man.hairFree = onHead ? 0.25 : 1;
+  }
+
+  /** The weather has changed what he wants of his mathal: once it has held a moment he rests the paddle and sees to it. */
+  private hatWeather(dt: number, body: BoatBody): void {
+    // a jump (the boat put somewhere else): it is as the weather there wants it
+    if (Number.isFinite(this.lastPos.x) && this.lastPos.distanceToSquared(body.pos) > 64) this.settleHat();
+    this.lastPos.copy(body.pos);
+    this.sinceHat += dt;
+    const act = this.hatAct;
+    if (!act) {
+      this.wantFor = this.hatWant !== this.hatOn ? this.wantFor + dt : 0;
+      if (this.wantFor > HAT_REACT && this.sinceHat > HAT_HOLD) this.hatAct = { put: this.hatWant, t: -1 };
+    } else if (act.t < 0) {
+      // the stroke he is in finished and the paddle held up first
+      if (Math.abs(strokePhase(body.strokeTime) - REST_PHASE) < 0.012) act.t = 0;
+    } else {
+      act.t += dt;
+      if (act.t >= (act.put ? HAT_ON_S : HAT_OFF_S)) {
+        this.hatOn = act.put;
+        this.hatAct = null;
+        this.sinceHat = 0;
+        this.wantFor = 0;
+      }
+    }
+    body.rowing = this.hatAct === null;
   }
 
   /** Where the boatman's weight is (offset from rest, boat frame), for the boat's balance. */
@@ -485,7 +647,7 @@ export class HeroBoat {
     const { sheer } = hullStation(HERO_HULL, sAt(cz1));
     const R = hullHalfWidthAt(HERO_HULL, sAt(cz1), sheer - 0.02) * 0.98;
     this.lanternPivot.position.set(0, sheer + R * 0.95 - 0.03, cz1 + 0.12);
-    const metal = new MeshStandardMaterial({ color: '#3a3630', roughness: 0.5, metalness: 0.6 });
+    const metal = patchMaterial(new MeshStandardMaterial({ color: '#3a3630', roughness: 0.5, metalness: 0.6 }), {});
     const hang = 0.3;
     const wire = new Mesh(new CylinderGeometry(0.004, 0.004, hang - 0.18, 4), metal);
     wire.position.y = -(hang - 0.18) / 2;
@@ -556,7 +718,7 @@ export class HeroBoat {
 
   /** Sets the boat where `body` has her, works the paddle, poses the boatman, swings the lantern. */
   update(dt: number, t: number, lamp: number, body: BoatBody): void {
-    const phase = strokePhase(t);
+    const phase = strokePhase(body.strokeTime);
     if (phase < this.lastPhase && this.onStroke) this.onStroke(body.power);
     this.lastPhase = phase;
 
@@ -579,13 +741,18 @@ export class HeroBoat {
     right.thumb.copy(P.across);
     left.at.copy(P.grip).addScaledVector(P.shaft, LOWER_HOLD);
     left.thumb.copy(P.shaft).negate();
+    // the mathal: put on or taken off as the weather asks, his right hand off the paddle while he does it
+    this.hatWeather(dt, body);
+    const drive = bodyDrive(phase, this.drive, body.power);
+    const carry = this.hatHand(drive);
     // the air past him (the wind where she is, gusts and all, less her own way through it); and which way
     // is down, in her frame
     windAt(body.pos.x, body.pos.z, this.air);
     this.inverse.copy(g.quaternion).invert();
     this.wind.set(this.air.x - body.vel.x, 0, this.air.z - body.vel.z).applyQuaternion(this.inverse);
     this.gravity.set(0, -9.81, 0).applyQuaternion(this.inverse);
-    this.man.update(dt, t, bodyDrive(phase, this.drive, body.power), this.hands, body, this.wind, this.gravity);
+    this.man.update(dt, t, drive, this.hands, body, this.wind, this.gravity);
+    this.placeHat(carry);
     this.shadow.position.x = STANCE.x + this.man.crew.x * 0.8;
     this.shadow.position.z = STANCE.z + this.man.crew.z * 0.8;
 

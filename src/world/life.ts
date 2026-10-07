@@ -17,12 +17,12 @@ import { G, LAYER_NO_REFLECT } from '../core/globals';
 import { Rng } from '../core/rng';
 import { GLSL_COMMON } from '../render/glsl';
 import { patchMaterial } from '../render/patch';
-import { edgeHalfWidth, riverX, terrainHeight } from './geography';
+import { JOURNEY, journeyAt, journeyFrame, journeyHalfWidth, terrainHeight, waterLevelAt } from './geography';
 
 // ---------- birds ----------
 
 /** Body along +z, wings out along ±x; `aWing` marks wing vertices for the flap. */
-function birdGeometry(span: number, bodyLen: number): BufferGeometry {
+export function birdGeometry(span: number, bodyLen: number): BufferGeometry {
   const P: number[] = [];
   const W: number[] = [];
   const v = (x: number, y: number, z: number, wing: number) => {
@@ -46,7 +46,7 @@ function birdGeometry(span: number, bodyLen: number): BufferGeometry {
   return g;
 }
 
-const FLAP = {
+export const FLAP = {
   key: 'bird-flap',
   pars: 'attribute float aWing;\nattribute vec2 aBird;\n',
   code: /* glsl */ `
@@ -131,6 +131,8 @@ const FIREFLY_WINDOW = 360;
 /** Birds crossing the river, dust in the sunbeams, fireflies along the banks after dark. */
 export class Life {
   readonly group = new Group();
+  /** Scratch for each frame's posing (nothing is made there). */
+  private readonly scratch = { m: new Matrix4(), q: new Quaternion(), one: new Vector3(1, 1, 1), p: new Vector3(), up: new Vector3(0, 1, 0) };
   private readonly rng = new Rng(91);
   private readonly flocks: Flock[] = [];
   private readonly ffBase: Float32Array;
@@ -138,6 +140,12 @@ export class Life {
   private readonly ffInland: Float32Array;
   private readonly ffHeight: Float32Array;
   private readonly ffZ: Float32Array;
+  /**
+   * Where along the khal each firefly was last laid, and where the boat was. (Doubles: rounded to single
+   * precision a place never equalled itself again, and every firefly was laid afresh every frame.)
+   */
+  private readonly ffAt: Float64Array;
+  private lastAlong = 0;
   private readonly ffGeometry: BufferGeometry;
   private readonly pr = { value: 1 };
 
@@ -186,6 +194,7 @@ export class Life {
     this.ffInland = new Float32Array(F);
     this.ffHeight = new Float32Array(F);
     this.ffZ = new Float32Array(F).fill(Number.NaN);
+    this.ffAt = new Float64Array(F).fill(Number.NaN);
     const fs = new Float32Array(F);
     for (let i = 0; i < F; i++) {
       this.ffSide[i] = this.rng.sign();
@@ -248,11 +257,7 @@ export class Life {
 
   /** `rain`: how hard it is raining (birds stay down in a downpour). */
   update(dt: number, t: number, hero: Vector3, heading: number, night: number, rain = 0): void {
-    const m = new Matrix4();
-    const q = new Quaternion();
-    const one = new Vector3(1, 1, 1);
-    const p = new Vector3();
-    const up = new Vector3(0, 1, 0);
+    const { m, q, one, p, up } = this.scratch;
     for (const f of this.flocks) {
       if (f.wait > 0) {
         f.wait -= dt;
@@ -279,17 +284,26 @@ export class Life {
       f.mesh.instanceMatrix.needsUpdate = true;
     }
 
-    // fireflies wrap through a window running from behind the boat to well ahead of it
-    const top = hero.z + 60;
+    // fireflies over the khal's banks wrap through a window along it from behind the boat to well ahead of
+    // her (`ffZ` is how far along the khal each is)
+    const at = journeyFrame(hero.x, hero.z)?.s ?? this.lastAlong;
+    this.lastAlong = at;
+    const top = at + 60;
     let moved = false;
     for (let i = 0; i < this.ffZ.length; i++) {
-      const z = top - ((((top - this.ffZ[i]) % FIREFLY_WINDOW) + FIREFLY_WINDOW) % FIREFLY_WINDOW);
+      // (from how many windows it has wrapped: the very same place frame after frame until it wraps again; taken
+      // back from the moving window's top, rounding moved it a hair now and then and it was laid afresh)
+      const s = Math.min(JOURNEY.length, Math.max(0, this.ffZ[i] + Math.floor((top - this.ffZ[i]) / FIREFLY_WINDOW) * FIREFLY_WINDOW));
       const k = i * 3;
-      if (this.ffBase[k + 2] === z && !Number.isNaN(this.ffBase[k])) continue;
+      if (this.ffAt[i] === s && !Number.isNaN(this.ffBase[k])) continue;
+      this.ffAt[i] = s;
       const side = this.ffSide[i];
-      const x = riverX(z) + side * (edgeHalfWidth(z, side) + 3 + this.ffInland[i]);
+      const p = journeyAt(s);
+      const out = journeyHalfWidth(s) + 3 + this.ffInland[i];
+      const x = p.x + Math.cos(p.heading) * out * side;
+      const z = p.z - Math.sin(p.heading) * out * side;
       this.ffBase[k] = x;
-      this.ffBase[k + 1] = Math.max(terrainHeight(x, z), G.uWaterLevel.value) + this.ffHeight[i];
+      this.ffBase[k + 1] = Math.max(terrainHeight(x, z), waterLevelAt(x, z)) + this.ffHeight[i];
       this.ffBase[k + 2] = z;
       moved = true;
     }

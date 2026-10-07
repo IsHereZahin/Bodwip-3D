@@ -42,18 +42,25 @@ export function hullHalfWidthAt(shape: HullShape, s: number, y: number): number 
   return hb * Math.pow(Math.sqrt(Math.max(1 - c * c, 0)), 0.8);
 }
 
-/** GLSL twin of hullHalfWidthAt(…, y = waterline): the water shader cuts the river out of the hull with it. */
+/**
+ * GLSL twins of hullHalfWidthAt, with s in [−1, 1] from stern to bow: `hullHalfWidth(s, y)` at any height of
+ * her frame (the water shader cuts the river out of her where it meets her as she heaves and heels), and
+ * `hullHalfBeamAtWater(s)` at her waterline at rest (the ripples' wall).
+ */
 export function hullWaterlineGlsl(shape: HullShape, waterline = 0): string {
   const f = (n: number) => n.toFixed(4);
   return /* glsl */ `
-float hullHalfBeamAtWater(float s) {
+float hullHalfWidth(float s, float y) {
   float a = abs(s);
   float keel = ${f(shape.keelMid)} + ${f(shape.keelRise)} * pow(a, 2.5);
-  if (keel >= ${f(waterline)}) return 0.0;
+  if (y <= keel) return 0.0;
   float sheer = ${f(shape.sheerMid)} + ${f(shape.sheerRise)} * pow(a, 3.0);
   float hb = ${f(shape.beam)} * pow(max(1.0 - pow(a, 2.2), 0.0), 0.6);
-  float c = 1.0 - (${f(waterline)} - keel) / (sheer - keel);
+  float c = 1.0 - min((y - keel) / (sheer - keel), 1.0);
   return hb * pow(sqrt(max(1.0 - c * c, 0.0)), 0.8);
+}
+float hullHalfBeamAtWater(float s) {
+  return hullHalfWidth(s, ${f(waterline)});
 }`;
 }
 
@@ -85,22 +92,15 @@ export function buildHull(b: MeshBuilder, shape: HullShape, colors: { tar: RGB; 
       b.vertex(p, n, z * 0.45, up * 1.6, c);
     }
   }
+  // wound to face outward, as her normals do (wound inward, her outside was a back face: the near side of a
+  // boat drawn one-sided vanished, and a two-sided one was lit as if from within); her inside is the back face,
+  // so a boat's material must be two-sided
   for (let i = 0; i < S; i++) {
     for (let j = 0; j < A; j++) {
       const a = start + i * (A + 1) + j;
       const c = a + A + 1;
-      b.quad(a, c, c + 1, a + 1);
+      b.quad(a, a + 1, c + 1, c);
     }
   }
 }
 
-/** Points along the gunwale on one side, for rails and rubbing strakes. */
-export function sheerLine(shape: HullShape, side: 1 | -1, steps = 24): Vector3[] {
-  const out: Vector3[] = [];
-  for (let i = 0; i <= steps; i++) {
-    const s = 0.02 + (i / steps) * 0.96;
-    const { sheer, hb } = hullStation(shape, s);
-    out.push(new Vector3(side * hb, sheer, (s - 0.5) * shape.len));
-  }
-  return out;
-}

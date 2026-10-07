@@ -35,7 +35,7 @@ try {
   console.log('ready in', Date.now() - t0, 'ms');
   if (!process.env.HUD) {
     await page.eval(
-      `(() => { const s = document.createElement('style'); s.textContent = '#title,#hint,#dock,#toast,#ui-restore{display:none!important}'; document.head.appendChild(s); })()`,
+      `(() => { const s = document.createElement('style'); s.textContent = '#load,#brand,#hint,#dock,#toast,#ui-restore{display:none!important}'; document.head.appendChild(s); })()`,
     );
   }
   // let the loader fade and the adaptive resolution settle before the first still

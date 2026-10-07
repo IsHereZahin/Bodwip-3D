@@ -1,3 +1,4 @@
+import { smoothstep } from '../core/mathx';
 import { HERO_HULL, heroBeamAtWater } from './hull';
 
 // The water the hero boat moves as she goes, one field for the water's surface (which rises and falls with
@@ -17,10 +18,6 @@ const KELVIN = Math.tan((19.47 * Math.PI) / 180);
 const GRAVITY = 9.81;
 
 const sq = (x: number) => x * x;
-const smooth = (a: number, b: number, x: number) => {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
-};
 
 /** Height of the boat's own waves (m) at `q` in her frame, going `speed` m/s through the water; no blade. */
 export function wakeHeight(qx: number, qy: number, speed: number): number {
@@ -40,7 +37,7 @@ export function wakeHeight(qx: number, qy: number, speed: number): number {
     const e = (ax - arm) / (0.35 + d * 0.06);
     const decay = Math.exp(-d * 0.012) / (1 + d * 0.07);
     h += amp * 0.6 * Math.exp(-e * e) * decay * Math.cos((Math.PI * 2 * (d * 0.57 + ax * 0.82)) / (0.6 * lt));
-    const inside = smooth(arm + 0.3, arm - 1.2, ax) * smooth(1.4 * HALF, 2 * HALF, d);
+    const inside = smoothstep(arm + 0.3, arm - 1.2, ax) * smoothstep(1.4 * HALF, 2 * HALF, d);
     h += amp * 0.3 * inside * decay * Math.cos((Math.PI * 2 * d) / lt);
   }
   return h;
@@ -89,6 +86,76 @@ float boatWake(vec2 q, float spd, vec4 oar, float spacing) {
     float blade = 0.016 * push * (exp(-dot(ba, ba) * 14.0) - 0.8 * exp(-dot(bf, bf) * 20.0));
     if (spacing > 0.0) blade *= smoothstep(0.3, 0.12, spacing);
     h += blade;
+  }
+  return h;
+}`;
+}
+
+// ---------- the big ships' own waves ----------
+//
+// The same field for a ship of any size (world/ships.ts): her bow and stern heaps and the trough along her,
+// scaled to her waterline's half-length and half-beam, and the Kelvin wake, whose crests run on for a
+// kilometre and more behind a big hull before they die away. The heights grow with the square of her speed,
+// a little more for a fuller, wider hull, and stay below a metre at the speeds ships keep in a channel.
+
+/** A ship's wave amplitude (m) at `speed` (m/s) for her half-beam (m). */
+const shipAmp = (speed: number, beam: number) => 0.016 * speed * speed * Math.min(2, Math.max(0.3, beam / 4));
+
+/** Height of a ship's own waves (m) at `q` in her frame (x across, y along toward her bow). */
+export function shipWakeHeight(qx: number, qy: number, speed: number, half: number, beam: number): number {
+  const amp = shipAmp(speed, beam);
+  if (amp < 1e-4) return 0;
+  const ax = Math.abs(qx);
+  const s = Math.min(1, Math.max(-1, qy / half));
+  const hb = beam * Math.pow(Math.max(1 - s * s, 0), 0.4);
+  const dd = Math.hypot(Math.max(ax - hb, 0), Math.max(Math.abs(qy) - half, 0));
+  const press =
+    Math.exp(-sq((qy - 0.8 * half) / (0.3 * half))) - 0.55 * Math.exp(-sq((qy + 0.05 * half) / (0.45 * half))) + 0.4 * Math.exp(-sq((qy + 0.95 * half) / (0.36 * half)));
+  let h = amp * press * Math.exp(-dd / (0.25 * beam + 0.9));
+  const d = 0.8 * half - qy;
+  if (d > 0) {
+    const lt = (Math.PI * 2 * speed * speed) / GRAVITY;
+    const arm = beam * 0.9 + d * KELVIN;
+    const e = (ax - arm) / (0.35 + 0.1 * beam + d * 0.06);
+    const decay = Math.exp(-d * 0.0015) / (1 + d * 0.004);
+    h += amp * 0.6 * Math.exp(-e * e) * decay * Math.cos((Math.PI * 2 * (d * 0.57 + ax * 0.82)) / (0.6 * lt));
+    const inside = smoothstep(arm + 0.3, arm - 1.2, ax) * smoothstep(1.4 * half, 2 * half, d);
+    h += amp * 0.3 * inside * decay * Math.cos((Math.PI * 2 * d) / lt);
+  }
+  return h;
+}
+
+/** GLSL twin of shipWakeHeight: `shipWake(q, speed, vec2(half, beam), spacing)`, small features faded where the mesh is coarse. */
+export function shipWakeGlsl(): string {
+  return /* glsl */ `
+float shipWake(vec2 q, float spd, vec2 size, float spacing) {
+  float hl = size.x;
+  float beam = size.y;
+  float amp = 0.016 * spd * spd * clamp(beam / 4.0, 0.3, 2.0);
+  if (amp < 1e-4) return 0.0;
+  float ax = abs(q.x);
+  float s = clamp(q.y / hl, -1.0, 1.0);
+  float hb = beam * pow(max(1.0 - s * s, 0.0), 0.4);
+  float dd = length(vec2(max(ax - hb, 0.0), max(abs(q.y) - hl, 0.0)));
+  float yb = (q.y - 0.8 * hl) / (0.3 * hl);
+  float ym = (q.y + 0.05 * hl) / (0.45 * hl);
+  float ys = (q.y + 0.95 * hl) / (0.36 * hl);
+  float h = amp * (exp(-yb * yb) - 0.55 * exp(-ym * ym) + 0.4 * exp(-ys * ys)) * exp(-dd / (0.25 * beam + 0.9));
+  float d = 0.8 * hl - q.y;
+  if (d > 0.0) {
+    float lt = 6.2832 * spd * spd / 9.81;
+    float arm = beam * 0.9 + d * ${KELVIN.toFixed(4)};
+    float e = (ax - arm) / (0.35 + 0.1 * beam + d * 0.06);
+    float decay = exp(-d * 0.0015) / (1.0 + d * 0.004);
+    float ld = 0.6 * lt;
+    float arms = amp * 0.6 * exp(-e * e) * decay * cos(6.2832 * (d * 0.57 + ax * 0.82) / ld);
+    float inside = smoothstep(arm + 0.3, arm - 1.2, ax) * smoothstep(1.4 * hl, 2.0 * hl, d);
+    float across = amp * 0.3 * inside * decay * cos(6.2832 * d / lt);
+    if (spacing > 0.0) {
+      arms *= smoothstep(ld * 0.5, ld * 0.25, spacing);
+      across *= smoothstep(lt * 0.5, lt * 0.25, spacing);
+    }
+    h += arms + across;
   }
   return h;
 }`;

@@ -3,24 +3,14 @@ import { DEG } from '../core/mathx';
 import { SYNODIC_MONTH, sunDirection } from '../env/astro';
 import type { Clock, SkyEvent, SkyEventKind } from '../env/clock';
 import { skyColorAt } from '../env/environment';
-import { SEASON_NAMES, banglaDate, seasonIndex } from '../env/season';
+import { SEASON_NAMES, SEASON_STARTS, YEAR, banglaDate, seasonIndex } from '../env/season';
 import type { ViewName } from '../rig/rig';
 import { EVENT_NAME, MOON_PHASES, bn, clockLabel, nearestPhase, tithiLabel } from './bangla';
 import './controls.css';
 
 export type CameraChoice = 'follow' | 'free' | 'film';
-
-/** The weather menu: by the season, or held clear, breezy, windy, raining or stormy. */
-export const WEATHER_PICKS = [
-  ['auto', 'ঋতু অনুযায়ী'],
-  ['calm', 'পরিষ্কার, শান্ত'],
-  ['breeze', 'মৃদু হাওয়া'],
-  ['windy', 'জোর হাওয়া'],
-  ['drizzle', 'হালকা বৃষ্টি'],
-  ['rain', 'বৃষ্টি'],
-  ['storm', 'ঝড়'],
-] as const;
-export type WeatherPick = (typeof WEATHER_PICKS)[number][0];
+/** The world's time: the cinematic morning the system chose (the default), or Bangladesh's own date and hour now. */
+export type TimeMode = 'cinematic' | 'live';
 
 /** What the controls ask of the scene. */
 export interface ControlHandlers {
@@ -31,23 +21,35 @@ export interface ControlHandlers {
   /** True while the timeline is being dragged; the clock holds still meanwhile. */
   scrub(active: boolean): void;
   jump(ev: SkyEvent): void;
+  /** The Live button: on to Bangladesh's own date and hour now (or back to now), off back to the cinematic mode. */
+  live(): void;
   camera(choice: CameraChoice): void;
   view(name: ViewName): void;
   moon(age: number): void;
-  /** A season by index into SEASON_NAMES, or today's date. */
-  season(choice: number | 'today'): void;
-  weather(choice: WeatherPick): void;
+  /** A season by index into SEASON_NAMES, or back to the mode's own (the journey's, or today's in Live). */
+  season(choice: number | 'own'): void;
   sound(): void;
+  /** Opens or closes the map. */
+  map(): void;
+  /** The film's scene before or after this one. */
+  scene(step: -1 | 1): void;
   /** Any use of the controls; it counts as activity, like touching the scene. */
   touched(): void;
 }
 
+/** The camera's own composed views first (the default), then the fixed viewpoints round the boat. */
 const VIEW_NAMES: Record<ViewName, string> = {
+  auto: 'সেরা দৃশ্য',
   stern: 'পেছন থেকে',
   boatman: 'মাঝির পাশে',
   bow: 'সামনে থেকে',
   high: 'উঁচু থেকে',
 };
+
+/** Each season's colour on the ring, as the land wears it: summer's amber, the rains' grey-blue, Sharat's kash, Hemanta's paddy, winter's mist, spring's shimul. */
+const SEASON_HUES = ['#e0a24a', '#7c9cb8', '#ece4cf', '#d8b257', '#aab6c0', '#cf5a40'];
+/** Each season's months, for its line in the menu. */
+const SEASON_MONTHS = ['বৈশাখ–জ্যৈষ্ঠ', 'আষাঢ়–শ্রাবণ', 'ভাদ্র–আশ্বিন', 'কার্তিক–অগ্রহায়ণ', 'পৌষ–মাঘ', 'ফাল্গুন–চৈত্র'];
 
 // marker glyphs: a half sun or a crescent on the horizon, with an arrow for rising or setting
 const HORIZON = '<path d="M2 15h14"/>';
@@ -75,43 +77,67 @@ function moonPath(age: number, r: number): string {
   return `M0 ${-r}A${r} ${r} 0 0 ${limb} 0 ${r}A${rx.toFixed(2)} ${r} 0 0 ${terminator} 0 ${-r}Z`;
 }
 
+/** Where a day of the year stands on the season ring (radians clockwise from its top, Boishakh's start at the top). */
+const ringAngle = (day: number) => ((((day - SEASON_STARTS[0]) % YEAR) + YEAR) % YEAR / YEAR) * Math.PI * 2;
+
+/** An arc of the ring from angle `a` to `b` (radians clockwise from its top) at radius `r`. */
+function arcPath(a: number, b: number, r: number): string {
+  const p = (t: number) => `${(Math.sin(t) * r).toFixed(2)} ${(-Math.cos(t) * r).toFixed(2)}`;
+  return `M${p(a)}A${r} ${r} 0 ${b - a > Math.PI ? 1 : 0} 1 ${p(b)}`;
+}
+
 const $ = <T extends Element>(selector: string) => document.querySelector(selector) as T;
 
 /** Minutes the timeline moves per key (an hour with Shift or Page keys). */
 const STEP_KEYS: Record<string, number> = { ArrowRight: 1, ArrowUp: 1, PageUp: 1, ArrowLeft: -1, ArrowDown: -1, PageDown: -1 };
 
 /**
- * The control dock: play/pause and speed, a 24-hour timeline marked with the day's sunrise, sunset,
- * moonrise and moonset, the camera mode, viewpoints, the moon's phase, sound, full screen, hiding the
- * interface and the help sheet. It fades away when the pointer rests and comes back when it moves.
+ * The control dock, a thin pane of glass along the foot of the screen with a running stitch along its top: on
+ * the left the year's ring of six seasons (the journey's place in it marked) with the hour, the Bangla date and
+ * the Live button (Bangladesh's own date and hour now, or the cinematic morning); in the middle the day's timeline
+ * with its sunrise, sunset, moonrise and moonset; on the right the camera, the view, the moon, sound, the map, full
+ * screen and the rest. The season, the moon, the view and the rest open as small menus above their buttons. It
+ * fades away when the pointer rests and comes back when it moves.
  */
 export class Controls {
   private readonly dock = $<HTMLElement>('#dock');
+  /** The mark in the corner, up with the dock: the way to the help and the sources. */
+  private readonly brand = $<HTMLElement>('#brand');
   private readonly play = $<HTMLButtonElement>('#play');
   private readonly speed = $<HTMLButtonElement>('#speed');
+  private readonly live = $<HTMLButtonElement>('#live');
+  /** The season menu's way back to the mode's own season: its words follow the mode. */
+  private readonly ownSeason = $<HTMLElement>('#season-own');
   private readonly range = $<HTMLInputElement>('#tl');
   private readonly sunRow = $<HTMLElement>('#tl-sun');
   private readonly moonRow = $<HTMLElement>('#tl-moon');
   private readonly band = $<HTMLElement>('#tl-band');
   private readonly clock = $<HTMLOutputElement>('#clock');
   private readonly tithi = $<HTMLElement>('#tithi');
-  private readonly cameraButtons = [...document.querySelectorAll<HTMLButtonElement>('#camera button')];
-  private readonly views = $<HTMLSelectElement>('#views');
-  private readonly moon = $<HTMLSelectElement>('#moon');
-  private readonly moonLit = $<SVGPathElement>('#moon-lit');
-  private readonly season = $<HTMLSelectElement>('#season');
-  private readonly weather = $<HTMLSelectElement>('#weather');
   private readonly bdate = $<HTMLElement>('#bdate');
+  private readonly cameraButtons = [...document.querySelectorAll<HTMLButtonElement>('#camera button')];
+  private readonly seasonBtn = $<HTMLButtonElement>('#season-btn');
+  private readonly ringArcs = $<SVGGElement>('#ring-arcs');
+  private readonly ringMark = $<SVGCircleElement>('#ring-mark');
+  private readonly moonBtn = $<HTMLButtonElement>('#moon-btn');
+  private readonly moonLit = $<SVGPathElement>('#moon-lit');
+  private readonly seasonItems: HTMLButtonElement[] = [];
+  private readonly moonItems: HTMLButtonElement[] = [];
   private readonly sound = $<HTMLButtonElement>('#sound');
   private readonly fullscreen = $<HTMLButtonElement>('#fullscreen');
   private readonly help = $<HTMLDialogElement>('#help');
+  private readonly filmNav = $<HTMLElement>('#film-nav');
+  private readonly filmCount = $<HTMLElement>('#film-count');
+  private readonly pops = [...document.querySelectorAll<HTMLElement>('.pop')];
+  /** The button that opened the menu last (a menu opens over whichever of its buttons was used). */
+  private invoker: HTMLElement | null = null;
   private readonly handlers: ControlHandlers;
 
   private shown = false;
   private scrubbing = false;
   private idleTimer = 0;
   private film = false;
-  private last = { minute: -1, playing: true, speed: 0, camera: '', sound: false, sky: -1, phase: -1, moonAge: -1, tithi: '', date: '', season: -1 };
+  private last = { minute: -1, playing: true, speed: 0, live: '', mode: '', camera: '', sound: false, sky: -1, phase: -1, moonAge: -1, tithi: '', date: '', season: -1, ring: -1, journey: true, scene: '' };
 
   constructor(handlers: ControlHandlers) {
     this.handlers = handlers;
@@ -123,26 +149,64 @@ export class Controls {
 
     this.play.addEventListener('click', use(() => h.togglePlay()));
     this.speed.addEventListener('click', use(() => h.faster()));
+    this.live.addEventListener('click', use(() => h.live()));
     this.sound.addEventListener('click', use(() => h.sound()));
     for (const b of this.cameraButtons) b.addEventListener('click', use(() => h.camera(b.dataset.mode as CameraChoice)));
 
-    for (const [name, label] of Object.entries(VIEW_NAMES)) this.views.add(new Option(label, name));
-    this.views.addEventListener(
-      'change',
-      use(() => {
-        h.view(this.views.value as ViewName);
-        // the list is a menu of jumps: it always reads "দৃশ্য", so the same view can be picked again
-        this.views.selectedIndex = 0;
-      }),
+    // the season ring: six arcs, each in its season's colour
+    SEASON_STARTS.forEach((start, i) => {
+      const a = ringAngle(start) + 0.07;
+      const b = ringAngle(SEASON_STARTS[(i + 1) % 6]) - 0.07 + (i === 5 ? 0 : 0);
+      const arc = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      arc.setAttribute('d', arcPath(a, b < a ? b + Math.PI * 2 : b, 17));
+      arc.setAttribute('stroke', SEASON_HUES[i]);
+      arc.classList.add('ring-arc');
+      this.ringArcs.append(arc);
+    });
+
+    // the menus: the six seasons (or the journey's), the moon's phases, the views
+    const seasons = $<HTMLElement>('#season-pop .pop-seasons');
+    SEASON_NAMES.forEach((name, i) => {
+      const item = this.menuItem(`<i class="dot" style="background:${SEASON_HUES[i]}"></i><span>${name}<small>${SEASON_MONTHS[i]}</small></span>`, 'menuitemradio');
+      item.addEventListener('click', use(() => this.pick(() => h.season(i))));
+      seasons.append(item);
+      this.seasonItems.push(item);
+    });
+    const journey = $<HTMLButtonElement>('#season-pop .journey');
+    journey.addEventListener('click', use(() => this.pick(() => h.season('own'))));
+    this.seasonItems.push(journey);
+    const moons = $<HTMLElement>('#moon-pop .pop-moons');
+    MOON_PHASES.forEach((p, i) => {
+      const item = this.menuItem(`<svg viewBox="-8 -8 16 16" width="18" height="18" aria-hidden="true"><circle class="moon-dark" r="6.6"/><path class="moon-lit" d="${moonPath(p.age, 6.6)}"/></svg><span>${p.name}</span>`, 'menuitemradio');
+      item.addEventListener('click', use(() => this.pick(() => h.moon(MOON_PHASES[i].age))));
+      moons.append(item);
+      this.moonItems.push(item);
+    });
+    const views = $<HTMLElement>('#views-pop .pop-list');
+    for (const [name, label] of Object.entries(VIEW_NAMES)) {
+      const item = this.menuItem(`<span>${label}</span>`, 'menuitem');
+      item.addEventListener('click', use(() => this.pick(() => h.view(name as ViewName))));
+      views.append(item);
+    }
+    document.addEventListener(
+      'click',
+      (e) => {
+        const by = (e.target as Element | null)?.closest<HTMLElement>('[popovertarget]');
+        if (by) this.invoker = by;
+      },
+      true,
     );
-    MOON_PHASES.forEach((p, i) => this.moon.add(new Option(p.name, String(i))));
-    this.moon.addEventListener('change', use(() => h.moon(MOON_PHASES[Number(this.moon.value)].age)));
-    // the season shows itself; the menu jumps to the middle of another, or back to today's date
-    SEASON_NAMES.forEach((name, i) => this.season.add(new Option(name, String(i))));
-    this.season.add(new Option('আজকের তারিখ', 'today'));
-    this.season.addEventListener('change', use(() => h.season(this.season.value === 'today' ? 'today' : Number(this.season.value))));
-    for (const [value, label] of WEATHER_PICKS) this.weather.add(new Option(label, value));
-    this.weather.addEventListener('change', use(() => h.weather(this.weather.value as WeatherPick)));
+    $<HTMLElement>('#more-pop [data-act="map"]').addEventListener('click', use(() => this.pick(() => handlers.map())));
+    for (const pop of this.pops) {
+      // opened, it stands over its button, within the screen, and takes the keys
+      pop.addEventListener('toggle', (e) => {
+        if ((e as ToggleEvent).newState !== 'open') return;
+        this.placePop(pop);
+        (pop.querySelector<HTMLElement>('[aria-checked="true"]') ?? pop.querySelector<HTMLElement>('button'))?.focus({ preventScroll: true });
+        this.wake();
+      });
+      pop.addEventListener('keydown', (e) => this.menuKeys(pop, e));
+    }
 
     // the timeline: drag or click to set the time; the arrow keys step ten minutes, an hour with Shift
     this.paintDay();
@@ -170,9 +234,13 @@ export class Controls {
       this.fullscreen.setAttribute('aria-pressed', String(on));
       this.fullscreen.setAttribute('aria-label', on ? 'পূর্ণ পর্দা থেকে বেরোন' : 'পূর্ণ পর্দা');
     });
-    $<HTMLElement>('#hide-ui').addEventListener('click', use(() => this.toggleUi()));
+    $<HTMLElement>('#hide-ui').addEventListener('click', use(() => this.pick(() => this.toggleUi())));
     $<HTMLElement>('#ui-restore').addEventListener('click', use(() => this.toggleUi()));
-    $<HTMLElement>('#help-btn').addEventListener('click', use(() => this.toggleHelp()));
+    $<HTMLElement>('#help-btn').addEventListener('click', use(() => this.pick(() => this.toggleHelp())));
+    $<HTMLElement>('#map-btn').addEventListener('click', use(() => handlers.map()));
+    this.brand.addEventListener('click', use(() => this.toggleHelp()));
+    $<HTMLElement>('#film-prev').addEventListener('click', use(() => handlers.scene(-1)));
+    $<HTMLElement>('#film-next').addEventListener('click', use(() => handlers.scene(1)));
     // a click on the dimmed backdrop closes the sheet
     this.help.addEventListener('click', (e) => {
       if (e.target === this.help) this.help.close();
@@ -182,6 +250,7 @@ export class Controls {
     const wake = () => this.wake();
     for (const type of ['pointermove', 'pointerdown', 'keydown'] as const) window.addEventListener(type, wake, { passive: true });
     this.dock.addEventListener('focusin', wake);
+    this.filmNav.addEventListener('focusin', wake);
   }
 
   get helpOpen(): boolean {
@@ -191,6 +260,7 @@ export class Controls {
   show(): void {
     this.shown = true;
     this.dock.classList.add('show');
+    this.brand.classList.add('show');
     this.wake();
   }
 
@@ -203,9 +273,11 @@ export class Controls {
     const restore = $<HTMLElement>('#ui-restore');
     const off = document.body.classList.toggle('ui-off');
     // keep keyboard focus on something that can be seen
-    if (off) restore.focus({ preventScroll: true });
-    else {
-      if (document.activeElement === restore) $<HTMLElement>('#hide-ui').focus({ preventScroll: true });
+    if (off) {
+      this.closePops();
+      restore.focus({ preventScroll: true });
+    } else {
+      if (document.activeElement === restore) $<HTMLElement>('#more-btn').focus({ preventScroll: true });
       this.wake();
     }
   }
@@ -215,9 +287,19 @@ export class Controls {
     request.catch((err: unknown) => console.warn('fullscreen:', err));
   }
 
-  /** Mirrors the scene's state; touches the page only where something changed. */
-  update(clock: Clock, camera: CameraChoice, sound: boolean): void {
+  /**
+   * Mirrors the scene's state (and, while the film plays, which of its scenes is showing; `journey`, whether the
+   * season is the mode's own rather than one picked; `mode`, cinematic or Live); touches the page only where
+   * something changed.
+   */
+  update(clock: Clock, camera: CameraChoice, sound: boolean, journey: boolean, mode: TimeMode, scene?: { index: number; count: number }): void {
     const l = this.last;
+    const film = camera === 'film' && scene ? `${bn(scene.index + 1)} / ${bn(scene.count)}` : '';
+    if (film !== l.scene) {
+      l.scene = film;
+      this.filmCount.textContent = film;
+      this.filmNav.classList.toggle('show', film !== '');
+    }
     const minute = Math.floor(clock.hour * 60);
     if (minute !== l.minute) {
       l.minute = minute;
@@ -234,7 +316,26 @@ export class Controls {
     if (clock.speed !== l.speed) {
       l.speed = clock.speed;
       this.speed.textContent = `${bn(clock.speed)}×`;
-      this.speed.setAttribute('aria-label', `সময়ের গতি ${bn(clock.speed)} গুণ; বাড়াতে চাপুন`);
+      this.speed.setAttribute('aria-label', clock.speed === 1 ? 'সময় চলছে আসল গতিতে; দ্রুত করতে চাপুন' : `সময় চলছে আসলের ${bn(clock.speed)} গুণে; বদলাতে চাপুন`);
+    }
+    // Live: off (the cinematic morning, or the film's own world), on (Bangladesh's own date and hour now), or on with
+    // the clock taken elsewhere by the viewer (the day still today's; a press goes back to now)
+    const live = camera === 'film' || mode !== 'live' ? 'off' : clock.live ? 'now' : 'behind';
+    if (live !== l.live) {
+      l.live = live;
+      this.live.classList.toggle('on', live !== 'off');
+      this.live.classList.toggle('behind', live === 'behind');
+      this.live.setAttribute('aria-pressed', String(live !== 'off'));
+      this.live.title =
+        live === 'now'
+          ? 'লাইভ: বাংলাদেশের এই মুহূর্তের তারিখ আর সময়। বন্ধ করলে সিনেমাটিক দৃশ্যে ফেরে (0)'
+          : live === 'behind'
+            ? 'লাইভ: আজকের তারিখ, তবে সময় সরানো হয়েছে। এই মুহূর্তে ফিরুন (0)'
+            : 'লাইভ: বাংলাদেশের এই মুহূর্তের তারিখ আর সময়ে দেখুন (0)';
+    }
+    if (mode !== l.mode) {
+      l.mode = mode;
+      this.ownSeason.textContent = mode === 'live' ? 'আজকের ঋতু' : 'যাত্রার সাথে ঋতু বদলাক';
     }
     if (camera !== l.camera) {
       l.camera = camera;
@@ -260,31 +361,87 @@ export class Controls {
     if (date !== l.date) {
       l.date = date;
       this.bdate.textContent = date;
+      this.seasonBtn.setAttribute('aria-label', `ঋতু: ${SEASON_NAMES[s]}; অন্য ঋতু বেছে নিন`);
     }
-    if (s !== l.season && document.activeElement !== this.season) {
+    // the ring: the season lit, its mark where the year is
+    const ring = Math.round(ringAngle(day) * 200);
+    if (ring !== l.ring) {
+      l.ring = ring;
+      const a = ringAngle(day);
+      this.ringMark.setAttribute('cx', (Math.sin(a) * 17).toFixed(2));
+      this.ringMark.setAttribute('cy', (-Math.cos(a) * 17).toFixed(2));
+    }
+    if (s !== l.season || journey !== l.journey) {
       l.season = s;
-      this.season.value = String(s);
+      l.journey = journey;
+      this.ringArcs.querySelectorAll('.ring-arc').forEach((arc, i) => arc.classList.toggle('now', i === s));
+      this.seasonItems.forEach((item, i) => item.setAttribute('aria-checked', String(i === 6 ? journey : !journey && i === s)));
     }
     const age = clock.moonAge;
     if (Math.abs(age - l.moonAge) > 0.05) {
       l.moonAge = age;
-      this.moonLit.setAttribute('d', moonPath(age, 7));
+      this.moonLit.setAttribute('d', moonPath(age, 6.6));
       const tithi = tithiLabel(age);
       if (tithi !== l.tithi) {
         l.tithi = tithi;
         this.tithi.textContent = tithi;
+        this.moonBtn.setAttribute('aria-label', `চাঁদের কলা: ${tithi}`);
+        this.moonBtn.title = `চাঁদ: ${tithi}`;
       }
       const phase = nearestPhase(age);
-      if (phase !== l.phase && document.activeElement !== this.moon) {
+      if (phase !== l.phase) {
         l.phase = phase;
-        this.moon.value = String(phase);
+        this.moonItems.forEach((item, i) => item.setAttribute('aria-checked', String(i === phase)));
       }
     }
   }
 
-  /** Shows a weather choice made elsewhere (by a key). */
-  showWeather(choice: WeatherPick): void {
-    this.weather.value = choice;
+  /** A menu's item: a button with its glyph and its words. */
+  private menuItem(inner: string, role: 'menuitem' | 'menuitemradio'): HTMLButtonElement {
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'pop-item';
+    item.setAttribute('role', role);
+    item.innerHTML = inner;
+    return item;
+  }
+
+  /** Does what a menu's item asks, and closes the menu. */
+  private pick(fn: () => void): void {
+    this.closePops();
+    fn();
+  }
+
+  private closePops(): void {
+    for (const pop of this.pops) if (pop.matches(':popover-open')) pop.hidePopover();
+  }
+
+  /** Stands an opened menu over the button that opened it, kept within the screen. */
+  private placePop(pop: HTMLElement): void {
+    const by = this.invoker?.getAttribute('popovertarget') === pop.id ? this.invoker : document.querySelector<HTMLElement>(`[popovertarget="${pop.id}"]`);
+    if (!by) return;
+    const r = by.getBoundingClientRect();
+    const w = pop.offsetWidth;
+    const h = pop.offsetHeight;
+    const x = Math.min(Math.max(8, r.left + r.width / 2 - w / 2), innerWidth - w - 8);
+    const above = r.top - h - 12;
+    pop.style.left = `${x}px`;
+    pop.style.top = `${above >= 8 ? above : Math.min(r.bottom + 12, innerHeight - h - 8)}px`;
+  }
+
+  /** The arrow keys move through a menu's items; Home and End go to its first and last. */
+  private menuKeys(pop: HTMLElement, e: KeyboardEvent): void {
+    const items = [...pop.querySelectorAll<HTMLElement>('button')];
+    const i = items.indexOf(document.activeElement as HTMLElement);
+    let to = -1;
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') to = (i + 1) % items.length;
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') to = (i - 1 + items.length) % items.length;
+    else if (e.key === 'Home') to = 0;
+    else if (e.key === 'End') to = items.length - 1;
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+    items[to]?.focus();
   }
 
   /** Paints the bar with the colour of the sky through one day (the day's own sun path), and its hour ticks. */
@@ -350,13 +507,20 @@ export class Controls {
   private wake(): void {
     if (!this.shown) return;
     this.dock.classList.remove('idle');
+    this.brand.classList.remove('idle');
+    this.filmNav.classList.remove('idle');
     window.clearTimeout(this.idleTimer);
     this.idleTimer = window.setTimeout(() => this.rest(), this.film ? 2500 : 5000);
   }
 
-  /** Steps aside, unless the pointer is over the dock, a key has focused it, or a drag is under way. */
+  /** Steps aside, unless the pointer is over the dock, a key has focused it, a menu is open, or a drag is under way. */
   private rest(): void {
-    if (this.dock.matches(':hover') || this.dock.querySelector(':focus-visible') || this.scrubbing || this.helpOpen) this.wake();
-    else this.dock.classList.add('idle');
+    const menu = this.pops.some((pop) => pop.matches(':popover-open'));
+    if (menu || this.dock.matches(':hover') || this.filmNav.matches(':hover') || this.dock.querySelector(':focus-visible') || this.filmNav.querySelector(':focus-visible') || this.scrubbing || this.helpOpen) this.wake();
+    else {
+      this.dock.classList.add('idle');
+      this.brand.classList.add('idle');
+      this.filmNav.classList.add('idle');
+    }
   }
 }

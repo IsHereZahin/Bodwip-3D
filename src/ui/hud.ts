@@ -1,10 +1,12 @@
-/** The DOM around the canvas: loader, title card, controls hint, film captions, event notices, error message. */
+/** The DOM around the canvas: the loader and its mark, the controls hint, film captions, event notices, error message. */
 export class Hud {
   private readonly load = document.getElementById('load');
-  private readonly arc = document.getElementById('load-arc');
-  private readonly title = document.getElementById('title');
+  private readonly loadNow = document.getElementById('load-now');
   private readonly hint = document.getElementById('hint');
   private readonly err = document.getElementById('err');
+  /** The caption's style as last written. */
+  private captionOpacity = '';
+  private captionBottom = '';
   private readonly captionEl = document.getElementById('caption');
   private readonly toastEl = document.getElementById('toast');
   private readonly toastText = document.getElementById('toast-text');
@@ -21,20 +23,35 @@ export class Hud {
     });
   }
 
+  /** How far the world is built (0..1): the mark's red sun rises out of the river with it. */
   progress(p: number): void {
-    const v = Math.max(0.02, Math.min(1, p));
-    if (this.arc) this.arc.style.strokeDashoffset = String(1 - v);
+    this.load?.style.setProperty('--rise', Math.max(0.05, Math.min(1, p)).toFixed(3));
   }
 
-  ready(): void {
-    if (this.load) {
-      this.load.classList.add('done');
-      window.setTimeout(() => this.load?.remove(), 1400);
-    }
-    this.title?.classList.add('show');
-    window.setTimeout(() => this.title?.classList.remove('show'), 6500);
-    window.setTimeout(() => this.hint?.classList.add('show'), 1800);
-    this.hintTimer = window.setTimeout(() => this.dismissHint(), 16000);
+  /** The loader's line under the river: the season, the Bangla date and the hour in Bangladesh now. */
+  now(season: string, date: string, time: string): void {
+    if (!this.loadNow) return;
+    this.loadNow.replaceChildren(Object.assign(document.createElement('b'), { textContent: season }), ` · ${date} · ${time}`);
+  }
+
+  /** The world is built: the still gives way to the opening flight; the mark stays over it `titleSeconds`, then goes. */
+  ready(titleSeconds: number): void {
+    this.load?.classList.add('done');
+    window.setTimeout(() => this.lift(), Math.max(0, titleSeconds - 2.8) * 1000);
+  }
+
+  /** The mark fades off the screen and the loader is gone. */
+  private lift(): void {
+    if (!this.load || this.load.classList.contains('gone')) return;
+    this.load.classList.add('gone');
+    window.setTimeout(() => this.load?.remove(), 3000);
+  }
+
+  /** The opening flight has come down to the boat: the controls' hint shows for a while. */
+  hintNow(): void {
+    this.hint?.classList.add('show');
+    window.clearTimeout(this.hintTimer);
+    this.hintTimer = window.setTimeout(() => this.dismissHint(), 14000);
   }
 
   /** `bar` is the lower letterbox bar's height as a fraction of the screen; the caption sits inside it. */
@@ -42,8 +59,11 @@ export class Hud {
     const el = this.captionEl;
     if (!el) return;
     if (el.textContent !== text) el.textContent = text;
-    el.style.opacity = String(alpha * 0.95);
-    el.style.bottom = `${(bar * 100) / 2}%`;
+    // (written only when they change: every frame else)
+    const opacity = (alpha * 0.95).toFixed(3);
+    const bottom = `${((bar * 100) / 2).toFixed(2)}%`;
+    if (opacity !== this.captionOpacity) el.style.opacity = this.captionOpacity = opacity;
+    if (bottom !== this.captionBottom) el.style.bottom = this.captionBottom = bottom;
   }
 
   dismissHint(): void {
@@ -54,7 +74,7 @@ export class Hud {
   /** Clears the screen for the film: the title card, the hint and any notice go. */
   quiet(): void {
     this.dismissHint();
-    this.title?.classList.remove('show');
+    this.lift();
     window.clearTimeout(this.toastTimer);
     this.toastEl?.classList.remove('show');
     this.onLook = null;

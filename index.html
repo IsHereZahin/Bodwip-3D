@@ -3,13 +3,17 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>নদী — সোনালি বিকেলে মহেশখালীর পথে</title>
-    <meta name="description" content="রিয়েল-টাইম 3D: সোনালি বিকেলে মহেশখালী চ্যানেল দিয়ে মাঝির নৌকা ভেসে চলে; একপাশে মহেশখালী দ্বীপের পাহাড়, আদিনাথ মন্দির, লবণ মাঠ আর সোনাদিয়া, অন্যপাশে গ্রাম, ধানক্ষেত আর শাপলা বিল।" />
-    <meta name="theme-color" content="#0d0f0e" />
-    <link rel="icon" href="data:," />
+    <title>নদী — বাংলার গ্রাম, নদী আর ছয় ঋতু</title>
+    <meta name="description" content="রিয়েল-টাইম 3D: বাংলার এক গ্রামের ছোট নদী দিয়ে মাঝির নৌকা ধীরে বেয়ে চলে, খালে ঢুকে পুরোনো ইটের সেতুর নিচ দিয়ে, খালের শাখায় বাঁশের সাঁকোর নিচ দিয়ে শাপলা বিলে; বাংলাদেশের এই মুহূর্তের সময় থেকে শুরু, পথে পথে ছয় ঋতু।" />
+    <meta name="theme-color" content="#0d0c0b" />
+    <link rel="icon" href="brand/favicon.svg" type="image/svg+xml" />
+    <link rel="icon" href="brand/favicon-32.png" sizes="32x32" type="image/png" />
+    <link rel="apple-touch-icon" href="brand/apple-touch-icon.png" />
+    <link rel="manifest" href="manifest.webmanifest" />
+    <link rel="preload" href="brand/loader.webp" as="image" type="image/webp" fetchpriority="high" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+Bengali:wght@300;500&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+Bengali:wght@300;500;700&family=Amiri:wght@700&display=swap" rel="stylesheet" />
     <style>
       :root {
         --bg: #0d0f0e;
@@ -32,6 +36,8 @@
         inset: 0;
         width: 100vw;
         height: 100vh;
+        /* the visible height on phones, as innerHeight is (the picture is drawn for it) */
+        height: 100dvh;
         display: block;
         touch-action: none;
         outline: none;
@@ -41,103 +47,199 @@
         cursor: grabbing;
       }
 
-      /* loader: a ring fills while the river is built; inside it the sun sets behind a boat */
+      /* the loader: our own river at sunset (a still of this world: public/brand/loader.webp), hushed and soft,
+         and the mark over it, its red sun rising out of the river as the village is built (ui/hud.ts) */
       #load {
         position: fixed;
         inset: 0;
-        display: grid;
-        place-items: center;
-        background: radial-gradient(ellipse at 50% 52%, #1a1b17 0%, var(--bg) 70%);
-        transition: opacity 1.2s ease;
         z-index: 3;
         pointer-events: none;
+        overflow: hidden;
+        background: #0d0c0b;
       }
-      #load.done {
-        opacity: 0;
+      #load .backdrop,
+      #load .veil {
+        position: absolute;
+        inset: 0;
+        transition: opacity 1.8s ease;
       }
-      #load svg {
-        width: min(150px, 36vw);
+      #load .backdrop {
+        inset: -30px;
+        background: url('brand/loader.webp') center / cover no-repeat, var(--ld-blur) center / cover no-repeat;
+        filter: blur(3px) saturate(1.08) brightness(0.62);
+        animation: ld-drift 28s ease-in-out infinite alternate;
+      }
+      #load .veil {
+        background: radial-gradient(ellipse at 50% 44%, rgba(8, 7, 7, 0.1) 0%, rgba(8, 7, 7, 0.45) 62%, rgba(8, 7, 7, 0.82) 100%);
+      }
+      @keyframes ld-drift {
+        from { transform: scale(1.04) translate(0, 0); }
+        to { transform: scale(1.09) translate(-1.2%, 0.6%); }
+      }
+      #load .mark {
+        position: absolute;
+        left: 50%;
+        top: 45%;
+        transform: translate(-50%, -50%);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        text-align: center;
+        width: min(640px, calc(100vw - 32px));
+        color: #f4ecdc;
+        transition: opacity 2.4s ease, transform 2.8s cubic-bezier(0.2, 0.7, 0.2, 1);
+      }
+      #load .emblem {
+        width: min(176px, 40vw);
         height: auto;
         overflow: visible;
+        filter: drop-shadow(0 10px 30px rgba(0, 0, 0, 0.45));
       }
-      #load .track {
-        fill: none;
-        stroke: rgba(236, 211, 168, 0.08);
-        stroke-width: 1.6;
-      }
-      #load #load-arc {
-        fill: none;
-        stroke: var(--ink);
-        stroke-width: 2.2;
-        stroke-linecap: round;
-        stroke-dasharray: 1;
-        stroke-dashoffset: 0.98;
-        transition: stroke-dashoffset 0.5s cubic-bezier(0.3, 0.7, 0.2, 1);
-      }
+      /* the sun rises with the build (hud.ts sets its rise); it glows, the waves run, the boat rides them */
       #load .sun {
-        fill: #f0b36a;
-        opacity: 0.85;
-        animation: sink 6s ease-in-out infinite alternate;
+        transform: translateY(calc((1 - var(--rise, 0.05)) * 42px));
+        transition: transform 0.9s cubic-bezier(0.3, 0.6, 0.2, 1);
       }
-      #load .wave {
-        fill: none;
-        stroke: var(--ink-dim);
-        stroke-width: 1.4;
-        stroke-linecap: round;
-        animation: drift 3.6s ease-in-out infinite alternate;
+      #load .sun-glow {
+        opacity: 0.55;
+        animation: ld-glow 3.8s ease-in-out infinite alternate;
       }
-      #load .wave.b {
-        animation-delay: -1.8s;
-        opacity: 0.6;
+      @keyframes ld-glow {
+        from { opacity: 0.35; }
+        to { opacity: 0.75; }
+      }
+      #load .flow {
+        stroke-dasharray: 26 4;
+        animation: ld-flow 6s linear infinite;
+      }
+      #load .flow.b {
+        stroke-dasharray: 18 5;
+        animation-duration: 8s;
+      }
+      @keyframes ld-flow {
+        to { stroke-dashoffset: -60; }
       }
       #load .boat {
-        fill: var(--ink);
-        animation: bob 3s ease-in-out infinite;
+        transform-box: fill-box;
+        transform-origin: 50% 80%;
+        animation: ld-bob 3.6s ease-in-out infinite;
       }
-      @keyframes sink {
-        from { transform: translateY(-3px); }
-        to { transform: translateY(4px); }
-      }
-      @keyframes drift {
-        from { transform: translateX(-3px); }
-        to { transform: translateX(3px); }
-      }
-      @keyframes bob {
+      @keyframes ld-bob {
         0%, 100% { transform: translateY(0) rotate(0deg); }
-        50% { transform: translateY(1px) rotate(-1.5deg); }
+        50% { transform: translateY(0.7px) rotate(-1.4deg); }
+      }
+      #load h1 {
+        margin: 18px 0 0;
+        font-weight: 700;
+        font-size: clamp(48px, 7.4vw, 78px);
+        line-height: 1;
+        letter-spacing: 0.04em;
+        text-shadow: 0 2px 30px rgba(0, 0, 0, 0.5);
+        /* (shown once the face is in, so the word never changes its shape in front of you) */
+        opacity: 0;
+        transition: opacity 1.2s ease;
+      }
+      #load .verse {
+        margin: 14px 0 0;
+        font-weight: 300;
+        font-size: clamp(13px, 1.6vw, 17px);
+        letter-spacing: 0.04em;
+        color: rgba(244, 236, 220, 0.72);
+        text-shadow: 0 1px 16px rgba(0, 0, 0, 0.6);
+        opacity: 0;
+        transition: opacity 1.2s ease 0.3s;
+      }
+      #load.type h1,
+      #load.type .verse {
+        opacity: 1;
+      }
+      #load .now {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: max(28px, 4.5vh);
+        margin: 0;
+        text-align: center;
+        font-weight: 300;
+        font-size: 13px;
+        letter-spacing: 0.16em;
+        color: rgba(244, 236, 220, 0.66);
+        min-height: 1.4em;
+        transition: opacity 1.2s ease;
+      }
+      #load .now b {
+        font-weight: 500;
+        color: #f4ecdc;
+        letter-spacing: 0.1em;
+      }
+      /* built: the still gives way to the world, the mark stays over the opening flight a while, then goes */
+      #load.done .backdrop,
+      #load.done .veil,
+      #load.done .now {
+        opacity: 0;
+      }
+      #load.done {
+        background: transparent;
+      }
+      #load.gone .mark {
+        opacity: 0;
+        transform: translate(-50%, -54%);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #load .backdrop, #load .sun-glow, #load .flow, #load .boat { animation: none; }
       }
 
-      #title {
+      /* the mark in the corner while the controls are up: the brand, and the way to the help */
+      #brand {
         position: fixed;
-        left: 50%;
-        top: 16vh;
-        transform: translate(-50%, 8px);
-        text-align: center;
-        opacity: 0;
-        transition: opacity 2.4s ease, transform 2.4s ease;
-        pointer-events: none;
+        left: max(16px, env(safe-area-inset-left));
+        top: max(14px, env(safe-area-inset-top));
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 5px 12px 5px 5px;
+        border: 1px solid rgba(236, 211, 168, 0.12);
+        border-radius: 999px;
+        background: rgba(12, 11, 10, 0.34);
+        -webkit-backdrop-filter: blur(10px);
+        backdrop-filter: blur(10px);
+        color: #f4ecdc;
+        font: 700 17px var(--font);
+        letter-spacing: 0.04em;
+        cursor: pointer;
         z-index: 2;
-        text-shadow: 0 1px 18px rgba(30, 14, 0, 0.55);
-        padding: 0 16px;
-        width: min(560px, calc(100vw - 32px));
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(-6px);
+        transition: opacity 0.7s ease, transform 0.7s ease, background 0.25s ease;
       }
-      #title.show {
+      #brand img {
+        width: 28px;
+        height: 28px;
+        display: block;
+      }
+      #brand.show {
         opacity: 1;
-        transform: translate(-50%, 0);
+        pointer-events: auto;
+        transform: none;
       }
-      #title h1 {
-        margin: 0;
-        font-weight: 500;
-        font-size: clamp(44px, 9vw, 84px);
-        letter-spacing: 0.02em;
-        line-height: 1.1;
+      #brand.show.idle {
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(-6px);
       }
-      #title p {
-        margin: 8px 0 0;
-        font-weight: 300;
-        font-size: clamp(15px, 2.4vw, 20px);
-        color: var(--ink-dim);
+      #brand:hover {
+        background: rgba(12, 11, 10, 0.5);
       }
+      #brand:focus-visible {
+        outline: 2px solid var(--ink);
+        outline-offset: 2px;
+      }
+      body.ui-off #brand {
+        opacity: 0;
+        visibility: hidden;
+      }
+
       #hint {
         position: fixed;
         left: 50%;
@@ -162,6 +264,17 @@
       #hint.show {
         opacity: 1;
       }
+      #hint .by-touch {
+        display: none;
+      }
+      @media (pointer: coarse) {
+        #hint .by-mouse {
+          display: none;
+        }
+        #hint .by-touch {
+          display: inline;
+        }
+      }
       #hint kbd {
         font-family: inherit;
         border: 1px solid rgba(236, 211, 168, 0.35);
@@ -183,7 +296,8 @@
         text-shadow: 0 1px 14px rgba(0, 0, 0, 0.7);
         opacity: 0;
         pointer-events: none;
-        z-index: 2;
+        /* above the dock, which may wake over it */
+        z-index: 3;
         white-space: nowrap;
       }
       #err {
@@ -209,39 +323,75 @@
           border-radius: 14px;
         }
       }
-      @media (prefers-reduced-motion: reduce) {
-        #load .sun,
-        #load .wave,
-        #load .boat {
-          animation: none;
-        }
-      }
     </style>
   </head>
   <body>
-    <canvas id="c" tabindex="0" aria-label="সোনালি বিকেলে মহেশখালী চ্যানেলের 3D দৃশ্য। টেনে বা তীর-চাবি দিয়ে চারপাশ দেখুন।"></canvas>
+    <canvas id="c" tabindex="0" aria-label="বাংলার গ্রামের নদীর 3D দৃশ্য। টেনে বা তীর-চাবি দিয়ে চারপাশ দেখুন।"></canvas>
 
-    <div id="load" aria-hidden="true">
-      <svg viewBox="0 0 120 120">
-        <circle class="track" cx="60" cy="60" r="46" />
-        <circle id="load-arc" cx="60" cy="60" r="46" pathLength="1" transform="rotate(-90 60 60)" />
-        <circle class="sun" cx="60" cy="62" r="13" />
-        <path class="wave" d="M30 72 Q40 69 50 72 T70 72 T90 72" />
-        <path class="wave b" d="M36 79 Q46 76 56 79 T76 79 T86 79" />
-        <path class="boat" d="M41 69 Q60 74 79 69 L76 66 Q60 69 44 66 Z M55 66 Q60 58 66 66 Z" />
-      </svg>
+    <div id="load" aria-hidden="true" style="--ld-blur: url('data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAA0JCgsKCA0LCgsODg0PEyAVExISEyccHhcgLikxMC4pLSwzOko+MzZGNywtQFdBRkxOUlNSMj5aYVpQYEpRUk//2wBDAQ4ODhMREyYVFSZPNS01T09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT09PT0//wAARCAASACADASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwDVuNHQH92wdSMgis6bTFUnJUYGTk9Kn8Wy21hdxJbhTuQErvbj8Aa5We8WVyzDbkY+Rj/Wuen7R9TqlKPU3jpgyenHJ5ppsI1+86D6sKxl1BACDGpyACTzmnfb4mILQxnHT5a0/ekc0BfEZJvFJJJ2L/KseiinR+BGdb42JRRRWxif/9k=')">
+      <div class="backdrop"></div>
+      <div class="veil"></div>
+      <div class="mark">
+        <!-- the mark (public/brand/logo.svg), its sun rising out of the river as the village is built -->
+        <svg class="emblem" viewBox="0 0 100 100">
+          <defs>
+            <clipPath id="ld-disk"><circle cx="50" cy="50" r="46" /></clipPath>
+            <radialGradient id="ld-glow"><stop offset="0" stop-color="#ff6a5a" stop-opacity="0.5" /><stop offset="1" stop-color="#ff6a5a" stop-opacity="0" /></radialGradient>
+          </defs>
+          <g clip-path="url(#ld-disk)">
+            <rect width="100" height="100" fill="#006a4e" />
+            <g class="sun">
+              <circle class="sun-glow" cx="45" cy="48" r="34" fill="url(#ld-glow)" />
+              <circle cx="45" cy="48" r="23" fill="#f42a41" />
+            </g>
+            <path d="M0 66C14 61 26 61 40 66S66 71 80 66 100 61 100 61V100H0Z" fill="#00553e" />
+            <path class="flow" d="M2 67C14 62 26 62 40 67S66 72 80 67 96 62 100 62" fill="none" stroke="#f4ecdc" stroke-width="2.4" stroke-linecap="round" />
+            <path class="flow b" d="M8 76C20 72 30 72 42 76S64 80 76 76 92 72 98 72" fill="none" stroke="#f4ecdc" stroke-width="1.8" stroke-linecap="round" opacity="0.7" />
+            <g class="boat" fill="#0b2a20">
+              <path d="M24 66.5C28 69.7 46 69.7 50 66.5L51.4 64.1C45.4 66.3 28.4 66.3 22.6 64.1Z" />
+              <path d="M32 66C32.6 62 34.6 60.4 38 60.4S43.4 62 44 66Z" />
+              <path d="M26.4 65.6 26 57.6C26 56.8 26.5 56.4 27.1 56.4S28.2 56.8 28.2 57.6L27.8 65.6Z" />
+              <circle cx="27.1" cy="54.6" r="1.6" />
+              <path d="M28 58.6 32.4 71.4 31.6 71.7 27.2 59Z" />
+            </g>
+          </g>
+          <circle cx="50" cy="50" r="46" fill="none" stroke="#f4ecdc" stroke-opacity="0.35" stroke-width="1" />
+        </svg>
+        <h1>নদী</h1>
+        <p class="verse">আবার আসিব ফিরে ধানসিঁড়িটির তীরে — এই বাংলায়</p>
+      </div>
+      <p class="now" id="load-now"></p>
     </div>
+    <script>
+      // the word shown once its face has come (or after a moment, in whatever face there is)
+      (() => {
+        const load = document.getElementById('load');
+        const show = () => load.classList.add('type');
+        if (!document.fonts) return show();
+        Promise.race([document.fonts.load('700 72px "Noto Serif Bengali"', 'নদী'), new Promise((r) => setTimeout(r, 2500))]).then(show, show);
+      })();
+    </script>
 
-    <div id="title" aria-live="polite">
-      <h1>নদী</h1>
-      <p>সোনালি বিকেলে মহেশখালীর পথে</p>
-    </div>
+    <button id="brand" type="button" title="নদী: সব নিয়ন্ত্রণ আর তথ্যসূত্র" aria-label="নদী: সব নিয়ন্ত্রণ আর তথ্যসূত্র"><img src="brand/logo.svg" alt="" width="28" height="28" /><span>নদী</span></button>
 
     <p id="hint">
-      টেনে চারপাশ দেখুন · স্ক্রল করে কাছে-দূরে · নিচের বারে সময় আর ক্যামেরা · <kbd>?</kbd> সব নিয়ন্ত্রণ
+      <span class="by-mouse">টেনে চারপাশ দেখুন · স্ক্রল করে কাছে-দূরে · নিচের বারে সময় আর ক্যামেরা · <kbd>?</kbd> সব নিয়ন্ত্রণ</span>
+      <span class="by-touch">টেনে চারপাশ দেখুন · দুই আঙুলে কাছে-দূরে · ছুঁলে নিচে সময় আর ক্যামেরা</span>
     </p>
 
     <p id="caption" aria-live="polite"></p>
+
+    <nav id="film-nav" aria-label="চলচ্চিত্রের দৃশ্য">
+      <button id="film-prev" type="button" title="আগের দৃশ্য (←)" aria-label="আগের দৃশ্য">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg>
+        <span>আগের দৃশ্য</span>
+      </button>
+      <span id="film-count" aria-live="polite"></span>
+      <button id="film-next" type="button" title="পরের দৃশ্য (→)" aria-label="পরের দৃশ্য">
+        <span>পরের দৃশ্য</span>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg>
+      </button>
+    </nav>
 
     <div id="toast" role="status" aria-live="polite">
       <span id="toast-text"></span>
@@ -249,12 +399,25 @@
     </div>
 
     <section id="dock" aria-label="দৃশ্যের নিয়ন্ত্রণ">
-      <div class="dock-time">
-        <button id="play" class="ibtn" type="button" aria-label="সময় থামান" title="সময় চালান বা থামান (Space)">
-          <svg class="i-pause" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6v12M15 6v12" /></svg>
-          <svg class="i-play" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 5.5v13l10-6.5z" /></svg>
+      <div class="dock-when">
+        <button id="season-btn" class="ring-btn" type="button" popovertarget="season-pop" title="ঋতু (Y)" aria-label="ঋতু">
+          <svg id="ring" viewBox="-24 -24 48 48" aria-hidden="true">
+            <g id="ring-arcs"></g>
+            <circle id="ring-mark" r="2.6" cx="0" cy="-17" />
+          </svg>
         </button>
-        <button id="speed" class="chip" type="button" title="সময়ের গতি ([ ])">১×</button>
+        <div class="when">
+          <output id="clock" for="tl" aria-live="off">বিকেল ৫:৩০</output>
+          <span id="bdate"></span>
+        </div>
+        <button id="live" class="live" type="button" title="লাইভ: বাংলাদেশের এই মুহূর্তের তারিখ আর সময়ে দেখুন (0)" aria-label="লাইভ" aria-pressed="false"><i aria-hidden="true"></i><span>লাইভ</span></button>
+      </div>
+
+      <div class="dock-day">
+        <button id="play" class="ibtn" type="button" aria-label="সময় থামান" title="সময় চালান বা থামান (Space)">
+          <svg class="i-pause" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 6v12M15 6v12" /></svg>
+          <svg class="i-play" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8.5 5.5v13l10-6.5z" /></svg>
+        </button>
         <div class="timeline">
           <div id="tl-sun" class="tl-row tl-sun"></div>
           <div id="tl-track" class="tl-track">
@@ -263,17 +426,13 @@
           </div>
           <div id="tl-moon" class="tl-row tl-moon"></div>
         </div>
-        <div class="readout">
-          <output id="clock" for="tl">বিকেল ৫:৩০</output>
-          <span id="tithi"></span>
-          <span id="bdate"></span>
-        </div>
+        <button id="speed" class="chip" type="button" title="সময়ের গতি ([ ])">১×</button>
       </div>
 
       <div class="dock-tools">
         <div id="camera" class="seg" role="group" aria-label="ক্যামেরা">
           <button type="button" data-mode="follow" aria-pressed="true" title="নৌকার সাথে (1)">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 15.5h18l-2.6 3.5H5.6z" /><path d="M12 4.5v11" /><path d="M12 5.5l5.5 8H12" /></svg>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.5 14.5c3 1.6 16 1.6 19 0l-2.4 3.6c-3.6 1.4-10.6 1.4-14.2 0z" /><path d="M8 14.6c.3-2.9 1.8-4.4 4-4.4s3.7 1.5 4 4.4" /><path d="M5.5 14.4 5 7.5" /></svg>
             <span>নৌকা</span>
           </button>
           <button type="button" data-mode="free" aria-pressed="false" title="মুক্ত ক্যামেরা: W A S D দিয়ে চলুন (2)">
@@ -285,24 +444,14 @@
             <span>চলচ্চিত্র</span>
           </button>
         </div>
-        <label class="pick">
-          <select id="views" aria-label="নৌকার চারপাশের দৃশ্য" title="দৃশ্য (V)">
-            <option value="" disabled selected hidden>দৃশ্য</option>
-          </select>
-        </label>
-        <label class="pick moonpick">
-          <svg viewBox="-8 -8 16 16" aria-hidden="true"><circle class="moon-dark" r="7" /><path id="moon-lit" class="moon-lit" d="" /></svg>
-          <select id="moon" aria-label="চাঁদের কলা" title="চাঁদের কলা"></select>
-        </label>
-        <label class="pick">
-          <select id="season" aria-label="ঋতু" title="ঋতু (Y)"></select>
-        </label>
-        <label class="pick">
-          <select id="weather" aria-label="আবহাওয়া" title="আবহাওয়া (B)"></select>
-        </label>
-        <span class="spacer"></span>
+        <button id="views-btn" class="ibtn" type="button" popovertarget="views-pop" aria-label="নৌকার চারপাশের দৃশ্য" title="দৃশ্যের কোণ (V)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.8 12S6.2 6.5 12 6.5 21.2 12 21.2 12 17.8 17.5 12 17.5 2.8 12 2.8 12z" /><circle cx="12" cy="12" r="2.6" /></svg>
+        </button>
+        <button id="moon-btn" class="ibtn" type="button" popovertarget="moon-pop" aria-label="চাঁদের কলা" title="চাঁদের কলা">
+          <svg viewBox="-8 -8 16 16" width="18" height="18" aria-hidden="true"><circle class="moon-dark" r="6.6" /><path id="moon-lit" class="moon-lit" d="" /></svg>
+        </button>
         <button id="sound" class="ibtn" type="button" aria-pressed="false" aria-label="শব্দ চালু করুন" title="শব্দ (M)">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" />
             <g class="waves">
               <path d="M15.5 9a4 4 0 0 1 0 6" />
@@ -310,24 +459,71 @@
             </g>
           </svg>
         </button>
+        <button id="map-btn" class="ibtn" type="button" aria-label="মানচিত্র" title="মানচিত্র: জায়গাগুলো দেখুন (L)">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20z" /><path d="M9 4v13.5M15 6.5V20" /></svg>
+        </button>
         <button id="fullscreen" class="ibtn" type="button" aria-pressed="false" aria-label="পূর্ণ পর্দা" title="পূর্ণ পর্দা (F)">
-          <svg class="i-enter" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" /></svg>
-          <svg class="i-exit" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5" /></svg>
+          <svg class="i-enter" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" /></svg>
+          <svg class="i-exit" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4v5H4M20 9h-5V4M15 20v-5h5M4 15h5v5" /></svg>
         </button>
-        <button id="hide-ui" class="ibtn" type="button" aria-label="নিয়ন্ত্রণ লুকান" title="নিয়ন্ত্রণ লুকান (H)">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12S7 6.5 12 6.5 20.5 12 20.5 12 17 17.5 12 17.5 3.5 12 3.5 12z" /><circle cx="12" cy="12" r="2.5" /><path d="M4 20 20 4" /></svg>
-        </button>
-        <button id="help-btn" class="ibtn" type="button" aria-label="সব নিয়ন্ত্রণ" title="সব নিয়ন্ত্রণ (?)">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.6" /><path d="M12 17h.01" /></svg>
+        <button id="more-btn" class="ibtn" type="button" popovertarget="more-pop" aria-label="আরও" title="আরও">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="6" cy="12" r="1.5" /><circle cx="12" cy="12" r="1.5" /><circle cx="18" cy="12" r="1.5" /></svg>
         </button>
       </div>
     </section>
+
+    <!-- the dock's menus: each opens above its button (ui/controls.ts) -->
+    <div id="season-pop" class="pop" popover role="menu" aria-label="ঋতু">
+      <p class="pop-title">ছয় ঋতু</p>
+      <div class="pop-seasons"></div>
+      <button type="button" class="pop-item journey" role="menuitemradio" data-season="own">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true"><path d="M3 15c3 2 15 2 18 0M5 12c1.5-4 12.5-4 14 0" /><path d="M12 4v4" /></svg>
+        <span id="season-own">যাত্রার সাথে ঋতু বদলাক</span>
+      </button>
+    </div>
+    <div id="moon-pop" class="pop" popover role="menu" aria-label="চাঁদের কলা">
+      <p class="pop-title" id="tithi"></p>
+      <div class="pop-moons"></div>
+    </div>
+    <div id="views-pop" class="pop" popover role="menu" aria-label="দৃশ্যের কোণ">
+      <p class="pop-title">নৌকার চারপাশে</p>
+      <div class="pop-list"></div>
+    </div>
+    <div id="more-pop" class="pop" popover role="menu" aria-label="আরও">
+      <div class="pop-list">
+        <!-- on a phone the view, the moon and the map are here, not on the dock -->
+        <button type="button" class="pop-item phone-only" role="menuitem" popovertarget="views-pop">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.8 12S6.2 6.5 12 6.5 21.2 12 21.2 12 17.8 17.5 12 17.5 2.8 12 2.8 12z" /><circle cx="12" cy="12" r="2.6" /></svg>
+          <span>দৃশ্যের কোণ</span>
+        </button>
+        <button type="button" class="pop-item phone-only" role="menuitem" popovertarget="moon-pop">
+          <svg viewBox="-8 -8 16 16" width="16" height="16" aria-hidden="true"><circle class="moon-dark" r="6.6" /><path class="moon-lit" d="M0 -6.6A6.6 6.6 0 0 1 0 6.6A3 6.6 0 0 1 0 -6.6Z" /></svg>
+          <span>চাঁদের কলা</span>
+        </button>
+        <button type="button" class="pop-item phone-only tiny-only" role="menuitem" data-act="map">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6.5 9 4l6 2.5L21 4v13.5L15 20l-6-2.5L3 20z" /><path d="M9 4v13.5M15 6.5V20" /></svg>
+          <span>মানচিত্র</span><kbd>L</kbd>
+        </button>
+        <button id="help-btn" type="button" class="pop-item" role="menuitem">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.6.3-1 .8-1 1.5v.6" /><path d="M12 17h.01" /></svg>
+          <span>সব নিয়ন্ত্রণ</span><kbd>?</kbd>
+        </button>
+        <button id="hide-ui" type="button" class="pop-item" role="menuitem">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12S7 6.5 12 6.5 20.5 12 20.5 12 17 17.5 12 17.5 3.5 12 3.5 12z" /><circle cx="12" cy="12" r="2.5" /><path d="M4 20 20 4" /></svg>
+          <span>নিয়ন্ত্রণ লুকান</span><kbd>H</kbd>
+        </button>
+      </div>
+    </div>
 
     <button id="ui-restore" class="ibtn" type="button" aria-label="নিয়ন্ত্রণ দেখান" title="নিয়ন্ত্রণ দেখান (H)">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 12S7 6.5 12 6.5 20.5 12 20.5 12 17 17.5 12 17.5 3.5 12 3.5 12z" /><circle cx="12" cy="12" r="2.5" /></svg>
     </button>
 
     <dialog id="help" aria-labelledby="help-title">
+      <div class="help-brand">
+        <img src="brand/logo.svg" alt="" width="44" height="44" />
+        <div><b>নদী</b><span>বাংলার গ্রাম, নদী আর ছয় ঋতু</span></div>
+      </div>
       <h2 id="help-title">নিয়ন্ত্রণ</h2>
       <form method="dialog">
         <button class="ibtn close" type="submit" aria-label="বন্ধ করুন">
@@ -340,8 +536,8 @@
           <dl>
             <dt>টেনে · <kbd>←</kbd> <kbd>→</kbd> <kbd>↑</kbd> <kbd>↓</kbd></dt><dd>নৌকার চারপাশে ঘোরা</dd>
             <dt>স্ক্রল · পিঞ্চ · <kbd>+</kbd> <kbd>−</kbd></dt><dd>কাছে-দূরে</dd>
-            <dt><kbd>V</kbd></dt><dd>পরের দৃশ্য: পেছন, মাঝির পাশ, সামনে, উঁচু</dd>
-            <dt><kbd>R</kbd></dt><dd>শুরুর দৃশ্যে ফেরা</dd>
+            <dt><kbd>V</kbd></dt><dd>ক্যামেরার কোণ: সেরা দৃশ্য, পেছন, মাঝির পাশ, সামনে, উঁচু</dd>
+            <dt><kbd>R</kbd></dt><dd>সেরা দৃশ্যে ফেরা (ক্যামেরা নিজে দৃশ্য সাজায়)</dd>
           </dl>
         </section>
         <section>
@@ -358,11 +554,11 @@
           <h3>সময় ও আকাশ</h3>
           <dl>
             <dt><kbd>Space</kbd></dt><dd>সময় চালু বা থামানো</dd>
-            <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>সময়ের গতি কমানো, বাড়ানো</dd>
+            <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>সময়ের গতি কমানো, বাড়ানো (১× মানে আসল সময়)</dd>
+            <dt><kbd>0</kbd> · লাইভ</dt><dd>লাইভ চালু: বাংলাদেশের এই মুহূর্তের তারিখ, সময়, ঋতু আর চাঁদ; আবার চাপলে সিনেমাটিক ভোরে ফেরা</dd>
             <dt><kbd>T</kbd> চেপে ধরে</dt><dd>সময় খুব দ্রুত</dd>
             <dt><kbd>N</kbd></dt><dd>পরের সূর্যোদয়, সূর্যাস্ত, চন্দ্রোদয় বা চন্দ্রাস্ত</dd>
-            <dt><kbd>Y</kbd></dt><dd>পরের ঋতু (শুরু হয় আজকের তারিখ থেকে)</dd>
-            <dt><kbd>B</kbd></dt><dd>আবহাওয়া: ঋতু অনুযায়ী, পরিষ্কার, হাওয়া, হালকা বৃষ্টি, বৃষ্টি, ঝড়</dd>
+            <dt><kbd>Y</kbd></dt><dd>পরের ঋতু (এক মিনিট পর আগের ঋতুতে ফেরে)</dd>
             <dt>বারের চিহ্ন</dt><dd>সেই মুহূর্তে গিয়ে সেদিকে তাকানো</dd>
           </dl>
         </section>
@@ -371,6 +567,9 @@
           <dl>
             <dt><kbd>1</kbd> <kbd>2</kbd> <kbd>3</kbd></dt><dd>নৌকা, মুক্ত, চলচ্চিত্র</dd>
             <dt><kbd>C</kbd></dt><dd>চলচ্চিত্র চালু বা বন্ধ</dd>
+            <dt><kbd>←</kbd> <kbd>→</kbd> · <kbd>PgUp</kbd> <kbd>PgDn</kbd></dt><dd>চলচ্চিত্রে আগের বা পরের দৃশ্য (ওপরের বোতামেও; একটু চলার পর ← সেই দৃশ্যের শুরুতে)</dd>
+            <dt><kbd>Esc</kbd> · টেনে</dt><dd>চলচ্চিত্র থেকে বেরিয়ে নিজে দেখা</dd>
+            <dt><kbd>L</kbd></dt><dd>মানচিত্র: একটা জায়গা বেছে নিলে তার দৃশ্য, তারপর নৌকায়</dd>
             <dt><kbd>M</kbd></dt><dd>শব্দ</dd>
             <dt><kbd>F</kbd></dt><dd>পূর্ণ পর্দা</dd>
             <dt><kbd>H</kbd></dt><dd>নিয়ন্ত্রণ লুকানো বা দেখানো</dd>
@@ -378,7 +577,15 @@
           </dl>
         </section>
       </div>
-      <p class="help-note">কিছুক্ষণ কিছু না ছুঁলে ক্যামেরা নিজে থেকেই সূর্য বা চাঁদের ওঠা-নামার দিকে ঘুরে যায়, আর আরও পরে চলচ্চিত্র শুরু হয়।</p>
+      <p class="help-note">কিছুক্ষণ কিছু না ছুঁলে ক্যামেরা নিজে থেকেই মাঝে মাঝে নৌকা থেকে সরে গিয়ে পথের পাশের ঘাট, বাড়ি, মাঠ আর সেতু দেখায়, সূর্য বা চাঁদের ওঠা-নামার দিকেও ঘুরে যায়। শুরুতে গ্রাম দেখা দেয় সারা বছরের মধ্যে বেছে নেওয়া সবচেয়ে সুন্দর ভোরে: সূর্য ওঠে, তারপর ঘড়ি নিজের গতিতে চলে, আর যাত্রার সাথে সাথে ছয় ঋতু ঘুরে আসে। লাইভ চালু করলে বাংলাদেশের এই মুহূর্তের তারিখ, সময়, ঋতু আর চাঁদ।</p>
+      <section class="help-sources" aria-labelledby="sources-title">
+        <h3 id="sources-title">তথ্যসূত্র</h3>
+        <p>গ্রামটি কল্পনায় গড়া: বাংলার নানা গ্রামের নদী, খাল, বিল, বাড়ি আর পথ থেকে নিয়ে এক জায়গায় সাজানো, কোনো একটা আসল জায়গার মানচিত্র নয়। মাটি, গাছ, ঘর আর শব্দ কোডে তৈরি।</p>
+        <ul id="sources">
+          <li>মাটির স্তর আর গাছের বাকল: Poly Haven (polyhaven.com), CC0।</li>
+          <li>মানুষদের শরীর, কঙ্কাল, ত্বক, চোখ আর চুল: MakeHuman (makehumancommunity.org), CC0।</li>
+        </ul>
+      </section>
     </dialog>
 
     <div id="err" role="alert" hidden></div>

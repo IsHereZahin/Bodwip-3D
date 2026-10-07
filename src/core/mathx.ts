@@ -18,6 +18,13 @@ export function damp(current: number, target: number, rate: number, dt: number):
   return current + (target - current) * (1 - Math.exp(-rate * dt));
 }
 
+/** Linear interpolation in a table of values at even steps from `f` = 0 to 1, clamped (a body's measured sections). */
+export function tableAt(table: readonly number[], f: number): number {
+  const x = Math.min(table.length - 1.0001, Math.max(0, f * (table.length - 1)));
+  const k = Math.floor(x);
+  return table[k] + (table[k + 1] - table[k]) * (x - k);
+}
+
 /** Shortest signed difference between two angles (radians). */
 export function angleDelta(from: number, to: number): number {
   let d = (to - from) % (Math.PI * 2);

@@ -4,15 +4,20 @@ import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, type RGB } from '../render/builder';
 import { instanced, type Placement } from '../render/instancing';
 import { patchMaterial } from '../render/patch';
-import { PONDS, WETLANDS, terrainHeight, wetlandPoint, wetlandReach } from './geography';
+import { PONDS, pondReach, shapePoint, terrainHeight } from './geography';
+import { POND_RISE } from './plan';
 
-// Shapla (water lilies) on the village ponds and the small wetlands: notched pads lying flat in loose
-// rafts toward the edges, and here and there a white or pink flower held just above the water. The
-// wetlands also have reeds (nol-khagra) standing round their rims, swaying in the wind, and rafts of water
-// hyacinth (kochuripana) afloat on their open water. Everything that floats rides the season's water
-// level; it is set only over beds that stay under water even in the driest months.
+// Shapla (water lilies) on the village's old ponds: notched pads lying flat in loose rafts toward the edges,
+// and here and there a white or pink flower held just above the water, with clumps of reeds (nol-khagra)
+// standing along their banks, swaying in the wind. The lilies lie on each pond's own water and are set only
+// over beds that stay under water. (The floating hyacinth is world/drift.ts's.)
 
 const UP = new Vector3(0, 1, 0);
+
+/** The ponds shapla grows on: the old ones the design leaves to the lilies (a village's fish ponds are kept clear). */
+export const LILY_PONDS = PONDS.filter((p) => p.lilies);
+/** The ponds kept clean (the mosque's): only a little shapla in a corner or two, and no reeds. */
+const KEPT_PONDS = PONDS.filter((p) => p.kept);
 
 /** A round pad with the lily's notch, its rim turned up a little. */
 function pad(): BufferGeometry {
@@ -93,50 +98,6 @@ function reeds(rng: Rng): BufferGeometry {
   return b.build();
 }
 
-/** A water-hyacinth rosette: glossy, rounded leaves on swollen stalks standing up out of the water, and a lilac spike. */
-function hyacinth(): BufferGeometry {
-  const b = new MeshBuilder();
-  const leaves = 7;
-  for (let k = 0; k < leaves; k++) {
-    const a = (k / leaves) * Math.PI * 2 + (k % 2) * 0.3;
-    const out = new Vector3(Math.cos(a), 0, Math.sin(a));
-    const side = new Vector3(-Math.sin(a), 0, Math.cos(a));
-    const stalk = 0.12 + (k % 3) * 0.04;
-    const base = out.clone().multiplyScalar(0.05).addScaledVector(UP, stalk);
-    const n = out.clone().multiplyScalar(0.6).addScaledVector(UP, 0.8).normalize();
-    const col = mixRgb(rgb('#2f6a20'), rgb('#4f8a2c'), (k % 3) / 2);
-    const c = b.vertex(base, n, 0.5, 0.5, col);
-    const ring: number[] = [];
-    const R = 0.075;
-    for (let i = 0; i <= 8; i++) {
-      const t = (i / 8) * Math.PI * 2;
-      const p = base
-        .clone()
-        .addScaledVector(side, Math.cos(t) * R)
-        .addScaledVector(out, (Math.sin(t) + 1) * R * 0.9)
-        .addScaledVector(UP, (Math.sin(t) + 1) * R * 0.7);
-      ring.push(b.vertex(p, n, 0, 0, col));
-    }
-    for (let i = 0; i < 8; i++) b.tri(c, ring[i], ring[i + 1]);
-    // the spongy stalk
-    const s0 = b.vertex(out.clone().multiplyScalar(0.01), side, 0, 0, rgb('#5a8a3a'));
-    const s1 = b.vertex(out.clone().multiplyScalar(0.01).addScaledVector(side, 0.025), side, 0, 0, rgb('#5a8a3a'));
-    const s2 = b.vertex(base, side, 0, 0, rgb('#4a7a2e'));
-    b.tri(s0, s1, s2);
-  }
-  // the flower spike
-  for (let k = 0; k < 6; k++) {
-    const y = 0.26 + k * 0.035;
-    const a = k * 2.1;
-    const c = new Vector3(Math.cos(a) * 0.025, y, Math.sin(a) * 0.025);
-    const i0 = b.vertex(c.clone().add(new Vector3(-0.03, 0, 0)), UP, 0, 0, rgb('#b79ad8'));
-    const i1 = b.vertex(c.clone().add(new Vector3(0.03, 0, 0)), UP, 0, 0, rgb('#b79ad8'));
-    const i2 = b.vertex(c.clone().add(new Vector3(0, 0.035, 0.01)), UP, 0, 0, rgb('#d8c8f0'));
-    b.tri(i0, i1, i2);
-  }
-  return b.build();
-}
-
 export function buildPondLife(): Group {
   const group = new Group();
   group.name = 'ponds';
@@ -144,35 +105,55 @@ export function buildPondLife(): Group {
   const pads: Placement[] = [];
   const white: Placement[] = [];
   const pink: Placement[] = [];
-  // the ponds (dug deep: water all year almost to their edges) and the small wetlands (shallow: only their
-  // middles stay wet through the dry months)
-  const waters = [
-    ...PONDS.map((p) => ({ ...p, reach: 0.8, rafts: rng.int(3, 4), bed: -0.25, inside: (x: number, z: number) => Math.hypot(x - p.x, z - p.z) < p.r * 0.92 })),
-    ...WETLANDS.map((w) => ({ ...w, reach: 0.5, rafts: rng.int(6, 8), bed: -0.75, inside: (x: number, z: number) => wetlandReach(w, x, z) < 0.9 })),
-  ];
-  for (const p of waters) {
+  // the old ponds (dug deep: water all year almost to their edges)
+  // (`bed`: how far under the water's surface a bed must lie for lilies)
+  for (const p of LILY_PONDS) {
     // rafts of pads, each grown out from a point toward the edge of the open water
-    for (let r = 0; r < p.rafts; r++) {
-      const a = rng.range(0, Math.PI * 2);
-      const cx = p.x + Math.cos(a) * p.r * rng.range(0.45, 1) * p.reach;
-      const cz = p.z + Math.sin(a) * p.r * rng.range(0.45, 1) * p.reach;
+    const rafts = rng.int(3, 5);
+    for (let r = 0; r < rafts; r++) {
+      const at = shapePoint(p, rng.range(-0.75, 0.75) * p.hu, rng.range(-0.75, 0.75) * p.hv);
       const n = rng.int(26, 44);
       for (let i = 0; i < n; i++) {
         const d = Math.sqrt(rng.next()) * rng.range(2.5, 5.5);
         const b = rng.range(0, Math.PI * 2);
-        const x = cx + Math.cos(b) * d;
-        const z = cz + Math.sin(b) * d;
-        if (!p.inside(x, z) || terrainHeight(x, z) > p.bed) continue;
+        const x = at.x + Math.cos(b) * d;
+        const z = at.z + Math.sin(b) * d;
+        if (pondReach(p, x, z) > 0.92 || terrainHeight(x, z) > p.level - 0.25) continue;
         const s = rng.range(0.2, 0.36);
-        pads.push({ x, y: 0.01, z, ry: rng.range(0, Math.PI * 2), s, tx: rng.range(-0.03, 0.03), tz: rng.range(-0.03, 0.03) });
+        pads.push({ x, y: p.level + 0.01, z, ry: rng.range(0, Math.PI * 2), s, tx: rng.range(-0.03, 0.03), tz: rng.range(-0.03, 0.03) });
         if (rng.next() < 0.2) {
-          (rng.next() < 0.6 ? white : pink).push({ x: x + rng.range(-0.1, 0.1), y: 0.02, z: z + rng.range(-0.1, 0.1), ry: rng.range(0, 6.28), s: rng.range(1.3, 1.8) });
+          (rng.next() < 0.6 ? white : pink).push({ x: x + rng.range(-0.1, 0.1), y: p.level + 0.02, z: z + rng.range(-0.1, 0.1), ry: rng.range(0, 6.28), s: rng.range(1.3, 1.8) });
         }
       }
     }
   }
-  // they float on the pond's water, which rises and falls with the season's
-  const afloat = { key: 'afloat', pars: '', code: 'transformed.y += uWaterLevel / length(instanceMatrix[0].xyz);' };
+  // the kept pond: a small raft of shapla or two near its banks, away from its ghat, more of them in flower
+  for (const p of KEPT_PONDS) {
+    const rafts = rng.int(2, 3);
+    for (let r = 0; r < rafts; r++) {
+      let at = shapePoint(p, rng.sign() * rng.range(0.5, 0.75) * p.hu, rng.sign() * rng.range(0.45, 0.7) * p.hv);
+      if (p.ghat && Math.hypot(at.x - p.ghat.x, at.z - p.ghat.z) < p.r * 0.9) at = { x: 2 * p.x - at.x, z: 2 * p.z - at.z };
+      const n = rng.int(7, 13);
+      for (let i = 0; i < n; i++) {
+        const d = Math.sqrt(rng.next()) * rng.range(0.8, 2.2);
+        const b = rng.range(0, Math.PI * 2);
+        const x = at.x + Math.cos(b) * d;
+        const z = at.z + Math.sin(b) * d;
+        if (pondReach(p, x, z) > 0.9 || terrainHeight(x, z) > p.level - 0.25) continue;
+        const s = rng.range(0.2, 0.34);
+        pads.push({ x, y: p.level + 0.01, z, ry: rng.range(0, Math.PI * 2), s, tx: rng.range(-0.03, 0.03), tz: rng.range(-0.03, 0.03) });
+        if (rng.next() < 0.35) {
+          (rng.next() < 0.55 ? white : pink).push({ x: x + rng.range(-0.1, 0.1), y: p.level + 0.02, z: z + rng.range(-0.1, 0.1), ry: rng.range(0, 6.28), s: rng.range(1.3, 1.8) });
+        }
+      }
+    }
+  }
+  // the pads and their flowers float: they rise and fall with the pond (its share of the season's rise)
+  const afloat = {
+    key: 'pond-rise',
+    pars: '',
+    code: `transformed.y += uWaterRise * ${POND_RISE.toFixed(2)} / length((modelMatrix * instanceMatrix)[0].xyz);`,
+  };
   const leafMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.32, side: DoubleSide }), { grime: 0.25, vertex: afloat });
   const flowerMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.6, side: DoubleSide }), {
     translucency: 1.4,
@@ -187,29 +168,21 @@ export function buildPondLife(): Group {
   add(lily(rgb('#f4f1ea')), flowerMat, white);
   add(lily(rgb('#e88aa8')), flowerMat, pink);
 
-  // the wetlands' reeds round their rims (rooted: in the rains they stand in the water) and hyacinth afloat
+  // reeds in clumps along the old ponds' banks, at the water's edge, thick in places and none in others
   const reedSpots: Placement[] = [];
-  const hyacinthSpots: Placement[] = [];
-  for (const w of WETLANDS) {
-    // in beds round the rim, thick in places and thin in others
-    for (let k = 0; k < 220; k++) {
+  for (const p of LILY_PONDS) {
+    for (let k = 0; k < 60; k++) {
       const a = rng.range(0, Math.PI * 2);
-      if (Math.sin(a * 4 + w.x) + Math.sin(a * 7 + w.z) < -0.6) continue;
-      const { x, z } = wetlandPoint(w, a, rng.range(0.8, 1.3));
-      reedSpots.push({ x, y: terrainHeight(x, z) - 0.05, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.75, 1.2) });
-    }
-    for (let r = 0; r < 4; r++) {
-      const a = rng.range(0, Math.PI * 2);
-      const cx = w.x + Math.cos(a) * w.r * rng.range(0.2, 0.45);
-      const cz = w.z + Math.sin(a) * w.r * rng.range(0.2, 0.45);
-      for (let i = 0; i < 26; i++) {
-        const d = Math.sqrt(rng.next()) * 2.4;
-        const b = rng.range(0, Math.PI * 2);
-        const x = cx + Math.cos(b) * d;
-        const z = cz + Math.sin(b) * d;
-        if (terrainHeight(x, z) > -0.75) continue;
-        hyacinthSpots.push({ x, y: 0, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.8, 1.25) });
+      if (Math.sin(a * 3 + p.x) + Math.sin(a * 5 + p.z) < 0.3) continue;
+      const e = shapePoint(p, Math.cos(a) * p.hu * 1.25, Math.sin(a) * p.hv * 1.25);
+      // walk in from the dug edge to the water's edge
+      let x = e.x;
+      let z = e.z;
+      for (let t = 0; t < 12 && pondReach(p, x, z) > 1.02; t++) {
+        x += (p.x - x) * 0.08;
+        z += (p.z - z) * 0.08;
       }
+      reedSpots.push({ x, y: terrainHeight(x, z) - 0.05, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.7, 1.1) });
     }
   }
   const reedMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.8, side: DoubleSide }), {
@@ -218,12 +191,7 @@ export function buildPondLife(): Group {
     translucency: 1,
     seasonal: 'leaf',
   });
-  const hyacinthMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.35, side: DoubleSide }), {
-    translucency: 0.8,
-    vertex: afloat,
-  });
-  // out in the fields their reflections are not worth drawing
+  // small, and off the boat's waters: their reflections are not worth drawing
   if (reedSpots.length) group.add(instanced(reeds(new Rng(57)), reedMat, reedSpots, { receive: true, layer: LAYER_NO_REFLECT }));
-  add(hyacinth(), hyacinthMat, hyacinthSpots);
   return group;
 }

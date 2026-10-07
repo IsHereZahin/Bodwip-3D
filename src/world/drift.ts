@@ -1,44 +1,47 @@
 import { BufferGeometry, DoubleSide, DynamicDrawUsage, Group, InstancedMesh, Matrix4, MeshStandardMaterial, Quaternion, Vector3 } from 'three';
-import { G, LAYER_NO_REFLECT } from '../core/globals';
+import { LAYER_NO_REFLECT } from '../core/globals';
 import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, taperedTube, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { hyacinthLeafTexture } from '../render/textures';
 import { windAt } from '../env/wind';
-import { currentAt, type BoatBody } from './boatPhysics';
-import { CHARS, charHeight, halfWidth, riverX, terrainHeight } from './geography';
+import type { BoatBody } from './boatPhysics';
+import { PONDS, SALT_CREEK, WATER_LEVEL, inlandWaterAt, meanWaterLevelAt, pondReach, risenLevel, saltFarmAt, terrainHeight, waterLevelAt, waterwayAt } from './geography';
 import { HERO_HULL, heroBeamAtWater, hullHalfWidthAt, type HullShape } from './hull';
-import type { LiftNet } from './liftNet';
 import { wakeHeight } from './wake';
-import { SHELTERED, waveHeight, waveSlope } from './waves';
+import { INLAND, SHELTERED, waveHeightSlope } from './waves';
 
-// What the river carries: water hyacinth (kochuripana), each plant its own floating body, held to its
-// neighbours in loose mats by tangled roots; and fallen leaves. Each is dragged toward the local current
-// (and a touch downwind), bobs and tilts on the shared waves, turns with the current's shear, jostles its
-// neighbours, runs aground and gathers along the banks, and is shouldered aside by the boat's hull and
-// stirred by the paddle's blade, then eases back to the current's pace. Roots stretched too far let go, so
-// the boat leaves a lane through a mat. Solved as position-based dynamics: stable at any frame rate.
+// Water hyacinth (kochuripana), each plant its own floating body, held to its neighbours in loose mats by
+// tangled roots; and fallen leaves. It floats on the still fresh water round the viewer (the khal, the bil, the
+// ponds: `inlandWaterAt`), as deep as it floats in; in the khal it is set down only in the slack water along
+// its banks, its middle being the boats' way. Each drifts a
+// little downwind, bobs on the ripples, jostles its neighbours, runs aground and gathers along the banks, and
+// is shouldered aside by a hull and stirred by a paddle's blade, then settles. Roots stretched too far let
+// go, so a boat leaves a lane through a mat. Solved as position-based dynamics: stable at any frame rate.
 
-/**
- * What else floating plants meet: other boats' hulls (by shape, place and heading), posts standing in the
- * water, and the lift nets near enough to be simulated.
- */
+/** What else floating plants meet: other boats' hulls (by shape, place and heading), and posts standing in the water. */
 export interface DriftObstacles {
   hulls: readonly { shape: HullShape; x: number; z: number; heading: number }[];
   posts: readonly { x: number; z: number; r: number }[];
-  nets: readonly LiftNet[];
 }
 
-const NO_OBSTACLES: DriftObstacles = { hulls: [], posts: [], nets: [] };
-/** A net counts as rising (scooping up what floats over it) above this lever rate (rad/s). */
-const SCOOP_RATE = 0.005;
+const NO_OBSTACLES: DriftObstacles = { hulls: [], posts: [] };
+/** The ponds kept clean (the mosque's). */
+const KEPT = PONDS.filter((p) => p.kept);
 const UP = new Vector3(0, 1, 0);
 const PLANTS = 720;
 const LEAVES = 160;
 const N = PLANTS + LEAVES;
-/** Floating things are kept this far behind and ahead of the viewer along the river (m). */
-const BEHIND = 140;
-const AHEAD = 620;
+/** Floating things are kept within this of the viewer (m); newcomers are set down within it. */
+const REACH = 160;
+/** They float only where the fresh water is at least this deep (m). */
+const FLOATS = 0.25;
+/** In the khals they are set down only within this of their banks (m), and within 0.4 of a narrow one's half: their middle is the boats' way. */
+const EDGE = 3;
+/** Frames a mat with no water to go to waits before it looks again. */
+const RETRY = 45;
+/** On still fresh water the ripples are this share of the open water's waves (as the water shader draws them: waves.ts surfaceShare). */
+const RIPPLES = SHELTERED * INLAND;
 /** Seconds for a plant (or a leaf) to come to the current's speed after a shove. */
 const DRAG_TAU = [1.6, 0.8];
 /** Drift downwind, m/s at full wind. */
@@ -48,6 +51,17 @@ const WIND_DRIFT = [0.0125, 0.0075];
 const SNAP = 2.2;
 const CELL = 0.9;
 const TABLE = 4096;
+/**
+ * The steepest the ground rises toward a floater (m a m, a bank's face with room to spare): one that floated
+ * `clear` m over the ground where last measured cannot run aground before it has moved `clear / STEEPEST`.
+ */
+const STEEPEST = 3;
+/**
+ * Within this of the viewer (m) a floater is set on the waves every frame; farther off, where its bobbing of a
+ * few millimetres is less than a pixel, every FAR_EVERY frames, each on its own.
+ */
+const NEAR = 40;
+const FAR_EVERY = 4;
 const HALF_LEN = HERO_HULL.len / 2;
 
 const COLORS = {
@@ -181,10 +195,14 @@ export class Drift {
   private readonly vz = new Float32Array(N);
   private readonly yaw = new Float32Array(N);
   private readonly spin = new Float32Array(N);
+  /** The mean level of the water each floats on (still fresh water keeps its own), found when it is set down; the season raises it (risenLevel). */
+  private readonly levelOf = new Float32Array(N);
   private readonly radius = new Float32Array(N);
+  /** Where each was last measured against the ground, and the ground there (the aground check). */
+  private readonly groundX = new Float32Array(N).fill(Number.NaN);
+  private readonly groundZ = new Float32Array(N).fill(Number.NaN);
+  private readonly ground = new Float32Array(N);
   /** Held up by a net that rose under it, and how high above the water. */
-  private readonly caught = new Uint8Array(N);
-  private readonly lift = new Float32Array(N);
   private readonly scale = new Float32Array(N);
   private readonly meshOf = new Uint8Array(N);
   private readonly slot = new Uint16Array(N);
@@ -198,11 +216,10 @@ export class Drift {
   private readonly p = new Vector3();
   private readonly s = new Vector3();
   private readonly axis = new Vector3();
-  private readonly cur = { x: 0, z: 0 };
   private readonly air = { x: 0, z: 0 };
   private readonly slope = { x: 0, z: 0 };
+  private lastX = Number.NaN;
   private lastZ = Number.NaN;
-  private viewSpeed = 0;
   private frame = 0;
 
   constructor() {
@@ -265,18 +282,16 @@ export class Drift {
    * `viewZ`: where the viewer is along the river; `boat`: the hull that parts them; `blade`: the paddle's
    * blade (world); `obstacles`: the other boats, posts and nets.
    */
-  update(dt: number, t: number, viewZ: number, boat: BoatBody, blade: Vector3, obstacles: DriftObstacles = NO_OBSTACLES): void {
+  update(dt: number, t: number, view: Vector3, boat: BoatBody, blade: Vector3, obstacles: DriftObstacles = NO_OBSTACLES): void {
     this.frame++;
-    // which way the river moves past the viewer decides where newcomers drift in from; a jump (a film
-    // cut, the journey looping, a still being set up) scatters everything afresh round the new spot
-    const jumped = Number.isNaN(this.lastZ) || Math.abs(viewZ - this.lastZ) > 60;
-    if (jumped) this.viewSpeed = 0;
-    else if (dt > 0) this.viewSpeed += ((viewZ - this.lastZ) / dt - this.viewSpeed) * Math.min(1, dt * 2);
-    this.lastZ = viewZ;
-    this.recycle(viewZ, jumped);
+    // a jump (a film cut, the journey looping, a still being set up) scatters everything afresh round the new spot
+    const jumped = Number.isNaN(this.lastX) || Math.hypot(view.x - this.lastX, view.z - this.lastZ) > 60;
+    this.lastX = view.x;
+    this.lastZ = view.z;
+    this.recycle(view.x, view.z, jumped);
     const h = Math.min(dt, 0.05);
-    if (h > 0) this.simulate(h, t, boat, blade, obstacles);
-    this.draw(t, boat);
+    if (h > 0) this.simulate(h, boat, blade, obstacles);
+    this.draw(t, boat, view, jumped);
   }
 
   /** Pushes floater `i` out sideways from a hull's waterline, so it slides along her flank. */
@@ -295,63 +310,18 @@ export class Drift {
     this.pz[i] = z + fz * along - fx * a;
   }
 
-  /**
-   * The lift nets. Where the netting crosses the surface it is a wall a floater cannot drift through (it
-   * stops against it); where it lies deep it floats over, and where the net hangs well above it, under.
-   * A net coming up under a floater scoops it up: it rides on the netting until the net goes back in.
-   */
-  private meetNets(h: number, t: number, nets: readonly LiftNet[]): void {
-    const { px, pz, ox, oz, caught, lift } = this;
-    const level = G.uWaterLevel.value;
-    for (let i = 0; i < N; i++) {
-      let held = false;
-      for (const net of nets) {
-        const reach = net.spec.half + 1;
-        if (Math.abs(px[i] - net.centre.x) > reach || Math.abs(pz[i] - net.centre.z) > reach) continue;
-        const under = net.heightAt(px[i], pz[i]);
-        if (under === null) continue;
-        const surface = level + waveHeight(px[i], pz[i], t);
-        if (caught[i]) {
-          // still on the netting until it sinks back under the water
-          if (under < surface - 0.02) continue;
-          held = true;
-          lift[i] = under - surface + 0.03;
-        } else if (under > surface - 0.02 && under < surface + 0.25 && net.omega > SCOOP_RATE) {
-          held = true;
-          caught[i] = 1;
-          lift[i] = Math.max(0, under - surface) + 0.03;
-        } else if (under > surface - 0.35 && under < surface + 0.6) {
-          // against the netting at the waterline: it goes no farther this step
-          px[i] = ox[i];
-          pz[i] = oz[i];
-        }
-        break;
-      }
-      if (held) {
-        px[i] = ox[i];
-        pz[i] = oz[i];
-      } else {
-        caught[i] = 0;
-        // let back onto the water, it settles onto it
-        lift[i] *= Math.exp(-h / 0.25);
-      }
-    }
-  }
-
-  private simulate(h: number, t: number, boat: BoatBody, blade: Vector3, obstacles: DriftObstacles): void {
+  private simulate(h: number, boat: BoatBody, blade: Vector3, obstacles: DriftObstacles): void {
     const { px, pz, ox, oz, vx, vz } = this;
     // forces: the current's drag and the wind's push, then a step forward
     for (let i = 0; i < N; i++) {
+      if (Number.isNaN(pz[i])) continue;
       const leaf = i >= PLANTS ? 1 : 0;
-      currentAt(px[i], pz[i], this.cur);
+      // still water: only the wind moves them, and they come to rest from a shove
       const k = 1 - Math.exp(-h / DRAG_TAU[leaf]);
       windAt(px[i], pz[i], this.air);
-      vx[i] += (this.cur.x + this.air.x * WIND_DRIFT[leaf] - vx[i]) * k;
-      vz[i] += (this.cur.z + this.air.z * WIND_DRIFT[leaf] - vz[i]) * k;
-      // the current runs faster mid-river than at the edge: that shear turns what floats in it
-      const hw = halfWidth(pz[i]);
-      const u = (px[i] - riverX(pz[i])) / hw;
-      this.spin[i] += ((0.85 * u) / hw - this.spin[i]) * Math.min(1, h * 0.5);
+      vx[i] += (this.air.x * WIND_DRIFT[leaf] - vx[i]) * k;
+      vz[i] += (this.air.z * WIND_DRIFT[leaf] - vz[i]) * k;
+      this.spin[i] *= Math.exp(-h * 0.5);
       ox[i] = px[i];
       oz[i] = pz[i];
       px[i] += vx[i] * h;
@@ -421,39 +391,47 @@ export class Drift {
         }
       }
     }
-    if (obstacles.nets.length) this.meetNets(h, t, obstacles.nets);
-    else {
-      this.caught.fill(0);
-      this.lift.fill(0);
-    }
-    // aground: a staggered quarter each frame (the terrain lookup is not cheap) is nudged back toward
-    // open water and stopped there, so floaters collect along the banks the way they do
+    // aground: a staggered quarter each frame (the terrain lookup is not cheap) is stopped where it was, so
+    // floaters collect along the banks the way they do
     for (let i = this.frame % 4; i < N; i += 4) {
-      if (terrainHeight(px[i], pz[i]) > G.uWaterLevel.value - 0.12) {
-        px[i] += Math.sign(riverX(pz[i]) - px[i]) * 0.08;
-        ox[i] = px[i];
-        oz[i] = pz[i];
+      if (Number.isNaN(pz[i])) continue;
+      const top = risenLevel(this.levelOf[i]) - 0.08;
+      // (well afloat where last measured, and not moved far enough since to have reached a bank)
+      if (top - this.ground[i] > Math.hypot(px[i] - this.groundX[i], pz[i] - this.groundZ[i]) * STEEPEST) continue;
+      this.groundX[i] = px[i];
+      this.groundZ[i] = pz[i];
+      this.ground[i] = terrainHeight(px[i], pz[i]);
+      if (this.ground[i] > top) {
+        px[i] = ox[i];
+        pz[i] = oz[i];
       }
     }
     // velocities from where everything ended up: a shove becomes motion, which the drag then calms
     for (let i = 0; i < N; i++) {
+      if (Number.isNaN(pz[i])) continue;
       vx[i] = (px[i] - ox[i]) / h;
       vz[i] = (pz[i] - oz[i]) / h;
       this.yaw[i] += this.spin[i] * h;
     }
   }
 
-  /** Neighbours keep apart (they may overlap a little, as leaves interleave), found through a spatial hash. */
+  /**
+   * Neighbours keep apart (they may overlap a little, as leaves interleave), found through a spatial hash. Those
+   * waiting for water (NaN) are left out: they would all hash to one cell, and every one of them be measured
+   * against every other each frame.
+   */
   private collide(): void {
     const { px, pz, head, next, radius } = this;
     const cell = (cx: number, cz: number) => ((Math.imul(cx, 73856093) ^ Math.imul(cz, 19349663)) >>> 0) & (TABLE - 1);
     head.fill(-1);
     for (let i = 0; i < N; i++) {
+      if (Number.isNaN(pz[i])) continue;
       const c = cell(Math.floor(px[i] / CELL), Math.floor(pz[i] / CELL));
       next[i] = head[c];
       head[c] = i;
     }
     for (let i = 0; i < N; i++) {
+      if (Number.isNaN(pz[i])) continue;
       const cx = Math.floor(px[i] / CELL);
       const cz = Math.floor(pz[i] / CELL);
       for (let dz = -1; dz <= 1; dz++) {
@@ -477,70 +455,77 @@ export class Drift {
     }
   }
 
-  /** Respawns mats and leaves that have left the window round the viewer. */
-  private recycle(viewZ: number, jumped: boolean): void {
-    const gone = (z: number) => Number.isNaN(z) || z > viewZ + BEHIND || z < viewZ - AHEAD;
-    for (const mat of this.mats) {
-      if (jumped || mat.members.every((i) => gone(this.pz[i]))) this.spawnMat(mat, viewZ, jumped);
-    }
+  /**
+   * Sets down afresh the mats and leaves that have left the round about the viewer. Those that found no water
+   * look again every RETRY frames, each on its own frame of them (where there is little water most of them wait,
+   * and all of them looking in the same frame stalled it).
+   */
+  private recycle(vx: number, vz: number, jumped: boolean): void {
+    const gone = (i: number) => Number.isNaN(this.pz[i]) || Math.hypot(this.px[i] - vx, this.pz[i] - vz) > REACH + 20;
+    const due = (k: number) => (this.frame + k) % RETRY === 0;
+    this.mats.forEach((mat, k) => {
+      const parked = Number.isNaN(this.pz[mat.members[0]]);
+      if (jumped || (mat.members.every(gone) && (!parked || due(k)))) this.spawnMat(mat, vx, vz);
+    });
     for (let i = PLANTS; i < N; i++) {
-      if (!jumped && !gone(this.pz[i])) continue;
-      const [x, z] = this.spot(viewZ, jumped);
-      this.px[i] = x;
-      this.pz[i] = z;
-      this.caught[i] = 0;
-      this.lift[i] = 0;
-      currentAt(x, z, this.cur);
-      this.vx[i] = this.cur.x;
-      this.vz[i] = this.cur.z;
+      if (!jumped && (!gone(i) || (Number.isNaN(this.pz[i]) && !due(i)))) continue;
+      const at = this.spot(vx, vz);
+      this.px[i] = at ? at[0] : Number.NaN;
+      this.pz[i] = at ? at[1] : Number.NaN;
+      if (at) this.levelOf[i] = meanWaterLevelAt(at[0], at[1]);
+      this.vx[i] = 0;
+      this.vz[i] = 0;
     }
   }
 
-  /** Open water where the river will bring a floater into view (or anywhere in the window, after a jump). */
-  private spot(viewZ: number, anywhere: boolean): [number, number] {
-    // the current runs toward −z under a metre a second: the boat outpaces it, a still viewer does not
-    const fromAhead = this.viewSpeed < -0.8;
-    for (let tries = 0; tries < 12; tries++) {
-      const z = anywhere
-        ? viewZ + this.rng.range(-AHEAD, BEHIND)
-        : fromAhead
-          ? viewZ - this.rng.range(AHEAD * 0.45, AHEAD * 0.98)
-          : viewZ + this.rng.range(BEHIND * 0.5, BEHIND * 0.95);
-      const u = this.rng.sign() * halfWidth(z) * this.rng.range(0.03, 0.85);
-      if (charHeight(z, u) > G.uWaterLevel.value - 0.8 || CHARS.some((c) => Math.abs(z - c.z) < c.halfLen && Math.abs(u - c.u) < c.halfWid + 6)) continue;
-      return [riverX(z) + u, z];
+  /** Still fresh water deep enough to float on, somewhere round the viewer; null if none was found. */
+  private spot(vx: number, vz: number): [number, number] | null {
+    for (let tries = 0; tries < 16; tries++) {
+      const a = this.rng.range(0, Math.PI * 2);
+      const r = REACH * Math.sqrt(this.rng.next());
+      const x = vx + Math.cos(a) * r;
+      const z = vz + Math.sin(a) * r;
+      if (!inlandWaterAt(x, z) || waterLevelAt(x, z) - terrainHeight(x, z) < FLOATS) continue;
+      // in the khal (and on its way across the bil) they gather in the slack water along the banks, out of the
+      // boats' way; none in the salt creek, whose water is the sea's
+      const w = waterwayAt(x, z);
+      if (w && (w.d < w.half - Math.min(EDGE, w.half * 0.4) || w.way === SALT_CREEK)) continue;
+      // none on the pond the village keeps clean, nor in the salt farms' brine
+      if (KEPT.some((p) => pondReach(p, x, z) < 1.3) || saltFarmAt(x, z, 2)) continue;
+      return [x, z];
     }
-    const z = viewZ - AHEAD * 0.5;
-    return [riverX(z), z];
-  }
-
-  /** Debug: how many floaters a net is holding up. */
-  get caughtCount(): number {
-    let n = 0;
-    for (let i = 0; i < N; i++) n += this.caught[i];
-    return n;
+    return null;
   }
 
   /** Debug: moves the next `count` mats to (x, z) and round it, for watching the boat meet them. */
   placeMats(x: number, z: number, count: number): void {
-    for (let k = 0; k < count && k < this.mats.length; k++) this.spawnMat(this.mats[k], 0, false, [x + (k % 2) * 2.5, z - k * 3.5]);
+    for (let k = 0; k < count && k < this.mats.length; k++) this.spawnMat(this.mats[k], x, z, [x + (k % 2) * 2.5, z - k * 3.5]);
   }
 
   /** A fresh mat: its plants packed in a blob (sunflower spacing), each tied by its roots to its neighbours. */
-  private spawnMat(mat: Mat, viewZ: number, anywhere: boolean, at?: [number, number]): void {
-    const [cx, cz] = at ?? this.spot(viewZ, anywhere);
+  private spawnMat(mat: Mat, vx: number, vz: number, at?: [number, number]): void {
+    const spot = at ?? this.spot(vx, vz);
+    mat.links = [];
+    if (!spot) {
+      // no fresh water near: the mat waits, out of sight, and looks again a while later
+      for (const i of mat.members) {
+        this.px[i] = Number.NaN;
+        this.pz[i] = Number.NaN;
+      }
+      return;
+    }
+    const [cx, cz] = spot;
+    const level = meanWaterLevelAt(cx, cz);
     const turn = this.rng.range(0, Math.PI * 2);
     const stretch = this.rng.range(0.6, 1);
-    currentAt(cx, cz, this.cur);
     mat.members.forEach((i, k) => {
       const r = 0.34 * Math.sqrt(k + 0.5);
       const a = k * 2.39996 + turn;
       this.px[i] = cx + Math.cos(a) * r + this.rng.range(-0.05, 0.05);
       this.pz[i] = cz + Math.sin(a) * r * stretch + this.rng.range(-0.05, 0.05);
-      this.vx[i] = this.cur.x;
-      this.vz[i] = this.cur.z;
-      this.caught[i] = 0;
-      this.lift[i] = 0;
+      this.levelOf[i] = Number.isFinite(level) ? level : WATER_LEVEL;
+      this.vx[i] = 0;
+      this.vz[i] = 0;
     });
     mat.links = [];
     for (let x = 0; x < mat.members.length; x++) {
@@ -553,28 +538,28 @@ export class Drift {
     }
   }
 
-  /** How much of the river's waves the water at (x, z) carries: still water a share of them (as the water shader has it). */
-  private shelter(x: number, z: number): number {
-    currentAt(x, z, this.cur);
-    const s = Math.hypot(this.cur.x, this.cur.z);
-    const r = Math.min(1, s / 0.2);
-    return SHELTERED + (1 - SHELTERED) * r * r * (3 - 2 * r);
-  }
-
-  /** Sets each floater on the shared waves (and on the water the boat pushes aside), tilted with the surface. */
-  private draw(t: number, boat: BoatBody): void {
+  /**
+   * Sets each floater on the shared waves (and on the water the boat pushes aside), tilted with the surface;
+   * `all`: every one now (after a jump, they are all somewhere new).
+   */
+  private draw(t: number, boat: BoatBody, view: Vector3, all: boolean): void {
     const ch = Math.cos(boat.heading);
     const sh = Math.sin(boat.heading);
     for (let i = 0; i < N; i++) {
       const x = this.px[i];
       const z = this.pz[i];
-      const shelter = this.shelter(x, z);
-      // on the water, or up on a net that has lifted it
-      let y = G.uWaterLevel.value + waveHeight(x, z, t, shelter) + this.lift[i];
+      if (Number.isNaN(z)) {
+        // waiting for water: out of sight
+        this.m.makeScale(0, 0, 0);
+        this.meshes[this.meshOf[i]].setMatrixAt(this.slot[i], this.m);
+        continue;
+      }
+      if (!all && (i + this.frame) % FAR_EVERY !== 0 && Math.abs(x - view.x) + Math.abs(z - view.z) > NEAR) continue;
+      // on its water's ripples
+      let y = risenLevel(this.levelOf[i]) + waveHeightSlope(x, z, t, this.slope, RIPPLES);
       const bx = x - boat.pos.x;
       const bz = z - boat.pos.z;
       if (Math.abs(bx) + Math.abs(bz) < 150) y += wakeHeight(bx * ch - bz * sh, bx * sh + bz * ch, boat.speed);
-      waveSlope(x, z, t, this.slope, shelter);
       const sl = Math.hypot(this.slope.x, this.slope.z);
       this.q.setFromAxisAngle(UP, this.yaw[i]);
       if (sl > 1e-5) {

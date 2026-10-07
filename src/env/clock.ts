@@ -11,10 +11,15 @@ export interface SkyEvent {
   time: number;
 }
 
-/** Playback speeds the controls step through. */
-export const SPEEDS: readonly number[] = [1, 4, 16, 64];
+/**
+ * Playback speeds the controls step through, as multiples of the wall clock's: 1 is real time (the clock kept to
+ * Bangladesh's own, `Clock.live`, until the viewer turns it); faster, the sky's time-lapse.
+ */
+export const SPEEDS: readonly number[] = [1, 60, 360, 1440];
+/** The time-lapse the film's scenes run at (0.1 h of sky a second, slowing round the sky's events). */
+export const LAPSE = 360;
 
-/** Hours of sky time per real second, away from every sunrise, sunset, moonrise and moonset. */
+/** Hours of sky time per real second at `LAPSE`, away from every sunrise, sunset, moonrise and moonset. */
 const BASE_RATE = 0.1;
 /** Hours over which the clock eases into and out of a linger. */
 const RAMP = 0.25;
@@ -26,7 +31,8 @@ interface Linger {
 }
 
 /**
- * Where the clock slows, in hours from each event, and how fast it runs there. Golden hour keeps the
+ * Where the film's clock slows, in hours from each event, and how fast it runs there (its scenes were shot at
+ * this pace; the viewer's own clock passes each event as `HAPPENING` has it). Golden hour keeps the
  * longest stay. A rise lingers mostly after it and a set mostly before, while the body climbs clear
  * of, or sinks to, the tree line.
  */
@@ -40,12 +46,27 @@ const LINGER: Record<SkyEventKind, readonly Linger[]> = {
   moonset: [{ from: -0.55, to: 0.15, rate: 0.008 }],
 };
 
-/** The stretch around each event, in hours, when the camera may turn to watch it. */
+/**
+ * Each event's happening, in hours from it, on the viewer's own clock (not the film's): a set from the body a few
+ * degrees up, going down into the haze, to just under the horizon; a rise the other way. It passes in
+ * `EVENT_SECONDS` whatever the pace the clock runs at (the user's rule, 2026-10-07: a sunset, once it starts, gone
+ * within 20 to 30 seconds), eased into and out of over `EVENT_RAMP` h.
+ */
+const HAPPENING: Record<SkyEventKind, readonly [number, number]> = {
+  sunset: [-0.3, 0.08],
+  sunrise: [-0.08, 0.3],
+  moonrise: [-0.06, 0.3],
+  moonset: [-0.3, 0.06],
+};
+const EVENT_SECONDS = 25;
+const EVENT_RAMP = 0.12;
+
+/** The stretch around each event, in hours, when the camera may turn to watch it: its happening, and a little either side. */
 const WATCH: Record<SkyEventKind, readonly [number, number]> = {
-  sunrise: [-0.35, 0.45],
-  sunset: [-0.45, 0.3],
-  moonrise: [-0.1, 0.5],
-  moonset: [-0.5, 0.1],
+  sunrise: [-0.14, 0.36],
+  sunset: [-0.36, 0.14],
+  moonrise: [-0.12, 0.36],
+  moonset: [-0.36, 0.12],
 };
 
 const HOUR = 1 / 24;
@@ -85,6 +106,8 @@ export class Clock {
   time: number;
   playing = true;
   speed = SPEEDS[0];
+  /** Kept to Bangladesh's own time (main.ts `follow`s it each frame) until the viewer turns the clock. */
+  live = true;
   /** Extra speed while T is held. */
   boost = 1;
   /** Moon's age (days since new moon) at time 0. */
@@ -149,12 +172,38 @@ export class Clock {
     this.playing = true;
   }
 
-  advance(dt: number): void {
-    if (this.playing) this.time += dt * this.speed * this.boost * this.rate() * HOUR;
+  /** Moves on to `hour` today, or tomorrow once it has come round past midnight: the clock kept to the wall's. */
+  follow(hour: number): void {
+    let t = this.day + hour * HOUR;
+    if (t < this.time - 0.5) t += 1;
+    else if (t > this.time + 0.5) t -= 1;
+    this.time = t;
   }
 
-  /** Hours of sky time per real second, now. */
-  rate(): number {
+  /**
+   * Runs the clock on `dt` s: real time at 1; faster, the time-lapse. The film's (`own` false) lingers round the sky's
+   * events as its scenes were shot; the viewer's own passes each event in its `EVENT_SECONDS`.
+   */
+  advance(dt: number, own = false): void {
+    if (!this.playing) return;
+    const hours = own ? this.ownPace() : this.speed <= 1 ? 1 / 3600 : (this.speed / LAPSE) * this.rate();
+    this.time += dt * this.boost * hours * HOUR;
+  }
+
+  /** Hours of sky time per real second on the viewer's own clock now: the pace chosen, and each event's own through its happening. */
+  private ownPace(): number {
+    let hours = this.speed <= 1 ? 1 / 3600 : (this.speed / LAPSE) * BASE_RATE;
+    for (const ev of this.events()) {
+      const h = (this.time - ev.time) * 24;
+      const [a, b] = HAPPENING[ev.kind];
+      const w = smoothstep(a - EVENT_RAMP, a, h) * (1 - smoothstep(b, b + EVENT_RAMP, h));
+      if (w > 0) hours = lerp(hours, (b - a) / EVENT_SECONDS, w);
+    }
+    return hours;
+  }
+
+  /** Hours of sky time per real second at `LAPSE`, now, on the film's clock. */
+  private rate(): number {
     let r = BASE_RATE;
     for (const ev of this.events()) {
       const h = (this.time - ev.time) * 24;

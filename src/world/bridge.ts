@@ -1,20 +1,21 @@
 import { BufferGeometry, DoubleSide, Group, Mesh, MeshStandardMaterial, Vector2, Vector3 } from 'three';
+import { smoothstep } from '../core/mathx';
 import { Rng } from '../core/rng';
-import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
+import { MeshBuilder, mixRgb, rgb, scaleRgb, slab, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { brickTexture, plasterTexture } from '../render/textures';
 import { BRIDGE, bridgeDeck, bridgeSoffit, bridgeToWorld, terrainHeight } from './geography';
 import type { FeaturedTree } from './vegetation';
 
-// The old bridge over the channel where the boat's way leaves the river for the bil: a humped arch of thin
-// Bengal brick, plastered in lime and washed ochre long ago, of the kind that carries a village footpath
-// over a khal. One segmental arch spans the channel, its ring of brick voussoirs showing in the plaster;
+// The old bridge over the khal through Bara Moheshkhali, on the boat's way up to the bil: a humped arch of
+// thin Bengal brick, plastered in lime and washed ochre long ago, of the kind that carries a village footpath
+// over a khal. One segmental arch spans the khal, its ring of brick voussoirs showing in the plaster;
 // the deck humps over it between low parapets with a worn coping, easing down ramps to the banks, where
 // the parapets end in squat pillars. Years of floods have left their line on it: the plaster dark and damp
 // low down, mossy green at the water, the barrel's brick stained; ferns grow from its joints. It is part of
-// the world like any other: it casts shadows and takes them, shows in the river's mirror, darkens and
+// the world like any other: it casts shadows and takes them, shows in the khal's mirror, darkens and
 // shines in the rain, and the boat passes under it on her way into the bil.
-// Built in the bridge's own frame (geography.ts → BRIDGE): x along it, z along the channel; heights are
+// Built in the bridge's own frame (geography.ts → BRIDGE): x along it, z along the khal; heights are
 // the world's.
 
 const HALF_SPAN = BRIDGE.span / 2;
@@ -27,29 +28,24 @@ const BRICK_TILE = 0.6;
 /** The arch's circle: its radius and the height of its centre. */
 const RADIUS = (HALF_SPAN * HALF_SPAN + BRIDGE.rise * BRIDGE.rise) / (2 * BRIDGE.rise);
 const CENTRE_Y = BRIDGE.springing + BRIDGE.rise - RADIUS;
-/** Below the channel's bed, where the abutments' footings are. */
+/** Below the khal's bed, where the abutments' footings are. */
 const FOOTING = -2.3;
 
 const PLASTER: RGB = [1, 1, 1];
 const DAMP: RGB = rgb('#6f6a58');
 const MOSS: RGB = rgb('#4f5a2c');
 
-/** The ground under a point of the bridge's frame. */
+/** The ground under a point of the bridge's frame, as a height above the khal's water (the frame's zero). */
 function groundAt(bx: number, bz: number): number {
   const w = bridgeToWorld(bx, bz);
-  return terrainHeight(w.x, w.z);
+  return terrainHeight(w.x, w.z) - BRIDGE.water;
 }
 
 /** How the years show at height y on the walls: moss at the water, damp to the flood line, the wash above. */
 function weather(y: number, base: RGB, rng: Rng): RGB {
-  let c = mixRgb(base, DAMP, 1 - smooth(0.2, 1.4, y));
-  c = mixRgb(c, MOSS, (1 - smooth(-0.3, 0.7, y)) * 0.7);
+  let c = mixRgb(base, DAMP, 1 - smoothstep(0.2, 1.4, y));
+  c = mixRgb(c, MOSS, (1 - smoothstep(-0.3, 0.7, y)) * 0.7);
   return scaleRgb(c, 0.92 + 0.12 * rng.next());
-}
-
-function smooth(a: number, b: number, x: number): number {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
-  return t * t * (3 - 2 * t);
 }
 
 /**
@@ -136,7 +132,7 @@ function archRing(b: MeshBuilder, rng: Rng): void {
   }
 }
 
-/** The barrel under the arch: brick courses along the channel, darker and stained toward the springings. */
+/** The barrel under the arch: brick courses along the khal, darker and stained toward the springings. */
 function barrel(b: MeshBuilder, rng: Rng): void {
   const N = 40;
   const a0 = Math.asin(HALF_SPAN / RADIUS);
@@ -209,7 +205,7 @@ function deck(b: MeshBuilder): void {
     b,
     rows,
     (p) => [p.z / BRICK_TILE, p.x / BRICK_TILE],
-    (p) => mixRgb([0.95, 0.95, 0.95], earth, smooth(0.9, 0.2, Math.abs(p.z)) * 0.6),
+    (p) => mixRgb([0.95, 0.95, 0.95], earth, smoothstep(0.9, 0.2, Math.abs(p.z)) * 0.6),
     true,
   );
 }
@@ -298,13 +294,28 @@ function tufts(rng: Rng): BufferGeometry {
   return b.build();
 }
 
+/** Where the plaster has fallen from the spandrels and the ramps' walls: patches of the brick under it, each its own size and place. */
+function fallenPatches(b: MeshBuilder, rng: Rng): void {
+  for (let k = 0; k < 12; k++) {
+    const side = rng.sign();
+    const x = rng.range(-BRIDGE.half + 3, BRIDGE.half - 3);
+    const floor = Math.abs(x) < HALF_SPAN ? bridgeSoffit(x) + 0.35 : Math.max(groundAt(x, side * OUTER) + 0.3, 0.4);
+    const ceil = bridgeDeck(x) - 0.25;
+    if (ceil - floor < 0.6) continue;
+    const w = rng.range(0.35, 0.9);
+    const h = rng.range(0.22, 0.5);
+    const y = rng.range(floor + h / 2, ceil - h / 2);
+    slab(b, x, y, side * (OUTER + 0.004), w, h, 0.012, 0, scaleRgb(rgb('#8a5038'), rng.range(0.8, 1)), BRICK_TILE);
+  }
+}
+
 /** Where random trees keep off (the bridge and its ramps). */
 export const BRIDGE_CLEARING = { x: BRIDGE.x, z: BRIDGE.z, r: BRIDGE.half + 4 };
 
 /**
  * The trees round the bridge, set where they frame it: a broad rain tree and a mango behind it on the
- * bil's side, their dark crowns behind whoever stands on it, leaning over the channel; a bamboo clump
- * and a date palm on the river's side; bananas by the far ramp.
+ * bil's side, their dark crowns behind whoever stands on it, leaning over the khal; a bamboo clump
+ * and a date palm on the downstream side; bananas by the far ramp.
  */
 export function bridgeTrees(): FeaturedTree[] {
   const at = (kind: FeaturedTree['kind'], bx: number, bz: number, s: number, ry: number): FeaturedTree => ({ kind, ...bridgeToWorld(bx, bz), s, ry });
@@ -322,7 +333,9 @@ export function buildBridge(): Group {
   const group = new Group();
   group.name = 'bridge';
   const rng = new Rng(311);
-  const plaster = plasterTexture(312);
+  // no fallen patches in the texture: repeated every tile they stood in rows along the walls like black
+  // marks; the brick shows instead through a few patches placed one by one (fallenPatches)
+  const plaster = plasterTexture(312, { fallen: false });
   const brick = brickTexture(313);
   const mat = (set: { map: Texture2; normal: Texture2 }, color: string, roughness: number, grime: number) =>
     patchMaterial(
@@ -337,6 +350,7 @@ export function buildBridge(): Group {
   walls(plasterB, rng);
   pillars(plasterB, rng);
   const brickB = new MeshBuilder();
+  fallenPatches(brickB, rng);
   archRing(brickB, rng);
   barrel(brickB, rng);
   abutments(brickB, rng);
@@ -363,7 +377,7 @@ export function buildBridge(): Group {
   );
   group.add(fern);
 
-  group.position.set(BRIDGE.x, 0, BRIDGE.z);
+  group.position.set(BRIDGE.x, BRIDGE.water, BRIDGE.z);
   group.rotation.y = BRIDGE.angle;
   group.updateMatrixWorld(true);
   return group;

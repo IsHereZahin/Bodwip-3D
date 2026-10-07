@@ -73,7 +73,8 @@ void main() {
   // warm bloom of the low sun, spreading along the horizon
   float low = 1.0 - smoothstep(0.0, 0.45, uSunDir.y);
   col += uSunColor * (0.05 * pow(mup, 3.0) * exp(-hy * 3.0) * (0.3 + low) + 0.06 * pow(mup, 18.0) + 0.16 * pow(mup, 400.0));
-  vec3 disc = uSunColor * 30.0 * smoothstep(0.99989, 0.99994, mu);
+  // the disc reddens as it sinks into the low air
+  vec3 disc = uSunColor * 30.0 * smoothstep(0.99989, 0.99994, mu) * mix(vec3(1.0, 0.5, 0.32), vec3(1.0), smoothstep(0.0, 0.08, uSunDir.y));
 
   float moonCover;
   vec3 moonCol = moon(rd, moonCover);
@@ -107,8 +108,19 @@ void main() {
     float edge = cov * (1.0 - cov) * 4.0;
     cloudCol += uSunColor * 0.5 * pow(mup, 10.0) * (edge * 0.8 + 0.25);
     cloudCol += uKeyColor * 0.12 * uNight;
+    // after the sun has gone down (and as it goes), the clouds toward it lit crimson from below for a while
+    float after = smoothstep(0.05, -0.005, uSunDir.y) * smoothstep(-0.15, -0.035, uSunDir.y);
+    if (after > 0.0) {
+      float toward = pow(max(dot(normalize(rd.xz + 1e-5), normalize(uSunDir.xz + 1e-5)), 0.0), 1.6);
+      cloudCol += uGlow * vec3(1.0, 0.55, 0.45) * 0.9 * after * toward * (1.0 - 0.4 * lit) * smoothstep(0.5, 0.05, y);
+    }
     // rain cloud: a low, dark, even grey
     cloudCol *= 1.0 - 0.45 * uOvercast;
+    // lightning lights the cloud from within round the strike, its thicker parts most, and the rest a little
+    if (uLightning.w > 0.001) {
+      float near = max(dot(rd, uLightning.xyz), 0.0);
+      cloudCol += vec3(0.74, 0.77, 1.0) * uLightning.w * (0.035 + 1.1 * pow(near, 16.0) + 0.3 * pow(near, 5.0)) * (0.55 + 0.6 * d);
+    }
     cov *= smoothstep(0.0, 0.14, y) * 0.95;
   }
   col += disc * (1.0 - cov) + night * (1.0 - cov * 0.9);

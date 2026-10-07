@@ -1,354 +1,372 @@
-import {
-  BufferAttribute,
-  BoxGeometry,
-  CylinderGeometry,
-  DoubleSide,
-  Euler,
-  Group,
-  LatheGeometry,
-  Matrix4,
-  Mesh,
-  MeshStandardMaterial,
-  Quaternion,
-  Vector2,
-  Vector3,
-} from 'three';
+import { BufferAttribute, DoubleSide, Euler, Group, Matrix4, Mesh, MeshStandardMaterial, Quaternion, Vector2, Vector3 } from 'three';
 import { Rng } from '../core/rng';
-import { MeshBuilder, rgb, taperedTube, type RGB } from '../render/builder';
+import { MeshBuilder, mixRgb, rgb, scaleRgb, slab, taperedTube, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
-import { netTexture, strawTexture, tinTexture } from '../render/textures';
-import {
-  CHARS,
-  KHALS,
-  VILLAGES,
-  VILLAGE_CENTERS,
-  bankInfo,
-  downstream,
-  edgeHalfWidth,
-  khalPoint,
-  landLevel,
-  hillHeight,
-  nearBackwater,
-  onLandmark,
-  riverX,
-  terrainHeight,
-} from './geography';
-import { buildHull, type HullShape } from './hull';
-import { SHELTERED, waveHeightGlsl, waveSlopeGlsl } from './waves';
+import { brickTexture, plasterTexture, strawTexture, tinTexture, weaveTexture } from '../render/textures';
+import { HOMESTEAD_MOUNDS, PONDS, WATER_LEVEL, bankAt, grandGhat, nearBackwater, onRoad, pondReach, shapePoint, terrainHeight, type Mound, type Pond } from './geography';
+import { buildHouse, haystack, type HouseParts, type HouseStyle } from './houses';
+import { ghatFlight, ghatPoint, groundOver, type GhatSite } from './ghatFlight';
+import { HUB_GHAT, LOW_WATER, POND_RISE } from './plan';
+import { buildHull, hullHalfWidthAt, hullStation, type HullShape } from './hull';
+import { INLAND, SHELTERED, SHOAL_DEPTH, waveHeightGlsl, waveSlopeGlsl } from './waves';
+import type { Waterway } from './waterways';
+
+// The homesteads (বাড়ি): on each mound the houses stand round the swept yard (উঠান), the main house across
+// its back with its veranda looking over it toward the way the homestead faces, one or two more along its
+// sides facing in, the kitchen at a front corner and the cowshed at a back corner (world/houses.ts builds
+// them); haystacks by the mound's foot. Where a homestead comes down to the river or the khal it has its own
+// ghat: brick steps cut into the bank between stepped walls, or a bamboo platform on posts out over the
+// water where the washing is done; a boat is tied up at some of them.
 
 export interface HutPlan {
   x: number;
   y: number;
   z: number;
   ry: number;
-  /** Length along local x, width along local z. */
+  /** Length along local x, the room's depth along local z (its door looks along local +z). */
   l: number;
   w: number;
-  roof: 'thatch' | 'tin';
-  wall: RGB;
+  kind: HouseStyle['kind'];
+  style: HouseStyle;
 }
 
-/** Each village's brick ghat: where its steps run down the bank (kept clear of grass). */
-export const GHATS: readonly { z: number; side: 1 | -1 }[] = VILLAGES.map((v) => ({ z: v.z + v.radius * 0.3, side: v.side }));
+/** Where a homestead (or the village) comes down to its water: its ghat's foot at the water's edge, the way up the bank, and the waterway. */
+export interface Ghat {
+  x: number;
+  z: number;
+  up: number;
+  way: Waterway;
+  s: number;
+  side: 1 | -1;
+  kind: 'brick' | 'bamboo';
+}
 
-const WALLS: RGB[] = [rgb('#a88458'), rgb('#b8946a'), rgb('#9a7a4a'), rgb('#c4b69a')];
+/** Mud walls' washes: earth ochre and clay browns, a pale clay, now and then a lime wash. */
+const MUD: RGB[] = [rgb('#a5805a'), rgb('#b38c62'), rgb('#9c7650'), rgb('#c2a27a'), rgb('#ad8a66'), rgb('#d6cdbd')];
+/** Painted tin walls: green, red oxide, blue, and bare galvanised. */
+const TIN: RGB[] = [rgb('#6b8a55'), rgb('#9a4a36'), rgb('#56789a'), rgb('#a9a8a0')];
+/** Doors and shutters: teal, indigo, maroon, plain timber, green. */
+const PAINT: RGB[] = [rgb('#2f6b6a'), rgb('#36578a'), rgb('#6e3424'), rgb('#4a3424'), rgb('#4f7a3a')];
 
-/** Huts for every village; vegetation keeps clear of them. Deterministic. */
+/** A house's style, chosen once per house: most of mud under thatch or tin, some of painted tin. */
+function styleFor(kind: HouseStyle['kind'], rng: Rng, main: boolean): HouseStyle {
+  const paint = rng.pick(PAINT);
+  if (kind === 'kitchen') return { kind, walls: 'mud', roof: 'thatch', wall: rng.pick(MUD.slice(0, 5)), paint, veranda: 0 };
+  if (kind === 'shed') return { kind, walls: 'mud', roof: rng.next() < 0.75 ? 'thatch' : 'tin', wall: MUD[0], paint, veranda: 0 };
+  const tinWalls = rng.next() < 0.3;
+  return {
+    kind,
+    walls: tinWalls ? 'tin' : 'mud',
+    roof: tinWalls || rng.next() < 0.45 ? 'tin' : 'thatch',
+    wall: tinWalls ? rng.pick(TIN) : rng.pick(MUD),
+    paint,
+    veranda: main ? rng.range(1.5, 1.9) : rng.next() < 0.4 ? rng.range(1.1, 1.4) : 0,
+  };
+}
+
+/** The houses of one homestead, laid round its yard in the mound's frame (u toward its face, v across). */
+function homestead(m: Mound, rng: Rng, out: HutPlan[]): void {
+  const put = (u: number, v: number, turn: number, l: number, w: number, kind: HouseStyle['kind'], main = false) => {
+    const p = shapePoint(m, u, v);
+    out.push({ x: p.x, y: terrainHeight(p.x, p.z) - 0.05, z: p.z, ry: m.face + turn, l, w, kind, style: styleFor(kind, rng, main) });
+  };
+  // the main house across the back of the yard, looking out over it from its veranda
+  put(-m.hu * 0.52, rng.range(-1, 1), 0, rng.range(7.5, 9.5), rng.range(4.2, 4.8), 'house', true);
+  // one or two houses along the yard's sides, facing in
+  const sides = rng.next() < 0.55 ? [1, -1] : [rng.sign()];
+  for (const side of sides) put(rng.range(-2.5, 0.5), side * m.hv * 0.5, (side * Math.PI) / 2, rng.range(5.8, 7.2), rng.range(3.6, 4.2), 'house');
+  // the kitchen at a front corner, and the cowshed at a back corner
+  const k = sides.length === 2 ? rng.sign() : -sides[0];
+  put(m.hu * 0.42, k * m.hv * 0.55, (k * Math.PI) / 2, rng.range(3.2, 3.8), rng.range(2.8, 3.2), 'kitchen');
+  put(-m.hu * 0.55, -k * m.hv * 0.64, (-k * Math.PI) / 2, rng.range(4.5, 5.5), rng.range(3, 3.4), 'shed');
+}
+
+/** The homesteads' houses, deterministic. */
 export function planHuts(): HutPlan[] {
   const rng = new Rng(21);
-  const out: HutPlan[] = [];
-  VILLAGES.forEach((v, i) => {
-    const c = VILLAGE_CENTERS[i];
-    // long side parallel to the river, facing it
-    const [dx, dz] = downstream(v.z);
-    const along = Math.atan2(-dz, dx);
-    const n = rng.int(4, 7);
-    for (let k = 0, tries = 0; k < n && tries < 80; tries++) {
-      const a = rng.range(0, Math.PI * 2);
-      const d = v.radius * Math.sqrt(rng.range(0, 0.5));
-      const x = c.x + Math.cos(a) * d;
-      const z = c.z + Math.sin(a) * d;
-      // not out in the backwaters, up the island's hills, or where the town's landmarks stand
-      if (bankInfo(x, z).inland < 14 || nearBackwater(x, z, 8) || hillHeight(x, z) > 0.8 || onLandmark(x, z, 5)) continue;
-      if (out.some((h) => Math.hypot(h.x - x, h.z - z) < 12)) continue;
-      const l = rng.range(5.2, 7.5);
-      const w = rng.range(3.4, 4.4);
-      let y = Infinity;
-      for (const [ox, oz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) y = Math.min(y, terrainHeight(x + ox * l * 0.5, z + oz * w * 0.5));
-      out.push({
-        x,
-        y,
-        z,
-        ry: along + rng.range(-0.3, 0.3) + (rng.next() < 0.2 ? Math.PI / 2 : 0),
-        l,
-        w,
-        roof: rng.next() < 0.55 ? 'thatch' : 'tin',
-        wall: rng.pick(WALLS),
-      });
-      k++;
-    }
-  });
+  const huts: HutPlan[] = [];
+  for (const m of HOMESTEAD_MOUNDS) homestead(m, rng, huts);
+  return huts;
+}
+
+/** The ghats: the village's below the banyan first, then each homestead's that has one, at the water's edge of the nearest bank. */
+export function planGhats(): Ghat[] {
+  const rng = new Rng(23);
+  const out: Ghat[] = [];
+  const at = (x: number, z: number, kind: Ghat['kind']) => {
+    const b = bankAt(x, z);
+    if (b) out.push({ x: b.x, z: b.z, up: b.up, way: b.way, s: b.s, side: b.side, kind });
+  };
+  at(HUB_GHAT[0], HUB_GHAT[1], 'brick');
+  // a homestead's ghat comes down from its front, straight to the water
+  for (const m of HOMESTEAD_MOUNDS) {
+    if (!m.home?.ghat) continue;
+    const front = shapePoint(m, m.hu + 4, 0);
+    at(front.x, front.z, rng.next() < 0.55 ? 'bamboo' : 'brick');
+  }
   return out;
 }
 
-// ---------- parts ----------
+// ---------- the ghats ----------
 
-const m4 = new Matrix4();
-const q4 = new Quaternion();
-const e4 = new Euler();
-const v4 = new Vector3();
-const s4 = new Vector3(1, 1, 1);
+const BRICK: RGB = rgb('#a0624a');
+const DAMP: RGB = rgb('#5a4a3a');
 
-function placed(base: Matrix4, x: number, y: number, z: number, ry = 0): Matrix4 {
-  q4.setFromEuler(e4.set(0, ry, 0));
-  return new Matrix4().multiplyMatrices(base, m4.compose(v4.set(x, y, z), q4, s4));
+/**
+ * Brick steps down the bank square to it (ghatFlight.ts lays them: each the same rise, none under the ground),
+ * from a landing at its top into the water, between low walls that step down with them and hold the bank back
+ * where it stands higher; damp and dark where the water reaches. `low` is the lowest the water falls.
+ */
+function brickGhat(b: MeshBuilder, g: GhatSite, rng: Rng, level = WATER_LEVEL, low = level - LOW_WATER, width = 2.4, reach = 8, seats = false): void {
+  const wall = 0.34;
+  const half = width / 2 + wall;
+  const steps = ghatFlight(g, { width, wall, top: reach + 1.9, landing: 1.6, low }, terrainHeight);
+  const tone = (y: number) => scaleRgb(mixRgb(BRICK, DAMP, 1 - Math.min(1, Math.max(0, (y - level + 0.2) / 0.9))), rng.range(0.9, 1.05));
+  steps.forEach((st, i) => {
+    const run = st.back - st.front;
+    // the tread's block, down into the bank (or the bed) under it
+    const under = groundOver(g, st.front, st.back, -width / 2, width / 2, terrainHeight);
+    const bottom = Math.min(under.low, st.y) - 0.4;
+    const mid = ghatPoint(g, (st.front + st.back) / 2);
+    slab(b, mid.x, (st.y + bottom) / 2, mid.z, width, st.y - bottom, run + 0.02, g.up, tone(st.y), 0.6);
+    // the walls either side, a little above the treads (level with the landing), up to the bank beside where it stands higher
+    for (const side of [-1, 1]) {
+      const s = side * (width / 2 + wall / 2);
+      const beside = groundOver(g, st.front, st.back, side * (half + 0.3), side * (half + 0.3), terrainHeight).high;
+      const top = Math.max(st.y + (i === 0 ? 0.08 : 0.25), beside + 0.06);
+      const foot = Math.min(groundOver(g, st.front, st.back, s, s, terrainHeight).low, st.y) - 0.4;
+      const w = ghatPoint(g, (st.front + st.back) / 2, s);
+      slab(b, w.x, (top + foot) / 2, w.z, wall, top - foot, run + 0.02, g.up, tone(top - 0.2), 0.6);
+    }
+  });
+  // two low pillars where the flight leaves the landing
+  const land = steps[0];
+  for (const side of [-1, 1]) {
+    const pz = ghatPoint(g, land.front + 0.21, side * (width / 2 + wall / 2));
+    slab(b, pz.x, land.y + 0.3, pz.z, 0.42, 0.6, 0.42, g.up, tone(land.y), 0.6);
+    // the village's ghat has its rowak: a plastered bench each side of the landing, where people sit by the water
+    if (seats) {
+      const d = (land.front + land.back) / 2;
+      const r = ghatPoint(g, d, side * (half + 1.05));
+      const ground = groundOver(g, d - 1.3, d + 1.3, side * (half + 0.1), side * (half + 2), terrainHeight);
+      const top = Math.max(land.y, ground.high) + 0.45;
+      slab(b, r.x, (top + ground.low - 0.2) / 2, r.z, 1.9, top - ground.low + 0.2, 2.6, g.up, tone(land.y + 1), 0.6);
+    }
+  }
+}
+
+/** A pond's ghat: brick steps down its bank from the point on the rim the design gives, square to the bank. */
+function pondGhat(b: MeshBuilder, pond: Pond, at: { x: number; z: number }, rng: Rng): void {
+  // walk in from the rim toward the middle to the water's edge
+  let x = at.x;
+  let z = at.z;
+  for (let k = 0; k < 60 && pondReach(pond, x, z) > 1; k++) {
+    x += (pond.x - x) * 0.04;
+    z += (pond.z - z) * 0.04;
+  }
+  brickGhat(b, { x, z, up: Math.atan2(at.x - pond.x, at.z - pond.z) }, rng, pond.level, pond.level - POND_RISE * LOW_WATER, 1.8, 3.2);
 }
 
 /**
- * Do-chala roof: two slopes whose ridge and eaves curve down toward the ends, the shape that
- * Bengal's huts gave to its temples. u runs along the ridge, v down the slope.
+ * A bamboo ghat: a short walkway of culms on posts from the bank out over the water, a little platform at its
+ * end where the washing is beaten and the pots filled.
  */
-function chalaRoof(b: MeshBuilder, m: Matrix4, l: number, w: number, wallTop: number, rise: number, over: number, droop: number): void {
-  const A = 14;
-  const S = 6;
-  const half = w / 2 + over;
-  const tWall = w / 2 / half;
-  const eave = wallTop + 0.12 - rise * (1 - tWall);
-  const normalMatrix = new Matrix4().extractRotation(m);
-  const p = new Vector3();
-  const n = new Vector3();
-  for (const side of [-1, 1]) {
-    const start = b.vertexCount;
-    for (let i = 0; i <= A; i++) {
-      const a = i / A;
-      const x = (a - 0.5) * (l + 2 * over);
-      const e = (2 * a - 1) ** 2;
-      for (let j = 0; j <= S; j++) {
-        const t = j / S;
-        const y = eave + rise * (1 - t) - droop * e * (0.5 + 0.5 * t) - 0.1 * t * (1 - t);
-        p.set(x, y, side * t * half).applyMatrix4(m);
-        n.set(0, half, side * rise).normalize().applyMatrix4(normalMatrix);
-        b.vertex(p, n, x / 1.6, (t * half) / 1.6);
-      }
+function bambooGhat(b: MeshBuilder, g: Ghat, rng: Rng): void {
+  const ux = Math.sin(g.up);
+  const uz = Math.cos(g.up);
+  const cx = Math.cos(g.up);
+  const cz = -Math.sin(g.up);
+  // above the rains' high water (env/season.ts): on tall legs in the dry months
+  const deck = WATER_LEVEL + 1.0;
+  const at = (d: number, s: number, y: number) => new Vector3(g.x + ux * d + cx * s, y, g.z + uz * d + cz * s);
+  const tint = () => scaleRgb(rgb('#a39469'), rng.range(0.82, 1.05));
+  const reach = rng.range(3.5, 5);
+  // posts from the bed up past the deck, in pairs
+  for (let d = 0.6; d >= -reach; d -= 1.6) {
+    for (const s of [-0.55, 0.55]) {
+      const bed = Math.min(terrainHeight(at(d, s, 0).x, at(d, s, 0).z), WATER_LEVEL) - 0.6;
+      taperedTube(b, [at(d, s, bed), at(d + rng.range(-0.05, 0.05), s, deck + 0.35)], [0.05, 0.045], 5, tint(), 1.2);
     }
-    for (let i = 0; i < A; i++) {
-      for (let j = 0; j < S; j++) {
-        const a0 = start + i * (S + 1) + j;
-        const a1 = a0 + S + 1;
-        if (side > 0) b.quad(a0, a0 + 1, a1 + 1, a1);
-        else b.quad(a0, a1, a1 + 1, a0 + 1);
-      }
-    }
-    // a thick thatch edge hangs below the eave
-    const lip = b.vertexCount;
-    for (let i = 0; i <= A; i++) {
-      const a = i / A;
-      const x = (a - 0.5) * (l + 2 * over);
-      const e = (2 * a - 1) ** 2;
-      const y = eave - droop * e;
-      n.set(0, 0, side).applyMatrix4(normalMatrix);
-      b.vertex(p.set(x, y, side * half).applyMatrix4(m), n, x / 1.6, 0);
-      b.vertex(p.set(x, y - 0.22, side * half * 0.97).applyMatrix4(m), n, x / 1.6, 0.15);
-    }
-    for (let i = 0; i < A; i++) b.quad(lip + i * 2, lip + i * 2 + 1, lip + i * 2 + 3, lip + i * 2 + 2);
+    taperedTube(b, [at(d, -0.6, deck - 0.06), at(d, 0.6, deck - 0.06)], [0.04, 0.04], 5, tint(), 1.2);
   }
-}
-
-function ridgeHeight(l: number, w: number, wallTop: number, rise: number, over: number, droop: number, x: number): number {
-  const half = w / 2 + over;
-  const eave = wallTop + 0.12 - rise * (1 - w / 2 / half);
-  const a = x / (l + 2 * over) + 0.5;
-  return eave + rise - droop * (2 * a - 1) ** 2 * 0.5;
-}
-
-function gable(b: MeshBuilder, m: Matrix4, l: number, w: number, wallTop: number, apex: number, color: RGB): void {
-  const normalMatrix = new Matrix4().extractRotation(m);
-  for (const side of [-1, 1]) {
-    const x = (side * l) / 2;
-    const n = new Vector3(side, 0, 0).applyMatrix4(normalMatrix);
-    const i0 = b.vertex(new Vector3(x, wallTop, -w / 2).applyMatrix4(m), n, 0, 0, color);
-    const i1 = b.vertex(new Vector3(x, wallTop, w / 2).applyMatrix4(m), n, 1, 0, color);
-    const i2 = b.vertex(new Vector3(x, apex, 0).applyMatrix4(m), n, 0.5, 1, color);
-    if (side > 0) b.tri(i0, i2, i1);
-    else b.tri(i0, i1, i2);
+  // the walkway: culms side by side from the bank's lip out to the end
+  const land = 2.2;
+  for (let k = -3; k <= 3; k++) {
+    const s = k * 0.1;
+    const y0 = Math.max(deck, terrainHeight(at(land, s, 0).x, at(land, s, 0).z) + 0.04);
+    taperedTube(b, [at(land, s, y0), at(0.4, s, deck), at(-reach - 0.3, s, deck)], [0.045, 0.045, 0.045], 5, tint(), 1.2);
   }
+  // the platform's cross slats at the end
+  for (let d = -reach + 0.9; d >= -reach - 0.3; d -= 0.22) taperedTube(b, [at(d, -0.85, deck + 0.05), at(d, 0.85, deck + 0.05)], [0.035, 0.035], 4, tint(), 1.2);
 }
 
-function addHut(walls: MeshBuilder, roof: MeshBuilder, h: HutPlan, rng: Rng): void {
-  const base = new Matrix4().compose(new Vector3(h.x, h.y, h.z), new Quaternion().setFromEuler(new Euler(0, h.ry, 0)), new Vector3(1, 1, 1));
-  const plinthH = 0.55;
-  const wallH = rng.range(2.0, 2.4);
-  const wallTop = plinthH + wallH;
-  walls.add(new BoxGeometry(h.l + 1.3, plinthH + 0.6, h.w + 1.3), placed(base, 0, (plinthH - 0.6) / 2, 0), rgb('#6b5134'));
-  walls.add(new BoxGeometry(h.l + 0.04, 0.55, h.w + 0.04), placed(base, 0, plinthH + 0.27, 0), rgb('#5a4026'));
-  walls.add(new BoxGeometry(h.l, wallH, h.w), placed(base, 0, plinthH + wallH / 2, 0), h.wall);
-  const dark = rgb('#22160d');
-  const doorX = rng.range(-h.l * 0.2, h.l * 0.2);
-  walls.add(new BoxGeometry(0.95, 1.65, 0.08), placed(base, doorX, plinthH + 0.83, h.w / 2 + 0.01), dark);
-  for (const wx of [doorX - 1.6, doorX + 1.6]) {
-    if (Math.abs(wx) < h.l / 2 - 0.6) walls.add(new BoxGeometry(0.55, 0.5, 0.08), placed(base, wx, plinthH + 1.35, h.w / 2 + 0.01), dark);
-  }
-  const thatch = h.roof === 'thatch';
-  const rise = thatch ? 1.7 : 1.05;
-  const over = thatch ? 0.65 : 0.45;
-  const droop = thatch ? 0.38 : 0.06;
-  chalaRoof(roof, base, h.l, h.w, wallTop, rise, over, droop);
-  gable(walls, base, h.l, h.w, wallTop, ridgeHeight(h.l, h.w, wallTop, rise, over, droop, h.l / 2) - 0.05, h.wall);
-}
-
-function haystack(b: MeshBuilder, x: number, z: number, rng: Rng, poles: MeshBuilder): void {
-  const y = terrainHeight(x, z) - 0.1;
-  const r = rng.range(1.3, 1.9);
-  const hgt = rng.range(2.8, 3.6);
-  const profile = [
-    new Vector2(0.01, 0),
-    new Vector2(r, 0),
-    new Vector2(r * 1.08, hgt * 0.25),
-    new Vector2(r * 0.95, hgt * 0.55),
-    new Vector2(r * 0.6, hgt * 0.82),
-    new Vector2(r * 0.2, hgt * 0.97),
-    new Vector2(0.01, hgt),
-  ];
-  b.add(new LatheGeometry(profile, 14), new Matrix4().makeTranslation(x, y, z));
-  poles.add(new CylinderGeometry(0.05, 0.06, 1.4, 5), new Matrix4().makeTranslation(x, y + hgt + 0.4, z), rgb('#6a5a3e'));
-}
-
-/** Brick steps down to the water. */
-function ghat(b: MeshBuilder, z: number, side: 1 | -1): void {
-  const we = edgeHalfWidth(z, side);
-  const [dx, dz] = downstream(z);
-  const along = Math.atan2(-dz, dx);
-  const top = landLevel(riverX(z) + side * (we + 22), z);
-  const steps = 9;
-  for (let i = 0; i < steps; i++) {
-    const t = i / (steps - 1);
-    const u = we + 18 - t * 17;
-    const y = top - t * (top + 0.7);
-    const x = riverX(z) + side * u;
-    const m = new Matrix4().compose(new Vector3(x, y - 0.6, z), new Quaternion().setFromEuler(new Euler(0, along, 0)), new Vector3(1, 1, 1));
-    b.add(new BoxGeometry(4.2, 1.2, 2.4), m, i % 2 ? rgb('#8a4a32') : rgb('#7c4230'));
-  }
-}
+// ---------- the boats tied up ----------
 
 const SMALL_BOAT: HullShape = { len: 6, beam: 0.62, keelMid: -0.2, keelRise: 0.6, sheerMid: 0.32, sheerRise: 0.7 };
+/** The zamindar house's own boat: longer and broader, her strake painted. */
+const ZAMINDAR_BOAT: HullShape = { len: 7.6, beam: 0.8, keelMid: -0.26, keelRise: 0.75, sheerMid: 0.42, sheerRise: 0.95 };
 
-/** Where each boat tied up in the `afloat` builder lies: its vertices, and its middle (for the waves under it). */
+/**
+ * A boat tied up in the `afloat` builder: her vertices; her middle (the waves under it) and the height below
+ * which she sits on the mud (the bed under her keel: in the dry months the water draws back from the banks and
+ * leaves the boats tied close in aground); her stem, where her line is made fast and about which she swings on
+ * it; and her line's vertices, from the post it is tied to (fixed) to her stem (riding with her).
+ */
 interface Mooring {
   from: number;
   to: number;
   x: number;
   z: number;
+  aground: number;
+  stem: { x: number; z: number };
+  line: { from: number; to: number; post: { x: number; z: number } };
 }
 
-/** Adds a moored boat's hull to `b` and notes where it lies. */
-function moor(b: MeshBuilder, moorings: Mooring[], hull: MeshBuilder, m: Matrix4): void {
-  const from = b.vertexCount;
-  b.add(hull.build(), m, rgb('#3a2c20'));
-  moorings.push({ from, to: b.vertexCount, x: m.elements[12], z: m.elements[14] });
+/** A post a boat's line is tied to: where it is planted, its top and the height the line is made fast at (m), its radius. */
+interface Post {
+  x: number;
+  z: number;
+  top: number;
+  tie: number;
+  r: number;
+  color: RGB;
 }
 
-function mooredBoat(b: MeshBuilder, moorings: Mooring[], z: number, side: 1 | -1, rng: Rng): void {
-  const hull = new MeshBuilder();
-  buildHull(hull, SMALL_BOAT, { tar: rgb('#2a2018'), top: rgb('#5a4a38') });
-  const [dx, dz] = downstream(z);
-  const along = Math.atan2(dx, dz);
-  const x = riverX(z) + side * (edgeHalfWidth(z, side) + rng.range(-1, 1.5));
+/** How far a moored boat's keel lies under the water (m). */
+const MOORED_DRAFT = 0.15;
+/** Her line: hemp, hanging this slack between the post and her stem (m for each m of it). */
+const LINE: RGB = rgb('#8c7a56');
+const SLACK = 0.06;
+
+/**
+ * A boat lying at (x, z) along `heading`, tied up to `post`: a thwart or two across her and a bamboo pole along
+ * her, her line from her stem (whichever end lies toward the post) to the post's top, the post planted in the
+ * bank or the shallows (into `posts`, which stay put).
+ */
+function tieUp(afloat: MeshBuilder, posts: MeshBuilder, moorings: Mooring[], shape: HullShape, colors: { tar: RGB; top: RGB; band?: RGB }, x: number, z: number, heading: number, post: Post, rng: Rng): void {
+  // her stem toward her post
+  if (Math.sin(heading) * (post.x - x) + Math.cos(heading) * (post.z - z) < 0) heading += Math.PI;
+  const boat = new MeshBuilder();
+  buildHull(boat, shape, colors);
+  const plank = scaleRgb(colors.top, 1.15);
+  let rest = 0;
+  for (const s of [0.32, 0.5, 0.68]) {
+    const y = hullStation(shape, s).sheer - 0.09;
+    const half = hullHalfWidthAt(shape, s, y) - 0.01;
+    slab(boat, 0, y, (s - 0.5) * shape.len, half * 2, 0.035, 0.2, 0, plank, 1);
+    rest = Math.max(rest, y + 0.04);
+  }
+  taperedTube(boat, [new Vector3(0.14, rest, -shape.len * 0.36), new Vector3(-0.08, rest + 0.02, shape.len * 0.38)], [0.028, 0.022], 5, rgb('#a39469'), 1.2);
+  const stem = new Vector3(0, hullStation(shape, 0.95).sheer - 0.14, 0.45 * shape.len);
+  // her frame: her keel MOORED_DRAFT under the water's surface (as the vertex shader lifts her onto it), lying a little untrue
   const m = new Matrix4().compose(
-    new Vector3(x, 0.05, z),
-    new Quaternion().setFromEuler(new Euler(rng.range(-0.04, 0.04), along + rng.range(-0.4, 0.4), side * rng.range(0.03, 0.09))),
+    new Vector3(x, -MOORED_DRAFT - shape.keelMid, z),
+    new Quaternion().setFromEuler(new Euler(rng.range(-0.03, 0.03), heading, rng.range(-0.04, 0.04), 'YXZ')),
     new Vector3(1, 1, 1),
   );
-  moor(b, moorings, hull, m);
+  const from = afloat.vertexCount;
+  afloat.add(boat.build(), m, 'own');
+  const to = afloat.vertexCount;
+  stem.applyMatrix4(m);
+  // the post, planted deep, leaning a little
+  const ground = terrainHeight(post.x, post.z);
+  const lean = { x: rng.range(-0.06, 0.06), z: rng.range(-0.06, 0.06) };
+  taperedTube(posts, [new Vector3(post.x, ground - 0.6, post.z), new Vector3(post.x + lean.x, post.top, post.z + lean.z)], [post.r, post.r * 0.85], 6, post.color, 1.2);
+  // the line, from the post (where it stays) to her stem (riding with her as she lifts on the water: the shader
+  // lifts each of its points by its share of the way to her), hanging slack between
+  const k = (post.tie - ground + 0.6) / (post.top - ground + 0.6);
+  const tie = new Vector3(post.x + lean.x * k, post.tie, post.z + lean.z * k);
+  const length = Math.hypot(stem.x - tie.x, stem.z - tie.z) + 0.5;
+  const pts: Vector3[] = [];
+  for (let i = 0; i <= 8; i++) {
+    const t = i / 8;
+    pts.push(new Vector3(tie.x + (stem.x - tie.x) * t, tie.y + (stem.y - tie.y) * t - SLACK * length * 4 * t * (1 - t), tie.z + (stem.z - tie.z) * t));
+  }
+  const lineFrom = afloat.vertexCount;
+  taperedTube(afloat, pts, pts.map(() => 0.013), 5, LINE, 0.3);
+  // and its turns round the post
+  for (let i = 0; i < 3; i++) taperedTube(posts, ring(new Vector3(tie.x, tie.y - 0.05 + i * 0.035, tie.z), post.r + 0.012), Array(9).fill(0.012), 4, LINE, 0.3);
+  moorings.push({ from, to, x, z, aground: terrainHeight(x, z) + MOORED_DRAFT - 0.03, stem: { x: stem.x, z: stem.z }, line: { from: lineFrom, to: afloat.vertexCount, post: { x: tie.x, z: tie.z } } });
 }
 
-/** A row of bamboo stakes in the shallows with a net strung between them. */
-function stakeRow(wood: MeshBuilder, net: MeshBuilder, start: Vector3, dir: Vector3, count: number, rng: Rng): void {
-  const tops: Vector3[] = [];
-  for (let i = 0; i < count; i++) {
-    const p = start.clone().addScaledVector(dir, i * 2.6);
-    const h = rng.range(2.6, 4.2);
-    const lean = new Vector3(rng.range(-0.15, 0.15), 0, rng.range(-0.15, 0.15));
-    const top = p.clone().add(new Vector3(0, h, 0)).add(lean);
-    taperedTube(wood, [p.clone().setY(-2), top], [0.06, 0.04], 5, rgb('#7a6c48'));
-    tops.push(top);
-  }
-  const s = net.vertexCount;
-  const n = new Vector3().crossVectors(dir, new Vector3(0, 1, 0)).normalize();
-  tops.forEach((t, i) => {
-    net.vertex(new Vector3(t.x, -0.6, t.z), n, i * 1.7, 0);
-    net.vertex(new Vector3(t.x, 1.4, t.z), n, i * 1.7, 1.3);
-  });
-  for (let i = 0; i < tops.length - 1; i++) net.quad(s + i * 2, s + i * 2 + 2, s + i * 2 + 3, s + i * 2 + 1);
+/** Points round a level circle (a rope's turn round a post). */
+function ring(c: Vector3, r: number): Vector3[] {
+  return Array.from({ length: 9 }, (_, i) => new Vector3(c.x + Math.cos((i / 8) * Math.PI * 2) * r, c.y, c.z + Math.sin((i / 8) * Math.PI * 2) * r));
+}
+
+/** A small boat tied up beside a ghat, along the bank, close in (the water's middle stays open), her line to a bamboo stake on the bank. */
+function mooredBoat(afloat: MeshBuilder, posts: MeshBuilder, moorings: Mooring[], g: Ghat, rng: Rng): void {
+  const away = rng.sign();
+  const s = g.s + away * rng.range(5, 7);
+  const p = g.way.at(s);
+  const e = g.way.beside(s, g.side, g.way.half(s) - 2.4);
+  // the stake on the bank by her end toward the ghat
+  const st = g.way.beside(s - away * (SMALL_BOAT.len / 2 + 0.4), g.side, g.way.half(s) + 0.7);
+  const ground = terrainHeight(st.x, st.z);
+  const post: Post = { x: st.x, z: st.z, top: ground + 1.1, tie: ground + 0.7, r: 0.035, color: rgb('#a39469') };
+  tieUp(afloat, posts, moorings, SMALL_BOAT, { tar: rgb('#2a2018'), top: rgb('#5a4a38') }, e.x, e.z, p.heading + rng.range(-0.12, 0.12), post, rng);
+}
+
+/**
+ * The zamindar house's boat: alongside the bank just downstream of the grand ghat, lying to the current on her
+ * line, her stem upstream to a sal post in the shallows by the ghat's wall.
+ */
+function zamindarBoat(afloat: MeshBuilder, posts: MeshBuilder, moorings: Mooring[], rng: Rng): void {
+  const gg = grandGhat();
+  const b = gg ? bankAt(gg.site.x, gg.site.z) : null;
+  if (!gg || !b) return;
+  const down = Math.sign(b.way.current) || 1;
+  const s = b.s + down * (gg.half + 1.4 + ZAMINDAR_BOAT.len / 2);
+  const e = b.way.beside(s, b.side, b.way.half(s) - 2.3);
+  const at = b.way.beside(b.s + down * (gg.half + 0.45), b.side, b.way.half(b.s) - 0.5);
+  const post: Post = { x: at.x, z: at.z, top: WATER_LEVEL + 1.75, tie: WATER_LEVEL + 1.15, r: 0.075, color: rgb('#4e3e2c') };
+  tieUp(afloat, posts, moorings, ZAMINDAR_BOAT, { tar: rgb('#2a2018'), top: rgb('#6b5842'), band: rgb('#3e6474') }, e.x, e.z, b.way.at(s).heading, post, rng);
 }
 
 // ---------- assembly ----------
 
-export function buildVillages(huts: readonly HutPlan[]): Group {
+export function buildVillages(huts: readonly HutPlan[], ghats: readonly Ghat[]): Group {
   const rng = new Rng(33);
-  const walls = new MeshBuilder();
-  const thatchRoofs = new MeshBuilder();
-  const tinRoofs = new MeshBuilder();
-  const wood = new MeshBuilder();
-  /** Boats tied up at the banks and in the khals: they ride the season's water and its waves. */
+  const parts: HouseParts = { mud: new MeshBuilder(), wood: new MeshBuilder(), thatch: new MeshBuilder(), tin: new MeshBuilder(), mat: new MeshBuilder() };
+  const bricks = new MeshBuilder();
+  const bamboo = new MeshBuilder();
+  const hay = new MeshBuilder();
+  /** Boats tied up at the ghats: they ride the water and its ripples. */
   const afloat = new MeshBuilder();
   const moorings: Mooring[] = [];
-  const hay = new MeshBuilder();
-  const nets = new MeshBuilder();
 
-  for (const h of huts) addHut(walls, h.roof === 'thatch' ? thatchRoofs : tinRoofs, h, rng);
+  for (const h of huts) buildHouse(parts, h.x, h.y, h.z, h.ry, h.l, h.w, h.style, rng);
 
-  VILLAGES.forEach((v, i) => {
-    const c = VILLAGE_CENTERS[i];
-    for (let k = 0; k < 3; k++) {
-      const a = rng.range(0, Math.PI * 2);
-      const x = c.x + Math.cos(a) * v.radius * 0.55;
-      const z = c.z + Math.sin(a) * v.radius * 0.55;
-      if (bankInfo(x, z).inland > 10 && !nearBackwater(x, z, 6) && !huts.some((h) => Math.hypot(h.x - x, h.z - z) < 7)) haystack(hay, x, z, rng, wood);
+  // a haystack or two by most homesteads, at the foot of the mound's back corner, clear of the houses, the ways and the water
+  for (const m of HOMESTEAD_MOUNDS) {
+    if (rng.next() < 0.25) continue;
+    const stacks = rng.next() < 0.4 ? 2 : 1;
+    for (let n = 0, k = 0; n < stacks && k < 8; k++) {
+      const p = shapePoint(m, -m.hu * rng.range(0.2, 0.8), rng.sign() * (m.hv + rng.range(1.5, 4)));
+      if (nearBackwater(p.x, p.z, 6) || onRoad(p.x, p.z, 2.5) || huts.some((o) => Math.hypot(o.x - p.x, o.z - p.z) < 6)) continue;
+      haystack(hay, parts.wood, p.x, terrainHeight(p.x, p.z) - 0.1, p.z, rng);
+      n++;
     }
-    ghat(walls, GHATS[i].z, v.side);
-    mooredBoat(afloat, moorings, v.z + v.radius * 0.3 + 6, v.side, rng);
-    if (i % 2 === 0) mooredBoat(afloat, moorings, v.z - v.radius * 0.4, v.side, rng);
-  });
-
-  // a dinghy tied up in each khal, against one bank
-  KHALS.forEach((_, k) => {
-    const c = khalPoint(k, rng.range(0.25, 0.5));
-    const side = rng.sign();
-    const off = Math.max(0, c.halfWidth - 1.1);
-    const hull = new MeshBuilder();
-    buildHull(hull, SMALL_BOAT, { tar: rgb('#2a2018'), top: rgb('#5a4a38') });
-    const m = new Matrix4().compose(
-      new Vector3(c.x + Math.cos(c.heading) * side * off, 0.05, c.z - Math.sin(c.heading) * side * off),
-      new Quaternion().setFromEuler(new Euler(rng.range(-0.03, 0.03), c.heading + rng.range(-0.15, 0.15), side * rng.range(0.02, 0.06))),
-      new Vector3(1, 1, 1),
-    );
-    moor(afloat, moorings, hull, m);
-  });
-
-  for (const ch of CHARS) {
-    const z = ch.z + ch.halfLen * 0.75;
-    const x = riverX(z) + ch.u + Math.sign(ch.u) * (ch.halfWid * 0.4);
-    const [dx, dz] = downstream(z);
-    stakeRow(wood, nets, new Vector3(x, 0, z), new Vector3(dx, 0, dz), rng.int(9, 14), rng);
   }
+  // the ghats, a boat tied up at every other one and a second at the village's
+  ghats.forEach((g, i) => {
+    if (g.kind === 'brick') brickGhat(bricks, g, rng, WATER_LEVEL, WATER_LEVEL - LOW_WATER, i === 0 ? 5 : 2.4, 8, i === 0);
+    else bambooGhat(bamboo, g, rng);
+    if (i % 2 === 0) mooredBoat(afloat, bamboo, moorings, g, rng);
+    if (i === 0) mooredBoat(afloat, bamboo, moorings, g, rng);
+  });
+  zamindarBoat(afloat, bamboo, moorings, rng);
+
+  // the ponds' ghats
+  // (the mosque's pond has its own, built with the mosque: landmarks.ts mosqueGhat)
+  for (const pond of PONDS) if (pond.ghat && !pond.kept) pondGhat(bricks, pond, pond.ghat, rng);
 
   const group = new Group();
   group.name = 'villages';
-  const wallMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.95 }), { grime: 0.45 });
-  const thatchMat = patchMaterial(new MeshStandardMaterial({ map: strawTexture(41), roughness: 0.95, side: DoubleSide }), {
-    grime: 0.3,
-    translucency: 0.35,
-  });
-  const tinMat = patchMaterial(
-    new MeshStandardMaterial({ map: tinTexture(42), roughness: 0.48, metalness: 0.55, side: DoubleSide }),
-    { grime: 0.2 },
-  );
-  const woodMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), { grime: 0.35 });
-  const hayMat = patchMaterial(new MeshStandardMaterial({ map: strawTexture(43), roughness: 0.95 }), { grime: 0.25 });
-  const netMat = patchMaterial(
-    new MeshStandardMaterial({ map: netTexture(), alphaTest: 0.35, alphaToCoverage: true, side: DoubleSide, roughness: 0.9 }),
-    {},
-  );
+  const plaster = plasterTexture(44, { fallen: false });
+  const brick = brickTexture(45);
+  const textured = (set: { map: ReturnType<typeof plasterTexture>['map']; normal: ReturnType<typeof plasterTexture>['normal'] }, roughness: number, grime: number) =>
+    patchMaterial(new MeshStandardMaterial({ map: set.map, normalMap: set.normal, normalScale: new Vector2(0.7, 0.7), vertexColors: true, roughness }), { grime });
   const add = (b: MeshBuilder, mat: MeshStandardMaterial, cast = true) => {
     if (!b.vertexCount) return;
     const mesh = new Mesh(b.build(), mat);
@@ -356,35 +374,69 @@ export function buildVillages(huts: readonly HutPlan[]): Group {
     mesh.receiveShadow = true;
     group.add(mesh);
   };
-  add(walls, wallMat);
-  add(thatchRoofs, thatchMat);
-  add(tinRoofs, tinMat);
-  add(wood, woodMat);
-  // moored boats rise and fall with the season's water and ride its waves, each rocking as one piece on
-  // the (sheltered) waves under its middle; when the water drops they settle on the mud by the bank
+  add(parts.mud, textured(plaster, 0.95, 0.4));
+  add(parts.wood, patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.8 }), { grime: 0.35 }));
+  add(parts.thatch, patchMaterial(new MeshStandardMaterial({ map: strawTexture(41), vertexColors: true, roughness: 0.95, side: DoubleSide }), { grime: 0.3, translucency: 0.35 }));
+  // galvanised and painted tin: only a little metallic (with no environment map to reflect, a metal reads black)
+  add(parts.tin, patchMaterial(new MeshStandardMaterial({ map: tinTexture(42), vertexColors: true, roughness: 0.55, metalness: 0.15, side: DoubleSide }), { grime: 0.5 }));
+  add(parts.mat, patchMaterial(new MeshStandardMaterial({ map: weaveTexture(46), vertexColors: true, roughness: 0.9, side: DoubleSide }), { grime: 0.3 }));
+  add(bricks, textured(brick, 0.9, 0.35));
+  // the culms are tubes wound inward (render/builder.ts): drawn from both sides
+  add(bamboo, patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.7, side: DoubleSide }), { grime: 0.45 }));
+  add(hay, patchMaterial(new MeshStandardMaterial({ map: strawTexture(43), vertexColors: true, roughness: 0.95 }), { grime: 0.25 }));
+  // moored boats float on the water, each rocking as one piece on the (sheltered) ripples under its middle and
+  // swinging slowly on her line about her stem; each point of a line rides with her by its share of the way
+  // from its post to her (aMoor.w: 1 on the boat)
   const boats = afloat.build();
-  const middles = new Float32Array(boats.getAttribute('position').count * 2);
-  for (const m of moorings) for (let i = m.from; i < m.to; i++) middles.set([m.x, m.z], i * 2);
-  boats.setAttribute('aMoor', new BufferAttribute(middles, 2));
+  const position = boats.getAttribute('position');
+  const moor = new Float32Array(position.count * 4);
+  const pivot = new Float32Array(position.count * 2);
+  for (const m of moorings) {
+    for (let k = m.from; k < m.to; k++) {
+      moor.set([m.x, m.z, m.aground, 1], k * 4);
+      pivot.set([m.stem.x, m.stem.z], k * 2);
+    }
+    const { post } = m.line;
+    const lx = m.stem.x - post.x;
+    const lz = m.stem.z - post.z;
+    for (let k = m.line.from; k < m.line.to; k++) {
+      const t = Math.min(1, Math.max(0, ((position.getX(k) - post.x) * lx + (position.getZ(k) - post.z) * lz) / (lx * lx + lz * lz)));
+      moor.set([m.x, m.z, m.aground, t], k * 4);
+      pivot.set([m.stem.x, m.stem.z], k * 2);
+    }
+  }
+  boats.setAttribute('aMoor', new BufferAttribute(moor, 4));
+  boats.setAttribute('aPivot', new BufferAttribute(pivot, 2));
   const moored = new Mesh(
     boats,
-    patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), {
+    // (two-sided: her hull's inside is its back face, world/hull.ts)
+    patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85, side: DoubleSide }), {
       grime: 0.35,
       vertex: {
         key: 'moored',
-        pars: `attribute vec2 aMoor;\n${waveHeightGlsl()}\n${waveSlopeGlsl()}\n`,
+        pars: `attribute vec4 aMoor;\nattribute vec2 aPivot;\n${waveHeightGlsl()}\n${waveSlopeGlsl()}\n`,
         code: `{
-  float afloatK = step(-0.25, uWaterLevel);
-  vec2 tilt = waveSlope(aMoor) * ${SHELTERED.toFixed(2)};
-  transformed.y += max(uWaterLevel, -0.25) + afloatK * (waveHeight(aMoor) * ${SHELTERED.toFixed(2)} + dot(tilt, transformed.xz - aMoor));
+  // afloat on the season's water, or aground on the mud where it has drawn back from her; on the waves as the
+  // slack water by the bank is drawn round her (waves.ts surfaceShare: dying out as the bed comes up under her),
+  // with a breath of her own bob so she never lies dead still
+  float moorPhase = dot(aMoor.xy, vec2(0.37, 0.61));
+  float still = ${WATER_LEVEL.toFixed(2)} + uWaterRise;
+  float share = ${(SHELTERED * INLAND).toFixed(4)} * smoothstep(0.0, ${SHOAL_DEPTH.toFixed(2)}, still - aMoor.z + ${(MOORED_DRAFT - 0.03).toFixed(2)});
+  float afloat = still + waveHeight(aMoor.xy) * share + 0.005 * sin(uTime * 0.9 + moorPhase);
+  float lifted = smoothstep(aMoor.z, aMoor.z + 0.08, afloat);
+  vec2 tilt = waveSlope(aMoor.xy) * share * lifted;
+  // she swings slowly on her line about her stem, the more as the wind blows; aground, she lies still
+  float swing = (0.035 * sin(uTime * 0.16 + moorPhase) + 0.015 * sin(uTime * 0.43 + moorPhase * 1.7)) * (0.6 + 0.5 * uWind.z) * lifted * aMoor.w;
+  vec2 fromStem = transformed.xz - aPivot;
+  transformed.xz = aPivot + vec2(cos(swing) * fromStem.x + sin(swing) * fromStem.y, cos(swing) * fromStem.y - sin(swing) * fromStem.x);
+  transformed.y += aMoor.w * (max(afloat, aMoor.z) + dot(tilt, transformed.xz - aMoor.xy));
 }`,
       },
     }),
   );
-  moored.castShadow = true;
+  // (no shadow: the shadow pass would draw the hulls where they are built, not lifted onto the water, and things
+  // that move cast none, the shadow map not being redrawn every frame)
   moored.receiveShadow = true;
   group.add(moored);
-  add(hay, hayMat);
-  add(nets, netMat, false);
   return group;
 }

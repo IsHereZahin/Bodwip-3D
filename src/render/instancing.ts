@@ -1,5 +1,20 @@
 import { Euler, Group, InstancedMesh, Matrix4, Quaternion, Vector3 } from 'three';
-import type { BufferGeometry, Material } from 'three';
+import type { BufferAttribute, BufferGeometry, Material } from 'three';
+
+/**
+ * Sends the first `count` instances of these attributes (an instanced mesh's matrices, colours, …) up to the GPU,
+ * and nothing past them: flagged whole, three sends every slot (the fallen petals' 26000 matrices, ≈2 MB, for a
+ * handful in use). Nothing goes up while there are none: none is drawn.
+ */
+export function sendFirst(count: number, ...attributes: (BufferAttribute | null)[]): void {
+  if (count <= 0) return;
+  for (const a of attributes) {
+    if (!a) continue;
+    a.clearUpdateRanges();
+    a.addUpdateRange(0, count * a.itemSize);
+    a.needsUpdate = true;
+  }
+}
 
 export interface Placement {
   x: number;

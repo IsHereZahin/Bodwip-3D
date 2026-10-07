@@ -52,3 +52,25 @@ export function periodicNoise(x: number, y: number, period: number, seed = 0): n
   const y1 = wrap(iy + 1);
   return blend(hash(x0, y0, seed), hash(x1, y0, seed), hash(x0, y1, seed), hash(x1, y1, seed), x - ix, y - iy);
 }
+
+/** fract(x), as GLSL has it. */
+const fract = (x: number) => x - Math.floor(x);
+
+/** The CPU twin of glsl.ts `hash12`: what a shader's hash gives at (x, y), for placing things where it paints them. */
+export function glslHash12(x: number, y: number): number {
+  let px = fract(x * 0.1031);
+  let py = fract(y * 0.1031);
+  let pz = fract(x * 0.1031);
+  const d = px * (py + 33.33) + py * (pz + 33.33) + pz * (px + 33.33);
+  px += d;
+  py += d;
+  pz += d;
+  return fract((px + py) * pz);
+}
+
+/** The CPU twin of glsl.ts `vnoise`. */
+export function glslNoise(x: number, y: number): number {
+  const ix = Math.floor(x);
+  const iy = Math.floor(y);
+  return blend(glslHash12(ix, iy), glslHash12(ix + 1, iy), glslHash12(ix, iy + 1), glslHash12(ix + 1, iy + 1), x - ix, y - iy);
+}
