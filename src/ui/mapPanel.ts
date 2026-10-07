@@ -105,13 +105,6 @@ export class MapPanel {
   private readonly dialog: HTMLDialogElement;
   private readonly base: HTMLCanvasElement;
   private readonly view: HTMLCanvasElement;
-  /**
-   * The map under the boat (its ground, its lines and words, its places' badges), drawn again only when it changes:
-   * as its ground is painted, a place is picked out, or a font comes. Drawn whole every frame, its badges' shadows
-   * and its ways cost a weak device the map's own pace.
-   */
-  private readonly under = document.createElement('canvas');
-  private underKey = '';
   private readonly tip: HTMLElement;
   private readonly spots: { spot: MapSpot; card: HTMLButtonElement; path: Path2D }[] = [];
   private readonly actions: MapActions;
@@ -158,8 +151,8 @@ export class MapPanel {
     this.base.width = Math.round((WORLD.x1 - WORLD.x0) / M);
     this.base.height = Math.round((WORLD.z1 - WORLD.z0) / M);
     this.view = d.querySelector('.map-view') as HTMLCanvasElement;
-    this.view.width = this.under.width = this.base.width * FINE;
-    this.view.height = this.under.height = this.base.height * FINE;
+    this.view.width = this.base.width * FINE;
+    this.view.height = this.base.height * FINE;
     this.tip = d.querySelector('.map-tip') as HTMLElement;
 
     // the list: the places by where they are, each a card with its sign, its name and a line about it
@@ -392,47 +385,9 @@ export class MapPanel {
     if (this.painted < this.base.height || !this.image) this.paint();
     const ctx = this.view.getContext('2d');
     if (!ctx) return;
-    const key = `${this.painted}|${this.hovered}|${document.fonts.status}`;
-    if (key !== this.underKey) {
-      this.underKey = key;
-      this.drawUnder();
-    }
-    ctx.drawImage(this.under, 0, 0);
-    // the boat: a small boat on her course, a slow ring round her (round-jointed, as over the finished map's lines)
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    const [bx, by] = toMap(boatX, boatZ);
-    const pulse = (time % 2.4) / 2.4;
-    ctx.strokeStyle = `rgba(255, 210, 122, ${0.75 * (1 - pulse)})`;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(bx, by, 8 + 16 * pulse, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.save();
-    ctx.translate(bx, by);
-    ctx.rotate(Math.atan2(-Math.cos(course), -Math.sin(course)));
-    ctx.fillStyle = '#ffd27a';
-    ctx.strokeStyle = '#2a1c10';
-    ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    ctx.moveTo(13, 0);
-    ctx.quadraticCurveTo(4, 6, -11, 4);
-    ctx.lineTo(-13, 0);
-    ctx.lineTo(-11, -4);
-    ctx.quadraticCurveTo(4, -6, 13, 0);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  /** The map under the boat: its ground, its lines and words once the ground is all in, and the places' badges. */
-  private drawUnder(): void {
-    const ctx = this.under.getContext('2d');
-    if (!ctx) return;
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(this.base, 0, 0, this.under.width, this.under.height);
+    ctx.drawImage(this.base, 0, 0, this.view.width, this.view.height);
     if (this.painted >= this.base.height) this.drawLines(ctx);
     // the places: a badge each, in its group's colour, its sign in it; the one picked out larger, ringed in gold
     this.spots.forEach((s, i) => {
@@ -461,5 +416,29 @@ export class MapPanel {
       ctx.fill(s.path);
       ctx.restore();
     });
+    // the boat: a small boat on her course, a slow ring round her
+    const [bx, by] = toMap(boatX, boatZ);
+    const pulse = (time % 2.4) / 2.4;
+    ctx.strokeStyle = `rgba(255, 210, 122, ${0.75 * (1 - pulse)})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(bx, by, 8 + 16 * pulse, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.rotate(Math.atan2(-Math.cos(course), -Math.sin(course)));
+    ctx.fillStyle = '#ffd27a';
+    ctx.strokeStyle = '#2a1c10';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(13, 0);
+    ctx.quadraticCurveTo(4, 6, -11, 4);
+    ctx.lineTo(-13, 0);
+    ctx.lineTo(-11, -4);
+    ctx.quadraticCurveTo(4, -6, 13, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
   }
 }

@@ -82,8 +82,6 @@ const MIST = new Color(0.8, 0.72, 0.6);
 const DEBUG = new URLSearchParams(location.search).has('debug');
 /** How far a press on the film must move (CSS pixels) to be a drag that takes the camera, not a tap. */
 const DRAG_PX = 8;
-/** The map's sheet is at most 1240 px wide (ui/map.css): a screen this wide or narrower (CSS px) is covered but for its margins. */
-const MAP_COVERS = 1280;
 /** Where the viewer's choice to mute the sound is remembered. */
 const MUTED_KEY = 'nodi.muted';
 /** The cinematic morning's first minutes stay clear whatever the season (s); then its weather comes. */
@@ -108,9 +106,9 @@ const WATCH_IDLE_MS = 12000;
 /** Milliseconds a frame may spend building the film's next shot ahead of it. */
 const WARM_MS = 3;
 /**
- * Milliseconds the cut's own frame may spend on the ground along the shot coming in, its grass and its crops (past
- * where it opens): past it they are built by their own updates over the next frames (nearest and ahead first,
- * growing in as the shot dissolves in) rather than stalling the cut.
+ * Milliseconds the cut's own frame may spend on the grass and the crops the shot coming in still lacks: past it
+ * they are built by their own updates over the next frames (nearest and ahead first, growing in as the shot
+ * dissolves in) rather than stalling the cut.
  */
 const PREPARE_MS = 30;
 
@@ -118,16 +116,12 @@ const PREPARE_MS = 30;
 const nextTask = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 /**
- * A group that never moves once built (the trees, the houses, the landmarks): its matrices are made once and none
- * is remade. (three's frame walk still visits each node, but one that neither remakes its own matrix nor is forced
- * by a parent remaking its own costs only the visit; with `matrixAutoUpdate` on, all of them were remade every
- * frame.) Nothing in it may be moved afterwards: it would stand where it was.
+ * A group that never moves once built (the trees, the houses, the landmarks): its matrices are made once, and
+ * the frame's matrix update passes over it (thousands of objects otherwise remade every pass).
  */
 const still = <T extends Object3D>(group: T): T => {
   group.updateMatrixWorld(true);
-  group.traverse((o) => {
-    o.matrixAutoUpdate = false;
-  });
+  group.matrixWorldAutoUpdate = false;
   return group;
 };
 
@@ -480,13 +474,9 @@ async function main(hud: Hud): Promise<void> {
     },
     prepare: (points) => {
       // only what is missing, and nothing uploaded: the camera's own update shows it (the film is moving). The
-      // ground where the shot opens all at once; for a moment the ground along the rest of its way, the grass and
-      // the crops, from where it opens. What is left is built by their own updates over the next frames, under the
-      // dissolve (a coarser patch standing in for one not built yet, the grass and crops growing in): a skip or a
-      // map place's first shot, which nothing was built ahead for, built the whole way at once and stalled
-      terrain.warm(points[0], Infinity);
+      // ground all at once; the grass and the crops for a moment, from where the shot opens
+      for (const p of points) terrain.warm(p, Infinity);
       const until = performance.now() + PREPARE_MS;
-      for (const p of points) terrain.warm(p, until);
       for (const p of points) {
         meadow.warm(p, until);
         crops.warm(p, until);
@@ -656,7 +646,7 @@ async function main(hud: Hud): Promise<void> {
   const leastScale = () => (densest() >= 1.5 ? ADAPT.leastDense : ADAPT.least);
   /** The GPU's milliseconds for a frame the calibration at load aims under (it leaves room for the CPU's part). */
   const GPU_AIM = 14;
-  const perf = { scale: 1, acc: 0, cpu: 0, n: 0, frames: 0, cool: 0, locked: false, ms: 16, driftMs: 0, under: 0 };
+  const perf = { scale: 1, acc: 0, cpu: 0, n: 0, frames: 0, cool: 0, locked: false, ms: 16, driftMs: 0 };
   const resize = () => {
     const w = Math.max(1, innerWidth);
     const h = Math.max(1, innerHeight);
@@ -1441,22 +1431,6 @@ async function main(hud: Hud): Promise<void> {
     }
   }
 
-  // a phone's (or a tablet's) screen that refreshes 110 times a second or more is drawn for at every other refresh:
-  // 60 a second, evenly. Drawn for at its full rate it would only heat until it slowed, and slowed unevenly
-  const everyOther =
-    matchMedia('(pointer: coarse)').matches &&
-    (await new Promise<number>((resolve) => {
-      // its refresh: the middle of a dozen frames' intervals (or 60 Hz in a hidden tab, whose frames do not come)
-      const times: number[] = [];
-      const tick = (time: number) => {
-        times.push(time);
-        if (times.length < 13) requestAnimationFrame(tick);
-        else resolve(times.slice(1).map((v, i) => v - times[i]).sort((a, b) => a - b)[6]);
-      };
-      requestAnimationFrame(tick);
-      setTimeout(() => resolve(1000 / 60), 1000);
-    })) < 1000 / 110;
-  let skipped = false;
   /** A new size the adaptive resolution has chosen, taken up just before the next frame is drawn. */
   let resizeDue = false;
 
@@ -1469,8 +1443,6 @@ async function main(hud: Hud): Promise<void> {
     if (!document.hidden) away = true;
   });
   const frame = () => {
-    // (on such a screen, every other refresh passes undrawn)
-    if (everyOther && (skipped = !skipped)) return;
     renderer.info.reset();
     const now = performance.now();
     const raw = Math.max(0, (now - last) / 1000);
@@ -1497,29 +1469,22 @@ async function main(hud: Hud): Promise<void> {
     const loop = rig.mode === 'follow' || director.active ? rig.fade : 0;
     // a dissolve: the shot being left, still moving in its own world, drawn first for this one to melt over
     const leaving = director.leaving;
-    // under the map where it covers nearly the whole screen (a phone's, a laptop's), the world is drawn a frame in
-    // three: what shows at its edges is dimmed under it and still moves, and on a weak device the map keeps its own
-    // pace. The world goes on every frame (step); on a wide screen, where it shows beside the map, it is drawn whole
-    const underMap = map.isOpen && innerWidth <= MAP_COVERS;
-    perf.under = underMap ? perf.under + 1 : 0;
-    if (!underMap || perf.under % 3 === 1) {
-      // (a canvas resized after a frame is drawn goes out blank for that frame: a flash of the page behind it)
-      if (resizeDue) {
-        resizeDue = false;
-        resize();
-      }
-      if (leaving) drawLeaving(leaving);
-      updateCulling(camera.position);
-      pipeline.render(renderer, scene, camera, {
-        exposure: env.exposure,
-        fade: Math.max(cut, loop),
-        fadeColor: loop > cut ? MIST : BLACK,
-        night: env.night,
-        letterbox: Math.max(director.letterbox, rig.openingBars),
-        dissolve: leaving ? director.dissolve : 0,
-        dof: director.active ? director.dof : undefined,
-      });
+    // (a canvas resized after a frame is drawn goes out blank for that frame: a flash of the page behind it)
+    if (resizeDue) {
+      resizeDue = false;
+      resize();
     }
+    if (leaving) drawLeaving(leaving);
+    updateCulling(camera.position);
+    pipeline.render(renderer, scene, camera, {
+      exposure: env.exposure,
+      fade: Math.max(cut, loop),
+      fadeColor: loop > cut ? MIST : BLACK,
+      night: env.night,
+      letterbox: Math.max(director.letterbox, rig.openingBars),
+      dissolve: leaving ? director.dissolve : 0,
+      dof: director.active ? director.dof : undefined,
+    });
     hud.setCaption(director.caption, director.captionAlpha, pipeline.bar);
     // the opening flight has come down to the boat: the hint to the controls
     if (wasFlying && !rig.flying) hud.hintNow();
@@ -1530,11 +1495,11 @@ async function main(hud: Hud): Promise<void> {
 
     // adaptive resolution: hold ~45–60 fps by trading pixels (ADAPT)
     perf.frames++;
-    // (not through a dissolve, which draws two shots a frame for a moment, nor under the map; the first frames settle in)
+    // (not through a dissolve, which draws two shots a frame for a moment; the first frames settle in)
     if (away) {
       away = false;
       perf.acc = perf.cpu = perf.n = 0;
-    } else if (perf.frames > 10 && !perf.locked && !document.hidden && !leaving && !underMap) {
+    } else if (perf.frames > 10 && !perf.locked && !document.hidden && !leaving) {
       perf.acc += Math.min(raw, ADAPT.longest);
       perf.cpu += (performance.now() - now) / 1000;
       if (++perf.n >= (perf.frames < ADAPT.quickFor ? ADAPT.quick : ADAPT.steady)) {

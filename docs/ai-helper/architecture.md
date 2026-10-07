@@ -74,7 +74,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - The waters' level map runs `EDGE_MARGIN` (glsl.ts) past the edges, so the river goes on into the haze.
 - `world/terrain.ts`: `Terrain`, the ground as quadtree patches round the camera.
   - Patches are 64 × 64 quads, with 128 m leaves, split nearer than 1.5 sizes, and skirts wound outward.
-  - It spends a few ms a frame building (`BUDGET_MS`), with the nearest built ancestor standing in until a patch is ready. A patch is built a row at a time (`PatchRows`: a row of heights, then a row of vertices), so a frame can stop between rows and go on in the next; one begun but no longer asked for is let go after `ABANDON` frames. `update(eye, true)` builds everything, for stills; `warm(eye, until)` builds ahead until a deadline (the load's `prepare`, main.ts).
+  - It spends a few ms a frame building (`BUDGET_MS`), with the nearest built ancestor standing in until a patch is ready. `update(eye, true)` builds everything, for stills; `warm(eye, until)` builds ahead.
   - Colour and layer weights per vertex come from `landUse` (`LOOK` per kind of ground), the beds under water, the wet mud up a bank from `shoreLevel`, and trodden earth along the ways.
   - A yard is drawn with the fine sand layer's grain under its clay colour.
   - It also exports `groundAt(x, z)`/`Cover` (`bare` marks a swept yard or a way's trodden ground, where the meadow grows nothing) and `groundLattice` for the chunked builders.
@@ -158,11 +158,11 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - The plants reach out to `CROP_REACH.fade`/`edge` (≈30–37 m). Heads are shown near (chunks nearer than `SWITCH`) and fade first (`HEADS_OUT`). A chunk changing level is shown by its twin until it is built (`twin`).
   - Canopy cards alone carry on out to `CROP_REACH.canopy` (100 m). Only these two representations exist.
   - Late chunks grow up out of the ground (`aBorn`, `GROW`). Chunks ahead are built first within `BUILD_MS`, and `warm(view, until)` builds them out of sight.
-  - Each patch works out its plot's crop in the vertex shader (`plotFrame`/`plotRank`/`cropShares`). Patches are laid per plot through the CPU twin of the layout (`toPlots`/`fromPlots`), off the roads. A patch out of view is dropped there before its wind (`cull: 5`, patch.ts).
+  - Each patch works out its plot's crop in the vertex shader (`plotFrame`/`plotRank`/`cropShares`). Patches are laid per plot through the CPU twin of the layout (`toPlots`/`fromPlots`), off the roads.
   - Two sets of meshes exist for the film's dissolves (`holdView`/`showHeld`/`releaseView`).
 - `world/meadow.ts`: `Meadow(huts, ghats)`: blade grass and wild flowers round the camera, in 8 m chunks.
   - One kind of full clump goes out to 100 m, thinning over the last stretch at each clump's own distance (`BANDS`, `THIN`).
-  - Its upload sends only the part of each layer in use, and its bounds (for the culling) come from the chunks' squares and their ground's heights (`CLUMP_OUT`, `CLUMP_TOP`), not from every clump. A clump or a flower out of view is dropped in the vertex shader before its wind (`cull: CLUMP_REACH`, patch.ts): most of a chunk round the camera lies behind it.
+  - Its upload sends only the part of each layer in use, and its bounds (for the culling) come from the chunks' squares and their ground's heights (`CLUMP_OUT`, `CLUMP_TOP`), not from every clump.
   - Chunks grow in, are built in front first, and `warm` builds ahead.
   - No grass grows in the water or on the mud above it, on roads, on landmarks or round the ghats.
   - Two sets of meshes exist for the dissolves.
@@ -184,7 +184,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
     - A carpet's petals are laid in the order of their rank (the share of the flowering by which each has fallen), so those to show are the first so many.
     - Those that fall on water float, drifting on the current until they sink (`AFLOAT_LIFE`). A crown near a waterway also has petals gathered in the slack water along its bank (`BANKED`). None float inside the hero's hull.
   - `HeroPetal`: the film's petal. `aim` picks its bough on the crown's lower edge and a place 2.6–4.2 m out on the water downwind (`INTO`, `CARRIED`), and works out its whole fall (`HERO_FALL`, `SWING`). It swings and tips, tumbles twice, levels out near the water, touches it (the water's `uTouch` ripples) and floats off on the current.
-- `world/songbirds.ts` (small birds on treetops and open ground, flying tree to tree; a bird's nearest crown is found among the crowns filed in a grid of cells, `grid`), `world/life.ts` (flocks, motes and fireflies; `birdGeometry`, `FLAP`).
+- `world/songbirds.ts` (small birds on treetops and open ground, flying tree to tree), `world/life.ts` (flocks, motes and fireflies; `birdGeometry`, `FLAP`).
 - `world/fish.ts`: `Fish(ripples)`. Each fish swims on its own: a burst of tail beats and a glide, turning through its own momentum, its body bent along its length into the turn and swinging in a wave from head to tail (the vertex shader `SWIM`, per-instance `aSwim`).
   - Puti schools (cohesion, alignment, separation) under the river and the khals, a few rui deeper. They look ahead for the shallows and turn to the deeper side, and scatter from the boat.
   - The salt farms in the rains have theirs (`stockGhers`, `GHER_STOCK`, within `GHER_REACH`): schools of little sharputi and puti over the drowned beds, turning back from the embankment, rising to sip.
@@ -257,7 +257,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - The water's hole for the hero hull is cut where the surface meets her as she heaves, pitches and heels (`uBoatHull`, hull.ts `hullHalfWidth`); main.ts sets it with `hullOnWater` (and per shot in `drawLeaving`).
   - In a strong wind the crests break white, measured against the waves this water carries (`INLAND` on inland water).
   - The field textures (bed and current, from `waterwayAt`) come in a fine one following the camera and a wide one over the world.
-    - The fine one (`FineField`) is refilled round the camera once it strays `FINE.drift` m, `FINE.ms` a frame. The wide one stands in meanwhile. The first is filled where the camera first is (`empty` until then), not where the field is made.
+    - The fine one (`FineField`) is refilled round the camera once it strays `FINE.drift` m, `FINE.ms` a frame. The wide one stands in meanwhile.
     - The film readies the next shot's fine field ahead (`warm`) and uploads it to a spare texture (the two take turns as `tField`), so the cut only switches to it.
   - Water at another level than the mirror's reflects the hazy sky. Its sea and ship parts are inert.
   - `nets` (the cast nets' rings, `netRings`) and `touch` (`uTouch`: a light thing come down on the water, the film's petal) ripple it; `fallInto` (`uFall0/1`) froths it where the hill stream and the sluice pour in.
@@ -284,7 +284,6 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - Atmosphere.
   - Wind (`ATM_WIND`): each plant has its own period, phase and give; the trunk swings on two unrelated swings and the branches on quicker ones; leaves shiver (`ATM_FLUTTER` with `foliage`). The lean levels off at `LEAN_MAX`.
   - Grime, translucency, foliage normals, skin, `seasonal`, `vertex` hooks, `wetline`.
-  - `cull` (instanced): an instance whose root's sphere of that radius lies wholly out of view is put past the far plane before the rest of its vertex work (`CULL_VERTEX`). The radius must hold all of the instance as the wind sways it, at its scale, or its parts vanish at the frame's edges.
   - The terrain's paddy plots and splat layers (`SPLAT_TILE`, `SPLAT_COLOR`).
   - The salt field's beds, bunds, brine and crust where the terrain's zone is below 0, in `SALT_FIELD`'s frame.
 - `render/surfaces.ts`: the photo ground layers (`GROUND_LAYERS`) and the bark.
@@ -294,8 +293,8 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - The letterbox with captions.
   - The held frame for dissolves (`toHeld`).
 - `render/reflection.ts`: the planar mirror at half resolution.
-- `render/instancing.ts`: instanced meshes split into cells (`chunk`, `across`) so off-screen cells cull. `sendFirst(count, …attributes)` uploads only the first `count` instances' part of each attribute, and nothing for none (an update range of length 0 would send the whole rest: WebGL2 reads it as "to the end").
-- `render/cull.ts`: distance culling (`cullBeyond`, `setCullReach`). `holdWhileHidden(group)`: the frame's matrix walk passes over the group while it is hidden (the salt crews out of their work, the reapers).
+- `render/instancing.ts`: instanced meshes split into cells (`chunk`, `across`) so off-screen cells cull.
+- `render/cull.ts`: distance culling (`cullBeyond`, `setCullReach`).
 - `render/textures.ts`: every canvas-painted texture (plaster, brick, cloth, bark, kash, rice, mustard, and so on). One painted again with the same inputs is painted once and handed out as clones (`paintedOnce`: the weaves; the cloth's relief, one for each kind of weave): each clone has its own repeat, and they share one image and one upload.
 - `world/terrain.ts` `meshGround(x, z)`: the ground as the finest patches draw it (their 2 m lattice interpolated), for what must rest on it where the ground is cut finer.
 - `render/builder.ts`: `MeshBuilder`, `rgb`, `mixRgb`, `scaleRgb`, `taperedTube`, `card`, `slab`.
@@ -365,7 +364,7 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - `bangla.ts`: Bangla time, tithi and dates.
   - `hud.ts`: the loader (its sun rises with `progress`, `now()` writes the cinematic morning's season, date and dawn under it; `ready` lets the still go and lifts the mark after the title's seconds), notices and captions.
   - The loader itself is inline in `index.html` (it shows before the scripts load): the still `public/brand/loader.webp` (a tiny blurred copy inline under it while it comes), the mark drawn inline, the word set once its face has come.
-  - `mapPanel.ts` (+ `map.css`): the map (L), in the dock's glass with a stitch under its title. The ground is painted from above a few rows a frame (`paintAt`, at `M` m a pixel), its shorelines lightened once all is in; over it, `FINE` times finer, the ways, the boat's way dashed, the waters named, a badge for each place in its group's colour with its sign (`ICONS`, 24 × 24 paths, the same in the list's cards), and the boat with a slow ring. All but the boat is drawn into the `under` canvas only when it changes (the painting, the place hovered, the fonts: `underKey`); each frame lays it down and draws the boat over it. Hovering a badge or a card picks it out and shows its card over the map; a click on either visits the place (`MapActions.visit`: the director's `visit`); a click elsewhere on the village's land looks at it from above (`fly`). The list groups the places (`GROUPS`: on the river, in the village, in the fields).
+  - `mapPanel.ts` (+ `map.css`): the map (L), in the dock's glass with a stitch under its title. The ground is painted from above a few rows a frame (`paintAt`, at `M` m a pixel), its shorelines lightened once all is in; over it, `FINE` times finer, the ways, the boat's way dashed, the waters named, a badge for each place in its group's colour with its sign (`ICONS`, 24 × 24 paths, the same in the list's cards), and the boat with a slow ring. Hovering a badge or a card picks it out and shows its card over the map; a click on either visits the place (`MapActions.visit`: the director's `visit`); a click elsewhere on the village's land looks at it from above (`fly`). The list groups the places (`GROUPS`: on the river, in the village, in the fields).
   - A visit (main.ts `visit`): the camera the visit comes back to is set to follow her (`rig.followNow`), the director plays the place's shots, and the year is set at once to her new place on the journey (under the first dissolve). The film's own ways (the clock's pace, the turning year, its scene bar, the arrows through its scenes) keep to the film (`filming()`), not to a visit.
   - Input in the film (main.ts):
     - A tap or click only wakes the controls.
@@ -381,7 +380,6 @@ The code map of `src/` as it stands on `cinematic-village`, and where to change 
   - At load every material is compiled, the hidden ones too. What is built starts compiling at once (`compileSoon`, for the scene's lights `sceneLights` and the scene pass's target), so the driver works on the programs while the rest is built.
   - Groups that never move are added through `still()` (their matrices made once); the scene's own matrix is never remade.
   - The quality: the opening's first view is readied and drawn a few times behind the loader, its GPU cost measured (`gpuCost`, by the timer query where there is one) and the starting size and tier set from it (`GPU_AIM`). Then the adaptive resolution (`ADAPT`): quick windows at first, a slow frame takes the size straight to what would hold it, never below `least` (`leastDense` on a phone's dense screen), back up a step at a time; the lower tier comes in once the picture is slow at `lowAt` or the frames wait on the CPU (`cpuBound`), where fewer pixels would not help. Back from a hidden tab the time away is no frame's (`away`), and no frame counts for more than `ADAPT.longest`. A new size is taken up just before the next frame is drawn (`resizeDue`).
-  - Under the map where it covers nearly the whole screen (`MAP_COVERS`), the world goes on every frame but is drawn one frame in three, and those frames are left out of the adaptive resolution. On a touch screen refreshing 110 times a second or more, every other refresh is left undrawn (`everyOther`).
   - Shader logs are checked only in development (`renderer.debug.checkShaderErrors`): checking one on a program's first use waits for the driver.
 
 ## Legacy tooling
