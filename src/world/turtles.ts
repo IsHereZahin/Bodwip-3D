@@ -3,6 +3,7 @@ import { LAYER_NO_REFLECT } from '../core/globals';
 import { clamp, lerp, smoothstep } from '../core/mathx';
 import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
+import { sendFirst } from '../render/instancing';
 import { patchMaterial } from '../render/patch';
 import { waterLevelAt } from './geography';
 import type { Ripples } from './ripples';
@@ -295,8 +296,6 @@ export class Turtles {
       n++;
     }
     this.bodies.count = this.heads.count = n;
-    this.bodies.instanceMatrix.needsUpdate = true;
-    this.heads.instanceMatrix.needsUpdate = true;
-    if (this.bodies.instanceColor) this.bodies.instanceColor.needsUpdate = true;
+    sendFirst(n, this.bodies.instanceMatrix, this.heads.instanceMatrix, this.bodies.instanceColor);
   }
 }

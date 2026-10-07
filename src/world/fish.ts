@@ -2,6 +2,7 @@ import { BufferAttribute, BufferGeometry, Color, DoubleSide, Group, InstancedBuf
 import { LAYER_NO_REFLECT } from '../core/globals';
 import { angleDelta, clamp, smoothstep } from '../core/mathx';
 import { Rng } from '../core/rng';
+import { sendFirst } from '../render/instancing';
 import { patchMaterial } from '../render/patch';
 import { PONDS, pondReach, saltLocal, saltPoint, terrainHeight, waterLevelAt, type Pond } from './geography';
 import { SALT_FIELDS, type SaltFarm } from './plan';
@@ -426,9 +427,7 @@ export class Fish {
     }
     n = this.leap(dt, eye, n);
     this.mesh.count = n;
-    this.mesh.instanceMatrix.needsUpdate = true;
-    this.swim.needsUpdate = true;
-    this.colors.needsUpdate = true;
+    sendFirst(n, this.mesh.instanceMatrix, this.swim, this.colors);
   }
 
   /** Where a fish goes this frame: its school, its wandering, the shallows and the banks, the boat. */

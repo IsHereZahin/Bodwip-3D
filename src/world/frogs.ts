@@ -3,6 +3,7 @@ import { LAYER_NO_REFLECT } from '../core/globals';
 import { smoothstep } from '../core/mathx';
 import { Rng } from '../core/rng';
 import { MeshBuilder, rgb, scaleRgb, type RGB } from '../render/builder';
+import { sendFirst } from '../render/instancing';
 import { patchMaterial } from '../render/patch';
 import { onRoad, risenLevel, shoreLevel, terrainHeight } from './geography';
 import type { Ripples } from './ripples';
@@ -214,9 +215,7 @@ export class Frogs {
     }
     this.sitting.count = ns;
     this.leaping.count = nl;
-    this.sitting.instanceMatrix.needsUpdate = true;
-    this.leaping.instanceMatrix.needsUpdate = true;
-    if (this.sitting.instanceColor) this.sitting.instanceColor.needsUpdate = true;
-    if (this.leaping.instanceColor) this.leaping.instanceColor.needsUpdate = true;
+    sendFirst(ns, this.sitting.instanceMatrix, this.sitting.instanceColor);
+    sendFirst(nl, this.leaping.instanceMatrix, this.leaping.instanceColor);
   }
 }

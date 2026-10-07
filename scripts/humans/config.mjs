@@ -23,21 +23,13 @@ export const PACK_FOLDERS = [
   'skins/young_african_male/',
   'skins/old_asian_male/',
   'skins/old_african_male/',
-  'skins/young_asian_female/',
-  'skins/young_african_female/',
   'eyes/high-poly/',
   'eyes/materials/brown',
   'eyebrows/eyebrow001/',
-  'eyebrows/eyebrow010/',
   'eyelashes/eyelashes01/',
-  'eyelashes/eyelashes04/',
   'hair/short04/',
-  'hair/long01/',
   'hair/short03/',
 ];
-
-/** A South Asian face from MakeHuman's three ethnic shapes [মডেল]. */
-const BENGALI = { caucasian: 0.56, asian: 0.24, african: 0.2 };
 
 /** Both sides of a face's paired modifier (eyes, cheeks) at one weight. */
 const both = (group, name, w) => ({ [`${group}/l-${name}`]: w, [`${group}/r-${name}`]: w });
@@ -99,39 +91,5 @@ export const CHARACTERS = {
     // worn a little long and loose, so the wind lifts it, held off his face by the headband
     hair: { proxy: 'hair/short03', tint: '#100b08', loose: true, tuck: 0.055 },
     wear: ['sando', 'lungi'],
-  },
-  // the girl on the bridge: an ordinary village girl of seventeen, slight, with a young open face (the macros
-  // stop at twenty-five; the face is made younger), a small chin, large dark eyes, her long hair loose; a simple
-  // red lehenga's blouse (its skirt and ওড়না are cloth)
-  meye: {
-    macro: { gender: 0, age: 0.5, muscle: 0.4, weight: 0.36, height: 0.38, race: BENGALI },
-    mods: {
-      'head/head-age-decr': 0.85,
-      'head/head-oval': 0.3,
-      'head/head-scale-vert-decr': 0.12,
-      'head/head-scale-horiz-decr': 0.04,
-      'chin/chin-width-decr': 0.18,
-      'chin/chin-height-decr': 0.2,
-      ...both('cheek', 'cheek-volume-incr', 0.2),
-      'nose/nose-scale-horiz-decr': 0.18,
-      'nose/nose-scale-vert-decr': 0.15,
-      'nose/nose-volume-decr': 0.2,
-      'nose/nose-point-width-decr': 0.2,
-      'nose/nose-nostrils-width-decr': 0.15,
-      'mouth/mouth-scale-horiz-decr': 0.08,
-      'mouth/mouth-lowerlip-volume-incr': 0.12,
-      'mouth/mouth-angles-up': 0.1,
-      ...both('eyes', 'eye-scale-incr', 0.2),
-      ...both('eyes', 'eye-bag-decr', 0.7),
-      'neck/neck-scale-horiz-decr': 0.18,
-    },
-    height: 1.53,
-    // a warm, fair wheaten complexion
-    skin: { light: 'skins/young_asian_female/young_lightskinned_female_diffuse3.png', dark: 'skins/young_african_female/young_darkskinned_female_diffuse.png', tone: '#c28c66', stubble: 0 },
-    eyes: 'eyes/materials/brown_eye.png',
-    brows: 'eyebrows/eyebrow010',
-    lashes: 'eyelashes/eyelashes04',
-    hair: { proxy: 'hair/long01', tint: '#0e0907', loose: true },
-    wear: ['blouse'],
   },
 };

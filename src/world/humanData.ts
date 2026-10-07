@@ -6,7 +6,7 @@ import type { Texture } from 'three';
 // the measurements the posing and the cloth need. Awaited at the top level, as the map is, so the people are
 // built synchronously.
 
-export type HumanName = 'majhi' | 'tarun' | 'meye';
+export type HumanName = 'majhi' | 'tarun';
 
 interface ArrayRef {
   type: 'Int16Array' | 'Int8Array' | 'Float32Array' | 'Uint8Array' | 'Uint16Array' | 'Uint32Array';

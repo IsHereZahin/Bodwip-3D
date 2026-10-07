@@ -570,40 +570,6 @@ for (const [name, spec] of Object.entries(CHARACTERS)) {
       }
       const deep = interior(BODY, region);
       for (let i = 0; i < NV; i++) if (deep[i]) hide[i] = 1;
-    } else if (garment === 'blouse') {
-      // a plain cotton blouse: a round neck, short sleeves to the middle of the upper arm, its hem at the waist
-      // (the lehenga's skirt and the ওড়না are cloth, world/girl.ts)
-      const sleeve = (i) => {
-        const side = P[i * 3] > 0 ? 0 : 1;
-        const a = L.gh[side];
-        const b = L.elbow[side];
-        const ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
-        const len = Math.hypot(...ab);
-        const d = [P[i * 3] - a[0], P[i * 3 + 1] - a[1], P[i * 3 + 2] - a[2]];
-        return { t: (d[0] * ab[0] + d[1] * ab[1] + d[2] * ab[2]) / (len * len), len };
-      };
-      shell(
-        'blouse',
-        (i) => {
-          const c = cat(i);
-          const p = pos(i);
-          const { t, len } = sleeve(i);
-          const arm = smooth(0.2, 0.6, arms(c));
-          return Math.min(
-            p[1] - (L.pelvis[1] + 0.09),
-            N[1] + 0.03 - p[1],
-            outside(p, [0, N[1] - 0.008, N[2] + 0.034], 0.072, 0.09, 0.115, 0.12),
-            0.1 * (1 - arm) + (0.5 - t) * len * arm,
-            (0.5 - c.head) * 0.1,
-          );
-        },
-        (i) => {
-          const c = cat(i);
-          const arm = smooth(0.2, 0.6, arms(c));
-          return 0.006 + arm * 0.008 * smooth(0.1, 0.5, sleeve(i).t);
-        },
-        { top: L.chest[1] + 0.02, bottom: L.pelvis[1] + 0.09, back: true },
-      );
     }
   }
 

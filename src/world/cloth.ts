@@ -172,7 +172,7 @@ export class ClothRibbon {
   readonly mesh: Mesh;
   private readonly n: number;
   private readonly seg: number;
-  private readonly half: Float32Array;
+  private readonly half: number;
   private readonly pinned: boolean[];
   private readonly p: Vector3[];
   private readonly prev: Vector3[];
@@ -181,14 +181,11 @@ export class ClothRibbon {
   private readonly pos: Float32Array;
   private started = false;
 
-  /**
-   * `count` particles `segment` apart, `width` wide (or as wide at each particle as `width(i)` says: a ওড়না
-   * gathered narrow over a shoulder and falling open); `uWidth`/`vLength` how much texture it shows.
-   */
-  constructor(material: Material, count: number, segment: number, width: number | ((i: number) => number), pins: readonly number[], uWidth: number, vLength: number) {
+  /** `count` particles `segment` apart, `width` wide; `uWidth`/`vLength` how much texture it shows. */
+  constructor(material: Material, count: number, segment: number, width: number, pins: readonly number[], uWidth: number, vLength: number) {
     this.n = count;
     this.seg = segment;
-    this.half = Float32Array.from({ length: count }, (_, i) => (typeof width === 'number' ? width : width(i)) / 2);
+    this.half = width / 2;
     this.pinned = Array.from({ length: count }, (_, i) => pins.includes(i));
     this.p = Array.from({ length: count }, () => new Vector3());
     this.prev = Array.from({ length: count }, () => new Vector3());
@@ -290,8 +287,8 @@ export class ClothRibbon {
       if (pinned[i]) out.copy(this.normal[i]);
       else outward(p[i], out);
       side.crossVectors(tan, out).normalize();
-      tmp.copy(p[i]).addScaledVector(side, -this.half[i]).toArray(this.pos, i * 6);
-      tmp.copy(p[i]).addScaledVector(side, this.half[i]).toArray(this.pos, i * 6 + 3);
+      tmp.copy(p[i]).addScaledVector(side, -this.half).toArray(this.pos, i * 6);
+      tmp.copy(p[i]).addScaledVector(side, this.half).toArray(this.pos, i * 6 + 3);
     }
     (this.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true;
     this.geometry.computeVertexNormals();

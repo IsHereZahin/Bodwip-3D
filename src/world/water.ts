@@ -162,10 +162,15 @@ class FineField {
   /** The filling the spare texture already holds, uploaded (the one readied ahead); null if none. */
   private spareHolds: Filling | null = null;
   private readonly upload: (texture: Texture) => void;
+  /**
+   * Nothing filled yet: the first field is filled where the camera first is (update), not round (x, z) as it is
+   * made (filled there, at the world's middle, it was thrown away at once: a third of a second of the load).
+   */
+  private empty = true;
 
   constructor(x: number, z: number, upload: (texture: Texture) => void) {
     this.rect = FineField.around(x, z);
-    const f = fieldTexture(this.rect);
+    const f = fieldTexture(this.rect, false);
     this.textures = [f.texture, fieldTexture(this.rect, false).texture];
     this.uniform = { value: f.texture };
     this.bounds = f.bounds;
@@ -192,6 +197,7 @@ class FineField {
     this.spareHolds = null;
     this.bounds.set(f.rect.x0, f.rect.z0, 1 / f.rect.sx, 1 / f.rect.sz);
     this.rect = f.rect;
+    this.empty = false;
   }
 
   private static around(x: number, z: number): FieldRect {
@@ -226,7 +232,7 @@ class FineField {
       this.ahead = null;
     }
     if (!this.next) {
-      if (FineField.off(this.rect, x, z) < (now ? 8 : FINE.drift)) return;
+      if (!this.empty && FineField.off(this.rect, x, z) < (now ? 8 : FINE.drift)) return;
       this.next = FineField.start(x, z);
     }
     const n = this.next;
@@ -237,7 +243,7 @@ class FineField {
 
   /** Readies the field round (x, z) until `until` (performance.now()), to be taken up when the camera comes; true once ready. */
   warm(x: number, z: number, until: number): boolean {
-    if (FineField.off(this.rect, x, z) < FINE.drift) return true;
+    if (!this.empty && FineField.off(this.rect, x, z) < FINE.drift) return true;
     if (!this.ahead || FineField.off(this.ahead.rect, x, z) > 8) this.ahead = FineField.start(x, z);
     const a = this.ahead;
     if (a.row < a.rect.h && !(performance.now() < until && FineField.fill(a, until))) return false;

@@ -28,7 +28,7 @@ import { HUMANS, type HumanData, type HumanName, type RadiusMap } from './humanD
 
 // A person as games build one: MakeHuman's CC0 body (humanData.ts) on a skeleton, its skin following its bones
 // by weights, with a photographed skin, eyes, eyebrows, eyelashes and hair cards. The scene's own posing (the
-// boatman's and the girl's IK, their balance and gaze) says where the joints go; this turns that into the
+// boatman's and the workers' IK, their balance and gaze) says where the joints go; this turns that into the
 // bones: the hips and a spine bending in five steps, the neck in three, the head, eyes that look and lids that
 // blink; thighs and shins about the knee's hinge, the feet; collarbones, upper arms about the elbow's hinge,
 // forearms twisting toward the wrist in two steps (as a forearm does), and hands closed round what they hold,

@@ -1,6 +1,6 @@
 # Known issues, limits and open work
 
-These entries are current as of the review of 2026-10-06, made after commit 7181995, and the speed pass of 2026-10-07. Remove an entry when it is fixed, and add new ones here, not in a new file.
+These entries are current as of the review of 2026-10-06, made after commit 7181995, and the two speed passes of 2026-10-07. Remove an entry when it is fixed, and add new ones here, not in a new file.
 
 ## Open bugs and risks
 
@@ -13,13 +13,14 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
 - **The underwater tint assumes a flat surface** (`underwater()`). In big waves, the parts of a hull near the surface can take the wrong tint.
 - **Ponds reflect the hazy sky.** They sit at their own level and so don't get the mirror; from above they can read as pale sheets.
 - **The water grid is dense under the camera,** which is wasted from high up.
+- **What is kept out of the mirror casts no shadow** (found 2026-10-07, not fixed: it would change the look). The shadow map is redrawn inside the frame's first `render`, which is the mirror pass, and three draws into it only what the camera of that call sees (`layers.test`, WebGLShadowMap.js); the mirror's camera sees layer 0. So whatever is on `LAYER_NO_REFLECT` alone and set to cast (the trees not mirrored, the date palms, the salt heaps) casts none, except in a frame the mirror skips. To fix: redraw the shadow map in the main pass (hold `shadowMap.needsUpdate` through the mirror's call), then judge the new shadows across the seasons.
 - **A crop chunk's reach shows as a rectangle from high above** (the free camera at ≈40 m over the bil's rim in the rains): the plants stop at a straight edge. From the boat and the film's heights it is not seen.
 
 ## Performance
 
 - **Where a frame's GPU time goes** (2026-10-07, the Ryzen 5600G's integrated Radeon, 1280×720, high tier, timer queries per pass): the scene pass 18–25 ms, the mirror 4–7 ms, the post chain under 1.5 ms. Of the scene pass the trees take the most (their alpha-tested leaf cards drawn over each other), then the terrain, then the water. Multisampling is ≈27% of the scene pass: the lower tier draws without it, so its hair and garment edges (alpha to coverage) are cut hard and geometric edges alias.
-- **Headless numbers on that GPU** (2026-10-07, against the commit before the speed pass, alternate runs): load ≈7–12 s (was ≈11–16 s); the opening ≈53 fps at ≈0.93 of full size in the lower tier (was ≈29 fps at 0.73 in the high tier; frames over 50 ms 1–4 against 13–17); after it ≈55 fps (was ≈48 fps at 0.66–0.73); the film started with C ≈21 fps, worst frame 117 ms (was ≈17 fps, 267 ms), the GPU shared. A phone's size (390×844 at DPR 3) only emulated on it: ≈28 fps (was ≈18).
-- **The CPU's part of a frame** (dev build): ≈7 ms for the world (`step`: the hyacinth, the girl's cloth, the composer's ≈1 ms budget, the crops and the grass building) and ≈7–9 ms in three.js's rendering (≈450 draws in the scene pass and ≈170 in the mirror's: uniforms, culling, the skinned people's skeletons). A phone's CPU is several times slower.
+- **Headless numbers on that GPU** (2026-10-07, against the commit before the speed pass, alternate runs): load ≈7–12 s (was ≈11–16 s); the opening ≈53 fps at ≈0.93 of full size in the lower tier (was ≈29 fps at 0.73 in the high tier; frames over 50 ms 1–4 against 13–17); after it ≈55 fps (was ≈48 fps at 0.66–0.73); the film started with C ≈21 fps, worst frame 117 ms (was ≈17 fps, 267 ms), the GPU shared. A phone's size (390×844 at DPR 3) only emulated on it: ≈28 fps (was ≈18). The second pass (against 07a091c, alternate runs): the scene pass 1–2 ms lighter where grass and crops fill the view, three.js's CPU side 1–1.6 ms lighter, the opening ≈55 fps (was ≈53), the film's frames ≈19.5 ms (was ≈20.1), the production load ≈0.6–1.9 s quicker, ≈60 fps under the map (was ≈49).
+- **The CPU's part of a frame** (dev build): ≈7 ms for the world (`step`: the hyacinth, the composer's ≈1 ms budget, the crops and the grass building) and ≈6–8 ms in three.js's rendering (≈450 draws in the scene pass and ≈170 in the mirror's: uniforms, culling, the skinned people's skeletons). A phone's CPU is several times slower.
 - **The load is CPU-bound:** the terrain for the opening's view (≈1.6 s on the dev server), the trees, the water's fields, the roads, the programs' JS (≈0.9 s), and the calibration (≈0.4–1.2 s; it also takes the first frames' texture uploads and shadow map off the opening). On Windows the shaders' compile (D3D) overlaps the building (`compileSoon`).
 - **The JS heap is ≈310 MB after load** (painted textures and geometry are kept in JS after upload): a phone with little memory may feel it.
 - **Measuring:** another tab or program drawing on the same GPU (the site left open in Edge from the dev server, which reloads it on every save) halves headless frame rates and stretches the load. Check `Get-Counter '\GPU Engine(*engtype_3D)\Utilization Percentage'` first, and compare against a baseline build in alternate runs (verification.md).
@@ -38,7 +39,7 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
 - **The moon** is drawn about 5× its real size, and its orbit's tilt is ignored: no eclipses, and at new moon it sits on the sun.
 - **Moonrise:** the moon often starts behind the bank's trees; an event's time is when the moon's centre is on the horizon.
 - **New-moon nights** are dark but readable (`glowE` in `environment.ts`).
-- **Rain** streaks are drawn only within 22 m of the camera. They aren't blocked by geometry, except under the girl's umbrella (`uShelter`).
+- **Rain** streaks are drawn only within 22 m of the camera. They aren't blocked by geometry.
 - **Where the rain strikes:**
   - Splashes show on the water, the ground, the ghats and the bridge's deck. None show on roofs, boats or leaves: these only look wet, and the leaves are knocked by the drops.
   - Puddles mirror only the hazy sky (there is no real reflection), darkened for the surroundings they would show.
@@ -47,14 +48,10 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
 - **Lightning** strikes only far off (650–1700 m): no near strikes, ground flashes or trees hit.
 - **What moves casts no shadow:**
   - the hero boat (a soft spot under the majhi stands in);
-  - the girl (a soft foot shadow stands in);
   - the train and the working people.
 - **Grass and floating plants** are not in the mirror, and grass casts no shadow.
 - **Only the hero boat sits deeper in the water** (`HERO_SINK`). Hyacinth meets her hull at its rest waterline.
-- **The girl's umbrella out of the rains:** a shower catches her without it while she is in sight. She has it the next time the camera comes back (see architecture.md).
 - **Cloth** is springs round the body, not a full simulation: folds are painted, and it moves only a few cm in big jolts.
-  - The girl's ওড়না is one row of particles, so it looks a little stiff from the front.
-  - Her blouse pokes slightly through at the shoulder.
 - **People:**
   - Faces come from MakeHuman sliders, with no expressions (only the eyes move and blink). Up close they still read as game characters.
   - Cloth patterns follow the body's UVs, so the seams show on the back and the inner arms.
@@ -90,7 +87,8 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
   - Live at night is dark, by the user's choice of real time; the flight's first seconds show the world's edge haze from high.
   - Live's weather is the season's own for today's date, not the weather in Bangladesh now (a weather feed would be a new external request).
   - The mode is not remembered: every visit opens in the cinematic mode.
-  - The camera's own views (rig/compose.ts) know the ground, the trees' crowns, the palms, the bamboo, the houses, the grand ghat and the bridge (sightlines.ts), as columns; not the bushes, the bananas, the landmarks' own buildings, the people or the moored boats. A shot's weights are judgement, tuned by eye on stills of the journey; left to itself the camera mostly chooses behind her and a little above (≈26 m out, ≈9.5 m up), looking down the water. After the opening it looks back (at the sunrise) for ≈10 s while it comes round behind her.
+  - The camera's own views (rig/compose.ts) know the ground, the trees' crowns, the palms, the bamboo, the houses, the grand ghat and the bridge (sightlines.ts), as columns; not the bushes, the bananas, the landmarks' own buildings, the people or the moored boats. A shot's weights are judgement, tuned by eye on stills of the journey; left to itself the camera mostly chooses behind her quarter and a little above (≈18 m out, 5–9.5 m up), looking down the water. The opening hands over in that usual shot (`USUAL`, her on the far third), not one weighed for that place and hour; the composer holds it its while (`HOLD`) unless it is lost.
+  - The opening's turn round her (≈20–22°/s) is a little quicker than the composer's own (≈18°/s), so that it is behind her by 15 s.
   - The sights' stretches are found once at load from the village as built; which are shown is chosen again as she goes. A sight seen poorly from her way (the mosque, from the khal) gives way to her surroundings.
   - The sanko is thin bamboo: from her way the camera shows it small.
   - The dock's menus use the Popover API (Chrome 114+, Safari 17+, Firefox 125+); the SVG favicon has a PNG fallback.

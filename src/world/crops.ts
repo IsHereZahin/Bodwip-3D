@@ -5,6 +5,7 @@ import { glslHash12, glslNoise } from '../core/noise';
 import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, type RGB } from '../render/builder';
 import { CORRIDOR, CROP_REACH } from '../render/glsl';
+import { sendFirst } from '../render/instancing';
 import { patchMaterial } from '../render/patch';
 import { mustardCanopyTexture, mustardRacemeTexture, riceCanopyTexture, riceHillTexture } from '../render/textures';
 import { corridorDistance, onRoad, roadNear, terrainHeight } from './geography';
@@ -389,8 +390,9 @@ ${sway(0.14)}
 
 function cropMaterial(key: string, code: string, map?: Texture): MeshStandardMaterial {
   const material = new MeshStandardMaterial({ vertexColors: true, side: DoubleSide, roughness: 0.75, map: map ?? null, alphaTest: map ? 0.45 : 0 });
-  // thin leaves: the low sun through them lights the field from behind, the tips glowing
-  return patchMaterial(material, { translucency: 2.6, foliage: true, vertex: { key, pars: 'attribute float aBorn;\n', code } });
+  // thin leaves: the low sun through them lights the field from behind, the tips glowing; a patch out of view is
+  // dropped before its plot's work (its plants reach ≈3.5 m from its root, the widest patch bent by the wind)
+  return patchMaterial(material, { translucency: 2.6, foliage: true, vertex: { key, pars: 'attribute float aBorn;\n', code }, cull: 5 });
 }
 
 interface Layer {
@@ -629,9 +631,8 @@ export class Crops {
       at[lod] += n;
     }
     this.sets[this.cur].forEach((layer, lod) => {
-      layer.matrices.needsUpdate = true;
-      layer.colors.needsUpdate = true;
-      layer.born.needsUpdate = true;
+      // only the part in use goes up to the GPU
+      sendFirst(at[lod], layer.matrices, layer.colors, layer.born);
       for (const mesh of layer.meshes) mesh.count = at[lod];
     });
     if (this.cache.size > CACHE) {

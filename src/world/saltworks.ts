@@ -15,6 +15,7 @@ import type { BufferGeometry, Vector4 } from 'three';
 import { LAYER_NO_REFLECT } from '../core/globals';
 import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
+import { holdWhileHidden } from '../render/cull';
 import { instanced, type Placement } from '../render/instancing';
 import { patchMaterial } from '../render/patch';
 import { weaveTexture } from '../render/textures';
@@ -280,9 +281,6 @@ export class SaltWorks {
   constructor(ripples: Ripples) {
     const rng = new Rng(611);
     this.group.name = 'saltworks';
-    // it never moves: remaking its own matrix every frame would make every crew's be remade with it, those not
-    // drawn too (each crew's own update follows whether it is drawn, update())
-    this.group.matrixAutoUpdate = false;
     this.buildSluice(rng);
     this.buildHut();
     this.gherFisher = new Fisher(ripples, gherStand());
@@ -461,6 +459,9 @@ export class SaltWorks {
         }
       }
       crew.salt.visible = crew.rains.visible = false;
+      // a crew not drawn is not posed either (update): its people's matrices wait as they stood
+      holdWhileHidden(crew.salt);
+      holdWhileHidden(crew.rains);
       this.group.add(crew.salt, crew.rains);
       this.crews.push(crew);
     });
@@ -509,15 +510,13 @@ export class SaltWorks {
     const working = salt > 0.5;
     const gher = salt < 0.25;
     this.gherFisher.group.visible = gher;
-    // (what is not drawn is not posed either: its matrices are left as they stood till it is drawn again)
-    this.gherFisher.group.matrixWorldAutoUpdate = gher;
     if (!gher) this.gherFisher.stillWater();
     this.hut.visible = gher;
     const within = (p: Vector3 | null, x: number, z: number, r: number) => p !== null && Math.hypot(p.x - x, p.z - z) < r;
     for (const crew of this.crews) {
       const drawn = within(eye, crew.x, crew.z, DRAWN) || within(also, crew.x, crew.z, DRAWN);
-      crew.salt.visible = crew.salt.matrixWorldAutoUpdate = working && drawn;
-      crew.rains.visible = crew.rains.matrixWorldAutoUpdate = gher && drawn;
+      crew.salt.visible = working && drawn;
+      crew.rains.visible = gher && drawn;
       if (!within(eye, crew.x, crew.z, POSED) && !within(also, crew.x, crew.z, POSED)) continue;
       if (working) for (const w of crew.saltHands) w.update(dt, t);
       if (gher) for (const w of crew.rainHands) w.update(dt, t);

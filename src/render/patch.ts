@@ -28,6 +28,12 @@ export interface PatchOptions {
   /** Custom vertex displacement after `begin_vertex`; `key` names it in the program cache. */
   vertex?: { key: string; pars: string; code: string; uniforms?: Record<string, IUniform> };
   /**
+   * Instanced: an instance whose root's sphere of this radius (m, holding all of it as the wind sways it) lies
+   * wholly outside the view is dropped before any of its vertices' work (the grass and the crops lie all round the
+   * camera, most of them behind it).
+   */
+  cull?: number;
+  /**
    * How the season shows on it: 'leaf' greens up in the rains and dries and pales in the dry months;
    * 'tree' as a leaf, and in spring a share of trees burst into red flower; 'kash' plumes only in autumn.
    */
@@ -127,6 +133,21 @@ vSplat = aSplat;
 #endif
 mvPosition = viewMatrix * atmW;
 gl_Position = projectionMatrix * mvPosition;
+`;
+
+// An instance wholly outside the view: its vertices are put beyond the far plane at once, spared the wind's and
+// their own work. Its root's sphere is tested against the frustum's sides (widened to R × (P + 1), never less than
+// the true reach R × √(P² + 1), so nothing partly in view is dropped) and against the eye's back.
+const CULL_VERTEX = /* glsl */ `
+#if defined(ATM_CULL) && defined(USE_INSTANCING)
+{
+  vec4 atmC = projectionMatrix * viewMatrix * modelMatrix * vec4(instanceMatrix[3].xyz, 1.0);
+  if (atmC.w < -ATM_CULL || abs(atmC.x) > atmC.w + ATM_CULL * (projectionMatrix[0][0] + 1.0) || abs(atmC.y) > atmC.w + ATM_CULL * (projectionMatrix[1][1] + 1.0)) {
+    gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+    return;
+  }
+}
+#endif
 `;
 
 // The ground's detail: the two strongest of five photo layers (rarely do more meet), sampled at two
@@ -549,6 +570,7 @@ export function patchMaterial<T extends Material>(material: T, options: PatchOpt
   if (options.terrain) defines.ATM_TERRAIN = '';
   if (options.terrain && options.splat) defines.ATM_SPLAT = '';
   if (options.seasonal) defines.ATM_SEASONAL = options.seasonal === 'leaf' ? '1' : options.seasonal === 'tree' ? '2' : '3';
+  if (options.cull) defines.ATM_CULL = options.cull.toFixed(2);
   material.defines = { ...(material.defines ?? {}), ...defines };
 
   const key = `atm|${JSON.stringify(defines)}|${options.foliage ? 'f' : ''}|${options.vertex?.key ?? ''}`;
@@ -571,7 +593,7 @@ export function patchMaterial<T extends Material>(material: T, options: PatchOpt
       splatVertPars +
       (options.vertex?.pars ?? '') +
       shader.vertexShader
-        .replace('#include <begin_vertex>', `#include <begin_vertex>\n${options.vertex?.code ?? ''}`)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>\n${CULL_VERTEX}\n${options.vertex?.code ?? ''}`)
         .replace('#include <project_vertex>', PROJECT_VERTEX);
 
     let frag = shader.fragmentShader

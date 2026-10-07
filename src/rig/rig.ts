@@ -5,8 +5,8 @@ import { BoatBody, type Crew } from '../world/boatPhysics';
 import { BRIDGE, JOURNEY, SANKO, bridgeDeck, bridgeFrame, bridgeSoffit, inlandWaterAt, journeyAt, journeyFrame, sankoDeck, sankoFrame, terrainHeight, waterLevelAt, waterwayAt } from '../world/geography';
 import { sankoToWorld } from '../world/sites';
 import { FlyCam } from './flycam';
-import { HANDOFF, OPENING_SECONDS, openingFloor, openingPose, openingSide, wayAt, type RestPlace } from './opening';
-import { Composer, narrowScale, type Moment } from './compose';
+import { HANDOFF, OPENING_SECONDS, openingFloor, openingPose, openingSide, roundShare, wayAt, type RestPlace } from './opening';
+import { Composer, USUAL, narrowScale, type Moment, type Shot } from './compose';
 import { chooseShown, sightWeight, type Sight } from './showcase';
 import type { Sightlines } from './sightlines';
 
@@ -44,11 +44,10 @@ export const VIEWS = {
 export type ViewName = keyof typeof VIEWS | 'auto';
 
 /**
- * Where the opening flight ends (and the camera rests, should the viewer pick no view and take the camera): low
- * over the water ahead of her and to the flight's side, looking back at her coming on, her majhi and the morning
- * behind her (its yaw's sign set by that side: `beginOpening`).
+ * Where the camera rests after the opening flight, should the viewer pick no view and take the camera: behind her on
+ * the flight's side, about where the flight ends (its yaw's sign set by that side: `beginOpening`).
  */
-const OPENING_VIEW: View = { yaw: Math.PI - 0.8, pitch: 0.09, dist: 15 };
+const OPENING_VIEW: View = { yaw: 0.26, pitch: 0.33, dist: 22 };
 
 /**
  * Following the boat under the old bridge, the camera eases down under its arch (or, over the banks, up
@@ -147,12 +146,23 @@ export class Rig {
   private readonly fly = new FlyCam();
   /** The opening flight while it runs: how far into it (s), the side of the river it comes down over, the floor laid for it. */
   private opening: { t: number; side: number; floor: Float32Array } | null = null;
-  /** Where the follow camera is, in her way's frame: where the opening flight ends. */
-  private readonly restAt: RestPlace = { a: 0, c: 0, h: 0, focus: 0 };
+  /**
+   * The shot the opening flight hands the camera over in: the composer's usual one (compose.ts `USUAL`) on the
+   * flight's side, her on the third away from the camera, so it looks on ahead along her way (on the nearer third
+   * the look swung back against the flight's turn as it settled); and where it is in her way's frame (`restAt`).
+   */
+  private readonly handOver: Shot = { bearing: 0, dist: 0, high: 0, third: 1 };
+  private readonly restAt: RestPlace = { a: 0, c: 0, h: 0, focus: 0, wide: 1 };
+  /** Her middle, where the opening flight looks round her (as the composer frames her). */
+  private readonly herMid = new Vector3();
   private readonly openPos = new Vector3();
   private readonly openLook = new Vector3();
   private readonly openQuat = new Quaternion();
-  private readonly followQuat = new Quaternion();
+  private readonly endPos = new Vector3();
+  private readonly endLook = new Vector3();
+  private readonly endQuat = new Quaternion();
+  private readonly pathEnd = new Vector3();
+  private readonly pathEndLook = new Vector3();
   private readonly lookAt = new Matrix4();
   /** The village's sights along her way (showcase.ts), and the composer of the views left to itself (compose.ts). */
   private sights: readonly Sight[] = [];
@@ -270,34 +280,58 @@ export class Rig {
     this.idle = 0;
   }
 
-  /** Starts the opening flight: from high over the river ahead of her, down over the village's bank to her. */
+  /** Starts the opening flight: from high over the river ahead of her, down over the village's bank to her, and round behind her. */
   beginOpening(): void {
     this.setMode('follow');
-    // it ends on the side it comes down over (+1 her left: a yaw that takes the camera round to her left is negative)
+    // it ends behind her on the side it comes down over (+1 her left: a yaw that takes the camera round to her left
+    // is negative), in the composer's own shot there
     const side = openingSide(this.along);
     this.rest = { ...OPENING_VIEW, yaw: -side * OPENING_VIEW.yaw };
     this.settle(this.rest);
     // (left alone from now: settle() holds a still's camera as it is, which would keep the composer from ever
     // taking over after the flight until the viewer had touched something)
     this.idle = 0;
-    // the follow camera posed once, for where the flight ends
+    // (on a narrow screen farther out, as the composer weighs its shots, and the flight round her with it)
+    const wide = narrowScale(this.camera) ** 0.6;
+    const s = this.handOver;
+    s.bearing = side * USUAL.bearing;
+    s.dist = USUAL.dist * wide;
+    s.high = USUAL.high;
+    s.third = side;
+    this.restAt.wide = wide;
+    // the follow camera posed once, for what the flight looks at
     const b = this.boat;
     this.orbit(b.pos.x, b.pos.z, b.course, 0, b.pos.y + 2.2, 3);
-    this.restPlace();
+    this.restPlace(this.fillMoment());
     this.opening = { t: 0, side, floor: openingFloor(this.along, side, this.restAt, b.pos.y, this.lines) };
   }
 
-  /** Where the follow camera is now and what it looks at (orbit() has posed it), in her way's frame at her place (`restAt`). */
-  private restPlace(): void {
+  /**
+   * Where the opening flight ends: its hand-over shot for her place and course now, where the composer would stand
+   * in it (`endPos`, framed: `endLook`; drawn in where the bank closes in), given the moment it weighs; and what the
+   * follow camera looks at (orbit() has posed it). In her way's frame at her place (`restAt`).
+   */
+  private restPlace(m: Moment | null): void {
+    const b = this.boat;
+    const s = this.handOver;
+    const c = this.composer;
+    if (c && m) c.poseOf(s, m, this.endPos, this.endLook);
+    else {
+      const toward = b.course + s.bearing;
+      this.endPos.set(b.pos.x + Math.sin(toward) * s.dist, b.pos.y + s.high, b.pos.z + Math.cos(toward) * s.dist);
+    }
     const p = wayAt(this.along);
     const fx = Math.sin(p.heading);
     const fz = Math.cos(p.heading);
-    const dx = this.camera.position.x - p.x;
-    const dz = this.camera.position.z - p.z;
+    const dx = this.endPos.x - p.x;
+    const dz = this.endPos.z - p.z;
     this.restAt.a = dx * fx + dz * fz;
     this.restAt.c = dx * fz - dz * fx;
-    this.restAt.h = this.camera.position.y - this.boat.pos.y;
-    this.restAt.focus = (this.target.x - p.x) * fx + (this.target.z - p.z) * fz;
+    this.restAt.h = this.endPos.y - b.pos.y;
+    // (it goes round her middle, where it looks and the composer frames her from: going round a point ahead of her
+    // while looking at her, its look turned quicker than it went round as it came behind her)
+    this.herMid.set(b.pos.x, b.pos.y + 1.3, b.pos.z);
+    this.restAt.focus = (this.herMid.x - p.x) * fx + (this.herMid.z - p.z) * fz;
   }
 
   /** Ends the opening flight (the viewer took the camera, or the film began): the camera eases over to her. */
@@ -578,30 +612,59 @@ export class Rig {
   }
 
   /**
-   * The opening flight's frame, over the follow camera's (orbit() has just posed it): the flight's own pose,
-   * easing into the follow camera's over its last seconds, so it hands over without a seam.
+   * The opening flight's frame, over the follow camera's (orbit() has just posed it): the flight's own pose, easing
+   * over its last seconds into its hand-over shot as the composer stands in it, placed and framed as it frames; at
+   * its end the composer takes the camera there, and nothing moves. (Without a composer it eases into the follow
+   * camera's pose, which takes over as it is.)
    */
   private flyOpening(dt: number): void {
     const o = this.opening;
     if (!o) return;
-    o.t += dt;
-    if (o.t >= OPENING_SECONDS) {
-      this.opening = null;
+    o.t = Math.min(o.t + dt, OPENING_SECONDS);
+    const c = this.composer;
+    const m = c ? this.fillMoment() : null;
+    this.restPlace(m);
+    const b = this.boat;
+    openingPose(o.t, this.along, o.side, this.restAt, b.pos.y, this.target, this.herMid, o.floor, this.openPos, this.openLook);
+    const cam = this.camera;
+    // (smootherstep eases: their acceleration too starts from nothing and ends in it)
+    const smoother = (x: number) => x * x * x * (x * (6 * x - 15) + 10);
+    if (!c || !m) {
+      // no composer to hand over to: eased into the follow camera's pose, which takes over as it is
+      const e = smoother(clamp((o.t - (OPENING_SECONDS - HANDOFF)) / HANDOFF, 0, 1));
+      this.endQuat.copy(cam.quaternion);
+      this.lookAt.lookAt(this.openPos, this.openLook, cam.up);
+      this.openQuat.setFromRotationMatrix(this.lookAt);
+      cam.position.lerpVectors(this.openPos, cam.position, e);
+      cam.quaternion.slerpQuaternions(this.openQuat, this.endQuat, e);
+      cam.updateMatrixWorld();
+      if (o.t >= OPENING_SECONDS) this.opening = null;
       return;
     }
-    this.restPlace();
-    openingPose(o.t, this.along, o.side, this.restAt, this.boat.pos.y, this.target, o.floor, this.openPos, this.openLook);
-    this.lookAt.lookAt(this.openPos, this.openLook, this.camera.up);
-    this.openQuat.setFromRotationMatrix(this.lookAt);
-    // (a smootherstep: its acceleration too starts from nothing; a smoothstep's set off with a jolt where the
-    // flight's pose still stood well off the follow camera's)
-    const u = clamp((o.t - (OPENING_SECONDS - HANDOFF)) / HANDOFF, 0, 1);
-    const e = u * u * u * (u * (6 * u - 15) + 10);
-    const cam = this.camera;
-    this.followQuat.copy(cam.quaternion);
-    cam.position.lerpVectors(this.openPos, cam.position, e);
-    cam.quaternion.slerpQuaternions(this.openQuat, this.followQuat, e);
+    // its place: the flight's own ends where the composer stands in the hand-over shot but for her way's bends, and
+    // that little is taken up over its last seconds (not the way still to go: that cut its last move short); its look
+    // from looking at her to the composer's framing from where it is, turning the way the flight turns
+    openingPose(OPENING_SECONDS, this.along, o.side, this.restAt, b.pos.y, this.target, this.herMid, o.floor, this.pathEnd, this.pathEndLook);
+    const e = smoother(clamp((o.t - (OPENING_SECONDS - HANDOFF)) / HANDOFF, 0, 1));
+    cam.position.copy(this.endPos).sub(this.pathEnd).multiplyScalar(e).add(this.openPos);
+    this.lookAt.lookAt(cam.position, this.openLook, cam.up);
+    cam.quaternion.setFromRotationMatrix(this.lookAt);
+    const w = roundShare(o.t, this.restAt);
+    if (w > 0) {
+      c.lookFrom(cam.position, m, this.handOver.third, this.endLook);
+      this.lookAt.lookAt(cam.position, this.endLook, cam.up);
+      this.endQuat.setFromRotationMatrix(this.lookAt);
+      cam.quaternion.slerp(this.endQuat, w);
+    }
     cam.updateMatrixWorld();
+    if (o.t < OPENING_SECONDS) return;
+    // the end: the composer takes the camera where it stands, framed as it frames (and should a sky event want
+    // watching, or a view be picked, the follow camera takes it from there: `stopComposing`)
+    this.opening = null;
+    c.takeFrom(cam, m, this.handOver.third);
+    this.composing = true;
+    this.showPos.copy(cam.position);
+    this.showLook.copy(this.endLook);
   }
 
   /**

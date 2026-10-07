@@ -3,7 +3,7 @@
 Standalone site: Vite 8 + TypeScript 7 + three r186. Almost everything (terrain, trees, grass, houses, boats, most textures, sound) is generated in code. There are two exceptions:
 
 - six CC0 Poly Haven textures (colour + normal, 1K WebP, ≈4.5 MB) in `public/textures/`, for the ground layers and the bark;
-- the people, built as game characters are, from MakeHuman's CC0 body, skeleton, skins, eyes, brows, lashes and hair (`public/humans/`, ≈1.9 MB, made by `scripts/humans/`);
+- the people, built as game characters are, from MakeHuman's CC0 body, skeleton, skins, eyes, brows, lashes and hair (`public/humans/`, ≈1.3 MB, made by `scripts/humans/`);
 - the brand (`public/brand/`, the user's request): the logo and the icons made from it (`scripts/brand/icons.mjs`), and the loader's backdrop, a still of this world (`loader.webp`).
 
 There are no audio files and no map data.
@@ -56,15 +56,14 @@ There are no audio files and no map data.
   1. `node scripts/humans/fetch.mjs` downloads into `scripts/humans/cache/` (git-ignored): the base mesh, the default skeleton and weights, the macro targets, and the modelling targets the characters' `mods` name. From the 280 MB system asset pack it takes only the members `config.mjs` lists (`PACK_FOLDERS`), by range requests (`scripts/geo/lib/zip.mjs`).
   2. `node scripts/humans/build.mjs` builds the characters of `config.mjs` into `public/humans/humans.json` + `humans.bin` (deflate-raw; arrays shared between characters are stored once), and writes `cache/textures.json`. The characters (`CHARACTERS`) are:
      - `majhi`: the older men (salt rakers, reapers, the gher's keeper);
-     - `tarun`: the young majhi the film follows;
-     - `meye`: the girl on the bridge.
+     - `tarun`: the young majhi the film follows.
 
      Each is defined by:
      - macro sliders, and `mods` (face and build from MakeHuman's targets, with weights);
      - height, and skins (`tone`);
      - eyes, brows and lashes;
      - hair: `loose` hair gets a measured wind reach for each vertex (`free`) and a number for each card (`lock`); `tuck` lifts the fringe above the headband;
-     - `wear`: `sando`, `lungi` or `blouse`.
+     - `wear`: `sando` or `lungi`.
   3. `python scripts/humans/textures.py` (Python 3 + Pillow) makes the WebP textures.
 
   Never hand-edit `public/humans/`.
@@ -82,9 +81,13 @@ There are no audio files and no map data.
   - Its least height is a floor laid out for the whole flight as it sets off and eased in time (`openingFloor`), met by a soft max. A clamp that switched on a threshold (`terrain + (h > 20 ? 22 : 1.6)`) made the drone catch on the bank's trees and jump clear.
   - It is laid in the way's frame by `wayAt`, the heading taken across ±`TANGENT` m. The journey's own heading turns in steps every 2 m, and 60 m out each step jolted the camera sideways (≈300 m/s² for a frame).
   - Its keys are unevenly spaced in time, so their slopes are per second (`curve`). A uniform Catmull-Rom made the pace jump at every key (21 → 26 m/s).
-  - Past her it goes round by the bearing of what the follow camera looks at (`roundAt`), out over the open water. A path straight over her whipped the picture round at 130°/s. Check any change with `__river.flight()` (verification.md).
+  - Round her it goes by its bearing about her middle, where it looks (`roundAt`, `bearingAt`: gathering to an even turn and settling), out over the open water. A path straight over her whipped the picture round at 130°/s; going round a point ahead of her bow while looking at her middle, the look turned quicker than the bearing behind her (25°/s).
+  - It ends in the composer's own shot (`handOver` from compose.ts `USUAL`, placed and framed by `poseOf`), and the composer takes the camera there in the frame it ends (`takeFrom` with the third). Ended at the follow camera's pose, the composer held it ≈4 s while it weighed and the user saw the camera stop in front of her. Only the difference between its own end and the composer's stand is taken up over its last seconds (blended toward where it was still going, its last move stopped at 9 m/s²), and its look comes into the composer's framing by its progress round her (`roundShare`), her on the third away from the camera (on the nearer one the look swung back against its turn as it settled).
+  - Check any change with `__river.flight()` and a recording from load (verification.md).
+- A camera posed anywhere but the follow camera's pose must be taken over in the frame it is let go (`composing`, `showPos`/`showLook`): the next frame's `orbit()` would put it back at the follow pose for a frame.
+- A canvas resized after a frame is drawn goes out blank for that frame (the page's background flashes through). The adaptive resolution's new size is taken up just before the next frame is drawn (`resizeDue`, main.ts), never at the end of one.
 - An SVG element's CSS `transform` replaces its `transform` attribute: animate an inner group (the loader's boat bobs inside the group that places it).
-- The scene never remakes its own matrix (`scene.matrixAutoUpdate = false`, main.ts), and a group that never moves is added through `still()`: the frame's matrix update passes over it. A parent that remakes its matrix makes its whole subtree's be remade (three forces it), so a container that never moves but holds moving or hidden things must not either (the salt farms' group: every hidden crew was remade every frame). Something hidden and not posed (a salt crew, the reapers out of season) has `matrixWorldAutoUpdate` follow its visibility.
+- The scene never remakes its own matrix (`scene.matrixAutoUpdate = false`, main.ts). three's frame walk visits every node whatever its flags (`matrixWorldAutoUpdate = false` spares only that node's own product), and a node that remakes its own matrix makes its whole subtree's be remade. So a group that never moves is added through `still()`, which makes its matrices once and turns `matrixAutoUpdate` off on every node in it: nothing in it may be moved afterwards, or it stands where it was (the frozen-nodes check, verification.md, finds one). A container that never moves but holds moving things stays out of `still()` (the salt farms' group). Something hidden and not posed (a salt crew out of its work, the reapers out of season) is passed over whole while hidden (`holdWhileHidden`, render/cull.ts): hidden crews were remade every frame.
 - `Pipeline.render` brings the world's matrices up to date once, in its first pass (the mirror's); nothing may move between its passes. Moving things between two of its calls (`drawLeaving` moving the boat) is fine: each call updates in its first pass.
 - A value kept to be compared with `===` must be kept at the precision it is computed in: the fireflies' places kept in a `Float32Array` never equalled themselves again, and every firefly was laid afresh (its ground and water asked) every frame.
 - Never toggle `visible` on a light. Changing the light count recompiles every material (a 60 ms+ hitch at sunset). Set the intensity to 0 instead.
@@ -117,7 +120,7 @@ There are no audio files and no map data.
 - The hero boat's frame is `HERO_SINK` (8 cm) below the water. Measure a height over the water from there: the paddle's `wet`, the recovery's lift, the blade tip's clearance. Measured from the frame's zero, the blade's tip dragged through the whole recovery. While he rests the paddle (`!rowing` at `REST_PHASE`), it drives nothing and needs no turning against (`boatPhysics.ts`).
 - The stroke's cross-grip must stay at chest height in front of the right shoulder for the young majhi's 1.71 m (the user saw his hand come up to his face). After any change, look at the whole stroke frame by frame (`__river.stroke(phase)` at ten phases, side and front).
 - The young majhi's mathal follows the weather by itself (hero.ts `hatWeather`). A scene that wants him bareheaded at its start says so after its world is set (`Stage.bareheaded`). `settleHat` clears the jump check (a scene's own placing of the boat is no jump); otherwise the next frame's jump check settles the hat back.
-- Stills cannot show what time does. The girl is put on one side of the deck by where the boat is, the hat by the weather, and the drops and the splash need frames. Judge the bridge's crossing, the hat's change, the umbrella's opening, the sap's drops and the sweeps live (from a film recording).
+- Stills cannot show what time does: the hat follows the weather, and the drops and the splash need frames. Judge the hat's change, the sap's drops and the sweeps live (from a film recording).
 - The journey is its own line (`journeyAt(s)`, with `s` in metres along it), not a waterway's middle. The boat steers along it, and the film and the stills place her by a share of `JOURNEY.length`. What stands by the water is placed from the waterways (`Waterway.beside`, `bankAt`), never from the journey.
 - A waterway's bank must be out of the water within a step of its edge (`wayGround`'s profile from `EDGE_DEPTH`). Ground below the water's level beyond the marked water stood as dark, undrained hollows (the char's beach did, with hyacinth in them).
 - The bil's lane cuts the ground only where it runs (`bilGround`: `bilLane` > 0). Taken as the bil's level everywhere, it flattened the whole rim to the water and left the fields standing 1.4 m over it in a straight cliff.
@@ -142,7 +145,7 @@ There are no audio files and no map data.
 - Check the winding of every new surface: the water grid's rings and four of the bridge's faces once faced inward and vanished.
   - `taperedTube` in `render/builder.ts` winds its triangles inward (known, not yet fixed project-wide). New single-sided geometry should wind outward; the sanko's bamboo uses a double-sided material.
   - A hull (`buildHull` in `hull.ts`) winds outward, and its inside is its back face, so every boat's material is two-sided. Wound inward, a dinghy's near side vanished and the hero was lit from within.
-- A body's sections are fitted with the tightest ellipse that holds the skin (`enclosing` in `human.ts`). Scaling both axes by the worst point made every waist 5–18% too wide, and the lungi and the lehenga stood out from the hips (the user saw it on every character).
+- A body's sections are fitted with the tightest ellipse that holds the skin (`enclosing` in `human.ts`). Scaling both axes by the worst point made every waist 5–18% too wide, and the lungi stood out from the hips (the user saw it on every character).
 - The cast net is drawn after the water while it is above it (`renderOrder` 1) and before it once sunk (−2). Drawn before the water in flight, the water painted over it and the net vanished between the hands and the splash.
 - A scene's `begin(stage, at)` is given the seconds into the scene a still starts at. A cue that runs on its own clock (the casts, the film's petal) starts that far on, or a still shows it at its start.
 - The film's petal follows a way worked out when it is cued (`HeroPetal.aim`). The camera reads that way (`PetalWay.at`, `slowAt`), never the mesh, so a still and the film agree and the warm-ahead can guess the shot.
@@ -153,7 +156,7 @@ There are no audio files and no map data.
 - A moored boat's line rides with her by its share of the way from its post to her stem (`aMoor.w`), and she swings about her stem (`aPivot`): anything tied to a floating thing is built that way, or its fixed end lifts with the season's water.
 - The shot being left is posed every frame by its own `pose` through the ghost stage. Whatever a pose reads must be the left shot's own: its boat, course, sun and moon are kept in `Outgoing` (a night shot posed by the incoming dawn's moon jumped to the boat's other side). A scene that moves the boat in `begin` is caught by `enter` comparing where she was; otherwise the left shot loses her and shows her hole in the water.
 - A map place's visit (rig/visits.ts) plays through the director in the viewer's own world. What belongs to the film alone (the clock's pace, the turning year held off, the scene bar, the arrows through its scenes, backToToday) checks `filming()` in main.ts, not `director.active`: with `director.active` the year switched to the clock's day mid-visit and the land's season jumped. A visit's `sync` is the part of its place on the boat's way its shots show from the water (the zamindar's ghat, not its house set back: timed to the house, she was past the ghat when the camera came back).
-- Give a scene's boat place as its `journey`, worked out when the scenes are built (`tourScenes`: the kash's from the vegetation, the sunset's from astro's `sunDirectionOn`), never in `begin`. The warm-ahead poses the next shot before its `begin` runs, so a place set there was never built ahead, and its cut stalled (≈0.9 s). Keep no state across frames in tour.ts's shared scratch vectors.
+- Give a scene's boat place as its `journey`, worked out when the scenes are built (`tourScenes`: the kash's from the vegetation, the sunset's from astro's `sunDirectionOn`), never in `begin`. The warm-ahead poses the next shot before its `begin` runs, so a place set there was never built ahead, and its cut stalled (≈0.9 s). A further shot (`shot: true`) may have its own `journey`, for a cut that leaves time out (the old bridge's three shots); a still of a later shot reckons her place from the last shot that put her somewhere. Keep no state across frames in tour.ts's shared scratch vectors.
 - The people of a shot being left go on working through its dissolve: whatever is posed only near the camera also takes the leaving shot's camera (`director.leaving`). Before that, the salt rakers stopped mid-stroke.
 - A cut in the film is a dissolve between two moving shots, each drawn every frame in its own world (main.ts `drawLeaving`).
   - Never hold a frame or let a shot come to rest: the user asked for one continuous film, "like a video". Never fly the camera between scenes or recompose the shots: the user rejected that.
@@ -175,7 +178,7 @@ There are no audio files and no map data.
   - A stem keeps its length as it bends, so what is carried over comes down.
   - A big plant answers the gusts late (`uGust.y`, how far the fronts roll in a second: the past at a point is the present downwind).
   - The wood and the leaves of one plant must share `wind` and `windHeight`, or the crown parts from its trunk (the tal's fans and the banana's stem did).
-- Things that move must not cast shadows, because the shadow map is not redrawn every frame (the hero boat, the girl, the train). This includes the moored boats: their vertex shader lifts them onto the water, and the shadow pass would draw them unlifted.
+- Things that move must not cast shadows, because the shadow map is not redrawn every frame (the hero boat, the people, the train). This includes the moored boats: their vertex shader lifts them onto the water, and the shadow pass would draw them unlifted.
 - The water reads the key light's shadow map through getters (`Water.takeShadow`), because a dissolve swaps the light's map for the shot being left. In shadow the sun's glitter goes out; the reflection stays.
 - The level map's `a` is the sea's exposure over the sea and, over inland water, how clear it is kept (GLSL `waterClarity`: the mosque's pond). Read it as clarity only where `g` (the sea) is 0.
 - Camera-facing quads built in a vertex shader (the rain, the lightning) must be `DoubleSide`.

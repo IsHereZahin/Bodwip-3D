@@ -125,9 +125,6 @@ export interface Stage {
   lightning(seconds: readonly number[]): void;
   /** The scene's clock at this many hours past its opening hour (`SceneWorld.sweep`). */
   sweep(hours: number): void;
-  /** The girl on the bridge: her head (world) and which way she faces (yaw). */
-  readonly girlHead: Vector3;
-  readonly girlYaw: number;
   /** The majhi bareheaded, his mathal set down (as the rain begins: he will see to it himself, hero.ts). */
   bareheaded(): void;
   /** The date palm the film climbs (world/khejur.ts): its foot, its tapping cut, its pot's mouth, the way the cut faces; and the shot of its sap begun. */
@@ -155,16 +152,16 @@ export interface Scene {
   caption: string;
   seconds: number;
   /**
-   * A further shot of the scene before it, cut to as a film cuts within a scene (a short dissolve): its world and
-   * the boat go on as they are (its own `world` and `journey` unused), and the viewer's previous and next pass
-   * the whole scene.
+   * A further shot of the scene before it, cut to as a film cuts within a scene (a short dissolve): its world goes
+   * on as it is (its own `world` unused), and so does the boat unless it has its own `journey` (a cut that leaves
+   * time out: she is put on there). The viewer's previous and next pass the whole scene.
    */
   shot?: boolean;
   /** How long (s) it dissolves in over the shot before it, if not the usual (`DISSOLVE`, or `SHOT_DISSOLVE` for a further shot). */
   dissolve?: number;
   /** Its world; a visit's shots have none (they are seen in the viewer's own). */
   world?: SceneWorld;
-  /** Where the boat is on her journey as the scene opens, for scenes in her waters; else she goes on. */
+  /** Where the boat is on her journey as the scene (or a further shot) opens, for scenes in her waters; else she goes on. */
   journey?: number;
   /**
    * Once, as the scene opens and after its world is set: cue the birds or the train. `at`: seconds into the scene
@@ -473,14 +470,19 @@ export class Director {
     this.visitShots = null;
     this.playing = true;
     const i = ((index % this.scenes.length) + this.scenes.length) % this.scenes.length;
-    // a later shot of a scene: the scene opened (its cues as far on), and the boat on as far as she would have come by then
+    // a later shot of a scene: the scene opened (its cues as far on), and the boat on as far as she would have come by
+    // then from the last shot that put her somewhere (the scene's first, or a later one leaving time out)
     const first = this.firstShot(i);
     let elapsed = this.scenes[i].seconds * clamp(u, 0, 1);
     for (let k = first; k < i; k++) elapsed += this.scenes[k].seconds;
     this.enter(first, elapsed);
     if (i !== first) {
-      const opening = this.scenes[first].journey;
-      if (opening !== undefined) this.stage.placeBoat(Math.min(1, opening + (elapsed * CRUISE) / JOURNEY.length));
+      let from = first;
+      for (let k = first + 1; k <= i; k++) if (this.scenes[k].journey !== undefined) from = k;
+      let since = this.scenes[i].seconds * clamp(u, 0, 1);
+      for (let k = from; k < i; k++) since += this.scenes[k].seconds;
+      const placed = this.scenes[from].journey;
+      if (placed !== undefined) this.stage.placeBoat(Math.min(1, placed + (since * CRUISE) / JOURNEY.length));
       this.index = i;
     }
     const scene = this.scenes[this.index];
@@ -521,11 +523,9 @@ export class Director {
     if (!scene.shot) this.sceneTime = 0;
     this.boatWas.copy(this.stage.boatPos);
     this.dissolveFor = scene.dissolve ?? (scene.shot ? SHOT_DISSOLVE : DISSOLVE);
-    // a further shot of the same scene: its world goes on as it is
-    if (!scene.shot) {
-      if (scene.world) this.stage.set(scene.world);
-      if (scene.journey !== undefined) this.stage.placeBoat(scene.journey);
-    }
+    // a further shot of the same scene: its world goes on as it is (and the boat, unless the cut leaves time out)
+    if (!scene.shot && scene.world) this.stage.set(scene.world);
+    if (scene.journey !== undefined) this.stage.placeBoat(scene.journey);
     scene.begin?.(this.stage, at);
     // the shot being left keeps the boat where it had her if this one put her elsewhere (by its journey or in its
     // `begin`: the sunset's and the kash's do), or it would lose her and show her hole in the water

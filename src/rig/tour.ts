@@ -4,7 +4,7 @@ import { sunDirectionOn } from '../env/astro';
 import { makeSeasonState, seasonAt } from '../env/season';
 import { plotCropAt } from '../world/crops';
 import { FISHER_SITE } from '../world/fisher';
-import { BIL, BRIDGE, HOMESTEAD_MOUNDS, JOURNEY, SALT_CREEK, SANKO, WATER_LEVEL, bridgeDeck, bridgeFrame, bridgeToWorld, corridorDistance, journeyAt, journeyFrame, journeyHalfWidth, landUse, saltPoint, shapePoint, terrainHeight, waterLevelAt, waterRise, waterwayAt } from '../world/geography';
+import { BIL, BRIDGE, HOMESTEAD_MOUNDS, JOURNEY, SALT_CREEK, SANKO, WATER_LEVEL, bridgeToWorld, corridorDistance, journeyAt, journeyFrame, journeyHalfWidth, landUse, saltPoint, shapePoint, terrainHeight, waterLevelAt, waterRise, waterwayAt } from '../world/geography';
 import { bloomRank } from '../world/leaves';
 import { LILY_PONDS } from '../world/ponds';
 import { SALT_FIELD, type Pt } from '../world/plan';
@@ -20,9 +20,8 @@ import type { PetalWay, Scene, SceneWorld, Stage } from './director';
 // The film tour: a year in the village round its young majhi, as a short film would tell it. A winter dawn
 // rising over the misty khal, the date palms' sap dripping into its pots, the young majhi paddling down the river
 // in the morning sun, the village's ghat, the road between its tal palms, the mustard and the salt field, the
-// afternoon train; spring's blossom and a nor'wester; the rain coming on as he puts on his mathal, and on the old
-// bridge in the rain a girl with a red umbrella who watches him come and go under it (seven shots); the salt
-// field kept as a gher, the aman in the floods, the shapla bil; a pond, the kash, the majhi with his net, the
+// afternoon train; spring's blossom and a nor'wester; the rain coming on as he puts on his mathal, and the old
+// bridge in the rain as he comes up the khal and out from under its arch (three shots); the salt field kept as a gher, the aman in the floods, the shapla bil; a pond, the kash, the majhi with his net, the
 // reaping; and the evening on the water: a sunset seen whole, the moon rising, the night. What each caption
 // names is what its shot looks at: the places are found from the village as it stands (the crops a season gives
 // a field, the trees in flower, the homestead nearest the water), not guessed.
@@ -384,10 +383,10 @@ const SALT_MEN = rakerStations();
 /** How high (rad) the night's last shot looks toward the moon's bearing. */
 const NIGHT_LIFT = 0.38;
 
-/** The bridge's scene: the rains, an afternoon of drizzle (the girl's umbrella open, the majhi's mathal on). */
 /** The fisherman's world: an autumn afternoon, the low sun behind the camera, still air. */
 const FISHER_WORLD: SceneWorld = { day: 300, hour: 16.3, weather: 'clear', wind: 0.3 };
 
+/** The bridge's scene: the rains, an afternoon of drizzle (the majhi's mathal on). */
 const BRIDGE_WORLD: SceneWorld = { day: 205, hour: 15.6, weather: 'rain', wind: 0.5, rain: [[0, 0.5], [1, 0.5]], wet: [[0, 0.96], [1, 0.96]] };
 
 /** A point of the bridge's frame (`bx` along it, `bz` along the khal) `up` m above the khal's water. */
@@ -403,7 +402,7 @@ function onBridgeFrame(bx: number, bz: number, up: number, out: Vector3): Vector
  * over the khal from the air, the date palms' sap, the young majhi, the village's ghat, the road out between its
  * tal palms, the mustard beside it, the salt field where the creek brings the sea's water, the afternoon train
  * across the mustard); the turning year (spring's red blossom, a nor'wester); the rains (the rain coming on the
- * khal, the girl on the bridge, the salt field kept as a fish gher, the aman planted in the floods, the shapla
+ * khal, the old bridge in the rain, the salt field kept as a fish gher, the aman planted in the floods, the shapla
  * bil); autumn and the harvest (a pond, the kash, the majhi's net, the reaping); and the evening on the water to
  * the night. Each shot is chosen for its subject: wide where a place is set, low and close where a hand works,
  * rising where the land should open out; and runs as long as its story needs.
@@ -695,14 +694,15 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
         look.set(hub.x + ux * 3, surface() + lerp(1.2, 2.2, ease(u)), hub.z + uz * 3);
       },
     },
-    // the bridge, in the rain: the girl with her red umbrella sees the majhi coming up the khal, watches him come,
-    // crosses the deck as he goes under it and watches him go. Seven shots, cut as a film cuts within a scene.
+    // the old bridge, in the rain: the majhi coming up the khal toward its arch, and out from under it. Three shots,
+    // cut as a film cuts within a scene; the cuts leave time out, each later shot putting the boat on where she
+    // would be by then at her usual way
     {
-      caption: 'লাল ছাতা',
+      caption: 'পুরনো সেতু',
       seconds: 6.5,
       world: BRIDGE_WORLD,
       journey: fractionAt(JOURNEY.bridge - 28),
-      // wide: low behind and beside the boat on the khal, the old bridge ahead with the red umbrella on it
+      // wide: low behind and beside the boat on the khal, the old bridge ahead
       pose: (u, _s, pos, look) => {
         onWay(JOURNEY.bridge - lerp(37, 33, u), 4.6, 1.5, pos);
         onBridgeFrame(-0.6, 0, BRIDGE.crown - 0.6, look);
@@ -713,41 +713,12 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       seconds: 4.5,
       shot: true,
       world: BRIDGE_WORLD,
-      // medium on the girl, from out over the khal before her: her face turned down to the boat coming, the umbrella
-      // over her, the parapet's coping under her hand
-      pose: (u, s, pos, look) => {
-        const g = s.girlHead;
-        const f = bridgeFrame(g.x, g.z);
-        onBridgeFrame(f.x + lerp(1.9, 1.6, u), -BRIDGE.width / 2 - lerp(1.3, 1.05, u), 0, pos);
-        pos.y = g.y - 0.15;
-        look.copy(g).setY(g.y - 0.12);
-      },
-    },
-    {
-      caption: '',
-      seconds: 4.5,
-      shot: true,
-      world: BRIDGE_WORLD,
+      journey: fractionAt(JOURNEY.bridge - 14.8),
       // tracking with the boat, low over his left shoulder from behind: him paddling under his mathal, the bridge
-      // ahead with the red umbrella on it, coming nearer
+      // ahead coming nearer
       pose: (u, s, pos, look) => {
         rel(s, lerp(-4.9, -5.1, u), -1.25, 2.05, pos);
-        rel(s, 1.5, 0.3, 1.6, look).lerp(s.girlHead, 0.2);
-      },
-    },
-    {
-      caption: '',
-      seconds: 9,
-      shot: true,
-      world: BRIDGE_WORLD,
-      // on the deck, from down its slope: she turns from the parapet as he goes under and crosses to the other
-      pose: (u, s, pos, look) => {
-        const g = s.girlHead;
-        const along = tmpA.set(Math.cos(BRIDGE.angle), 0, -Math.sin(BRIDGE.angle));
-        const bx = bridgeFrame(g.x, g.z).x - lerp(5.6, 5.0, u);
-        onBridgeFrame(bx, lerp(-0.6, 0.4, u), 0, pos);
-        pos.y = BRIDGE.water + bridgeDeck(bx) + 1.45;
-        look.copy(g).setY(g.y - 0.25).addScaledVector(along, -0.2);
+        rel(s, 1.5, 0.3, 1.6, look).lerp(onBridgeFrame(-0.6, 0, BRIDGE.crown - 0.6, b), 0.2);
       },
     },
     {
@@ -755,39 +726,11 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       seconds: 4.5,
       shot: true,
       world: BRIDGE_WORLD,
+      journey: fractionAt(JOURNEY.bridge + 1.4),
       // low on the water up the khal: the boat coming out from under the arch toward the camera, and past it
       pose: (u, s, pos, look) => {
         onWay(JOURNEY.bridge + lerp(27, 24, u), 4.2, 1.0, pos);
         rel(s, 0, 0, 1.2, look).lerp(onBridgeFrame(0, 0, BRIDGE.crown - 1.5, b), 0.35);
-      },
-    },
-    {
-      caption: '',
-      seconds: 5,
-      shot: true,
-      world: BRIDGE_WORLD,
-      // over her shoulder at the far parapet: past her and her umbrella down to the boat going on up the khal
-      pose: (u, s, pos, look) => {
-        const g = s.girlHead;
-        const fwd = tmpA.set(Math.sin(s.girlYaw), 0, Math.cos(s.girlYaw));
-        const right = tmpB.set(-fwd.z, 0, fwd.x);
-        pos.copy(g).addScaledVector(fwd, lerp(-2.0, -1.8, u)).addScaledVector(right, 0.9).setY(g.y + lerp(1.0, 0.9, u));
-        rel(s, 0.5, 0, 0.6, look);
-      },
-    },
-    {
-      caption: '',
-      seconds: 6,
-      shot: true,
-      world: BRIDGE_WORLD,
-      // close on her face from beyond the far parapet: she watches him go up the khal, her hair stirring in the
-      // wet wind under the red paper, the camera drawing in
-      pose: (u, s, pos, look) => {
-        const g = s.girlHead;
-        const fwd = tmpA.set(Math.sin(s.girlYaw), 0, Math.cos(s.girlYaw));
-        const right = tmpB.set(-fwd.z, 0, fwd.x);
-        pos.copy(g).addScaledVector(fwd, lerp(1.45, 1.1, ease(u))).addScaledVector(right, lerp(-0.6, -0.45, u)).setY(g.y - 0.12);
-        look.copy(g).setY(g.y - 0.06);
       },
     },
     {

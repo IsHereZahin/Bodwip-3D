@@ -4,6 +4,7 @@ import { smoothstep } from '../core/mathx';
 import { Rng } from '../core/rng';
 import { windAt } from '../env/wind';
 import { MeshBuilder, rgb, scaleRgb } from '../render/builder';
+import { holdWhileHidden } from '../render/cull';
 import { patchMaterial } from '../render/patch';
 import { softSpotTexture } from '../render/textures';
 import { Boatman, type Outfit, type OarPose } from './boatman';
@@ -174,6 +175,8 @@ export class Harvest {
     sheafMesh.receiveShadow = true;
     this.group.add(sheafMesh);
     this.group.visible = false;
+    // out of season the reapers are neither drawn nor posed (update): their matrices wait as they stood
+    holdWhileHidden(this.group);
   }
 
   /**
@@ -181,8 +184,7 @@ export class Harvest {
    * while `eye` (or `also`, a shot's still dissolving away) is near.
    */
   update(dt: number, t: number, eye: Vector3, ripe: number, also: Vector3 | null = null): void {
-    // (out of season the reapers are neither drawn nor posed: their matrices wait as they stood)
-    this.group.visible = this.group.matrixWorldAutoUpdate = ripe > 0.35;
+    this.group.visible = ripe > 0.35;
     const far = (p: Vector3) => Math.hypot(p.x - this.at.x, p.z - this.at.z) > 250;
     if (!this.group.visible || (far(eye) && (!also || far(also)))) return;
     for (const r of this.reapers) r.update(dt, t);

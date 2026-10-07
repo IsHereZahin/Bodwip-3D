@@ -34,6 +34,20 @@ export function cullBeyond(root: Object3D, far: number): void {
   });
 }
 
+/**
+ * Leaves the matrices under `group` as they stood while it is hidden. three's frame walk goes into every child
+ * whatever its flags, remaking each one that remakes its own; something hidden and never posed while hidden (a
+ * salt crew out of its work, the reapers out of season) has nothing under it that moves, and when it is shown the
+ * walk takes it up whole (its own matrix remade forces its children's). Nothing posing it may read its world
+ * matrices before the frame it is shown is drawn.
+ */
+export function holdWhileHidden(group: Object3D): void {
+  const walk = group.updateMatrixWorld;
+  group.updateMatrixWorld = function (this: Object3D, force?: boolean) {
+    if (this.visible) walk.call(this, force);
+  };
+}
+
 /** Call once a frame, before drawing, with the camera's position. */
 export function updateCulling(eye: Vector3): void {
   for (const e of entries) e.mesh.visible = e.centre.distanceTo(eye) - e.radius < e.far * reach;

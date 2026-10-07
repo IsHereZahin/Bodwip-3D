@@ -1,6 +1,7 @@
 import { BufferAttribute, BufferGeometry, DoubleSide, Group, InstancedBufferAttribute, InstancedMesh, Matrix4, MeshStandardMaterial, Quaternion, Vector3 } from 'three';
 import { LAYER_NO_REFLECT } from '../core/globals';
 import { Rng } from '../core/rng';
+import { sendFirst } from '../render/instancing';
 import { patchMaterial } from '../render/patch';
 import { terrainHeight, waterLevelAt } from './geography';
 import { FLAP, birdGeometry } from './life';
@@ -16,6 +17,7 @@ const BIRDS = 24;
 /** Perches are found within this of the camera (m); a bird farther off flies back in. */
 const NEAR = 40;
 const FAR = 85;
+const cellKey = (i: number, j: number) => (i + 32768) * 65536 + (j + 32768);
 /** Seconds a bird sits, at least and at most. */
 const SIT: [number, number] = [3, 14];
 /** Flying speed (m/s). */
@@ -73,10 +75,18 @@ export class Songbirds {
   private readonly scratch = { m: new Matrix4(), q: new Quaternion(), one: new Vector3(1, 1, 1), up: new Vector3(0, 1, 0), p: new Vector3() };
   private readonly birds: Bird[] = [];
   private readonly crowns: readonly Crown[];
+  /** The crowns' indices filed in FAR-wide squares, for the nearest crown within FAR (a scan of the whole list was every frame there was none near). */
+  private readonly grid = new Map<number, number[]>();
   private readonly rng = new Rng(63);
 
   constructor(crowns: readonly Crown[]) {
     this.crowns = crowns;
+    crowns.forEach((c, i) => {
+      const k = cellKey(Math.floor(c.x / FAR), Math.floor(c.z / FAR));
+      let list = this.grid.get(k);
+      if (!list) this.grid.set(k, (list = []));
+      list.push(i);
+    });
     this.group.name = 'songbirds';
     const color = '#2b2420';
     const sitMat = patchMaterial(new MeshStandardMaterial({ color, roughness: 0.85, side: DoubleSide }), {});
@@ -124,12 +134,21 @@ export class Songbirds {
       out.set(c.x + Math.cos(a) * d, c.y + c.r * 0.72, c.z + Math.sin(a) * d);
       return true;
     }
-    // no tree near by: search the whole list for the nearest crown
+    // no tree near by: the nearest crown within FAR (all such lie in the squares round the eye's; of equals, the
+    // first in the list)
     let best: Crown | null = null;
+    let bi = -1;
     let bd = Infinity;
-    for (const c of this.crowns) {
-      const d = Math.hypot(c.x - eye.x, c.z - eye.z);
-      if (d < bd) (bd = d), (best = c);
+    const ci = Math.floor(eye.x / FAR);
+    const cj = Math.floor(eye.z / FAR);
+    for (let i = ci - 1; i <= ci + 1; i++) {
+      for (let j = cj - 1; j <= cj + 1; j++) {
+        for (const n of this.grid.get(cellKey(i, j)) ?? []) {
+          const c = this.crowns[n];
+          const d = Math.hypot(c.x - eye.x, c.z - eye.z);
+          if (d < bd || (d === bd && n < bi)) (bd = d), (bi = n), (best = c);
+        }
+      }
     }
     if (!best || bd > FAR) return false;
     out.set(best.x, best.y + best.r * 0.72, best.z);
@@ -184,7 +203,7 @@ export class Songbirds {
     }
     this.sitting.count = ns;
     this.flying.count = nf;
-    this.sitting.instanceMatrix.needsUpdate = true;
-    this.flying.instanceMatrix.needsUpdate = true;
+    sendFirst(ns, this.sitting.instanceMatrix);
+    sendFirst(nf, this.flying.instanceMatrix);
   }
 }

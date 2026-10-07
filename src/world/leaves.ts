@@ -4,6 +4,7 @@ import { clamp, smoothstep } from '../core/mathx';
 import { glslHash12 } from '../core/noise';
 import { Rng } from '../core/rng';
 import { gustAt, windAt } from '../env/wind';
+import { sendFirst } from '../render/instancing';
 import { patchMaterial } from '../render/patch';
 import { petalTexture } from '../render/textures';
 import { terrainHeight, waterLevelAt, waterwayAt } from './geography';
@@ -232,10 +233,8 @@ export class FallingLeaves {
     this.leaves.length = n;
     this.mesh.count = leafN;
     this.petals.count = petalN;
-    this.mesh.instanceMatrix.needsUpdate = true;
-    this.petals.instanceMatrix.needsUpdate = true;
-    this.colors.needsUpdate = true;
-    this.petalColors.needsUpdate = true;
+    sendFirst(leafN, this.mesh.instanceMatrix, this.colors);
+    sendFirst(petalN, this.petals.instanceMatrix, this.petalColors);
   }
 
   /** The crowns near the camera let go of new leaves, by the season and the wind. */

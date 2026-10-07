@@ -65,12 +65,12 @@ node scripts/headless/shoot.mjs <outDir> --base http://localhost:5173/ --shots '
 | `flight(every = 0.1, reach = 12, log = 1, until?)` | Flies the opening again from its start (1/30 s steps, without drawing). Every `every` s it measures the nearest triangle of anything drawn within `reach` m (all but the ground, the water and the sky: `what` names it), the height over the ground or the water, the speed, the acceleration, the turn (°/s) and the pitch. Returns the worst of each and a sample every `log` s. With `until` it stops there and holds the frame: a still of the flight |
 | `hullWater(seconds = 20)` | Runs the world and measures the hero hull against the water drawn round her: the surface less her waterline down both sides (`gap` min, max, rms; > 0 the water up her side), and the most she heaved, pitched and rolled. In a kalboishakhi (`weather: 'storm'`, `wind` 2.6–3.4) the gap stays within ±0.16 m (her heel), the heave a few cm |
 | `stroke(phase)` | Holds the majhi's stroke at `phase` 0..1 (check at ten phases, side and front) |
-| `people()` | Where the boatman's and the girl's heads are; the salt workers; the boat's heading; `girlYaw`, `umbrella`, `rainy` |
+| `people()` | Where the boatman's head is; the salt workers; the boat's heading |
 | `envState()` | The mode (`cinematic`/`live`), whether the clock is kept to the wall's, the hour, whether the sunrise is running (`rising`), the shown day and moon, crop shares, water level, flow, rain, cloud, wind, weather, the session's countdown, the sun's elevation and its angle from the view |
 | `cinematic()` | The cinematic morning as chosen (`day`, `dawn`, `lit`, `moon`) and the best days as weighed, term by term (rig/cinematic.ts) |
 | `info()` | `calls`, `triangles`, `scale`, `ms`, `programs`, `camera`, … |
 | `stats(group?)` | Meshes, instances and triangles per top-level group, or within one group |
-| `hide(name)`/`show(name)` | Toggles every object with that name. Groups include `terrain`, `vegetation`, `villages`, `landmarks`, `banyan`, `bridge`, `roads`, `meadow`, `crops`, `drift`, `ponds`, `bil`, `stones`, `saltworks`, `railway`, `train`, `girl`, `hero-boat`, `fisher`, `harvest`, `khejur`, `life`, `birds`, `songbirds`, `fish`, `leaves`, `rain`, `lightning`, `hill-mist`, `backdrop`, `sky` |
+| `hide(name)`/`show(name)` | Toggles every object with that name. Groups include `terrain`, `vegetation`, `villages`, `landmarks`, `banyan`, `bridge`, `roads`, `meadow`, `crops`, `drift`, `ponds`, `bil`, `stones`, `saltworks`, `railway`, `train`, `hero-boat`, `fisher`, `harvest`, `khejur`, `life`, `birds`, `songbirds`, `fish`, `leaves`, `rain`, `lightning`, `hill-mist`, `backdrop`, `sky` |
 | `events()` | The day's sky events, `{ kind, hour }` |
 | `train(s, forward = true)` | Puts the train's nose `s` m along the line (from its east end) |
 | `fisher(at)` | Puts the river fisherman `at` s into his cast (he throws at ≈3.3 s) |
@@ -84,30 +84,31 @@ node scripts/headless/shoot.mjs <outDir> --base http://localhost:5173/ --shots '
 ## Film checks
 
 - **Stills:** `shot({ film: [i, u] })` at the start, the middle and u ≈ 0.95 of each shot. At u = 1 the next scene is already dissolving in.
-- **Live:** stills can't show what time does. The girl's crossing, the hat's change, the umbrella opening, the sap's drops, the paddle's splash, the sweeps and the dissolves must be judged live, from a recording of the film playing.
+- **Live:** stills can't show what time does. The hat's change, the sap's drops, the paddle's splash, the sweeps, the dissolves and the cuts that leave time out (পুরনো সেতু's: the boat put on at each, the shot being left keeping her) must be judged live, from a recording of the film playing.
 - **For each scene ask:** does the frame show what the caption says? Are pop-in, clipping, freezes, black artefacts or murky darkness anywhere?
 - **A cut's cost:**
   - Start just before the cut: `shot({ film: [i, 0.3] })`, then `resume()`.
   - Record every frame's interval with `requestAnimationFrame`, alongside `info().scene`.
   - A CPU profile across the cut (CDP `Profiler`) shows what the cut's frame builds: what the warm-ahead didn't reach, or something new.
-- **The 33 shots** (`film` index), in order:
+- **The 29 shots** (`film` index), in order:
 
 | i | Shot | i | Shot |
 | --- | --- | --- | --- |
-| 0 | শীতের ভোর | 16–19 | লাল ছাতা, shots 4–7 (no caption) |
-| 1 | খেজুরের রস | 20 | বর্ষার ঘের |
-| 2 | মাঝি | 21 | ডুবো মাঠে আমন |
-| 3 | গ্রামের ঘাট | 22 | বাঁশের সাঁকো |
-| 4 | গ্রামের পথ | 23 | শাপলা বিল |
-| 5 | সরিষার মাঠ | 24 | পুকুরপাড় |
-| 6 | লবণ মাঠ | 25 | কাশবন |
-| 7 | ট্রেন যাচ্ছে | 26–28 | জেলের জাল: wide, medium, close |
-| 8 | বসন্তের রং | 29 | হেমন্তের ধান |
-| 9 | কালবৈশাখী | 30 | সূর্যাস্ত |
-| 10 | আষাঢ়ের মেঘ | 31 | চাঁদ ওঠা |
-| 11 | বর্ষার খাল | 32 | রাতের বিল |
+| 0 | শীতের ভোর | 16 | বর্ষার ঘের |
+| 1 | খেজুরের রস | 17 | ডুবো মাঠে আমন |
+| 2 | মাঝি | 18 | বাঁশের সাঁকো |
+| 3 | গ্রামের ঘাট | 19 | শাপলা বিল |
+| 4 | গ্রামের পথ | 20 | পুকুরপাড় |
+| 5 | সরিষার মাঠ | 21 | কাশবন |
+| 6 | লবণ মাঠ | 22–24 | জেলের জাল: wide, medium, close |
+| 7 | ট্রেন যাচ্ছে | 25 | হেমন্তের ধান |
+| 8 | বসন্তের রং | 26 | সূর্যাস্ত |
+| 9 | কালবৈশাখী | 27 | চাঁদ ওঠা |
+| 10 | আষাঢ়ের মেঘ | 28 | রাতের বিল |
+| 11 | বর্ষার খাল | | |
 | 12 | আষাঢ়ের ধারা | | |
-| 13–15 | লাল ছাতা, shots 1–3 | | |
+| 13–15 | পুরনো সেতু: wide, tracking her, out from under the arch | | |
+
 - **The petal (shot 8, 23 s):** it lets go 6 s in and touches the water ≈9.5 s later (`petal().fall`). Judge its swing, its tumbling and the ripple from a recording; stills at u ≈ 0.26–0.65 show the follow, and 0.69–0.76 the ripple (it shows only where it catches the light). Hide `petals lying` and `petals afloat` to tell the film's petal from the rest.
 - **Fallen petals:** a still round a tree in flower at day 75 (`free` at 3 m, looking down), and at day 200 there must be none.
 - **Ripples, fish, frogs:** they need frames: `shot(…)`, then `resume()`, wait 2–5 s, then capture. Frogs come out in the rains (day ≈205); `stats('frogs')` counts them. A still settles the frogs and the turtles where they would be (`settle`).
@@ -119,14 +120,14 @@ node scripts/headless/shoot.mjs <outDir> --base http://localhost:5173/ --shots '
   - the turtles' first rock (day 20, morning): `[-13.5, 3.4, 122.5, 0, -0.4]`;
   - the hill stream from the river: `[-862, 3.2, 48, 3.14, 0.12]` (day 205 full, day 20 a thread);
   - the sluice from the river: `[-540, 2.8, 141, -0.45, -0.06]` (day 230 and 300 pouring, day 20 shut).
-- **The cast net:** record shots 26–28. The net must show in flight, the water ring as it strikes, the haul's pulls move his whole body and the boat, and the bag come up over the gunwale.
-- **The sanko (shot 22):** stills keep the boat where the scene starts; record it (`shot({ film: [22, 0] })`, `resume()`, a frame every 1.5 s) to see her come up through its middle span, the boatman pass under the walkway and come out before the cut.
-- **The opening and the loader:** load the page without `?debug` hooks firing a still (`scripts`: record from load, a frame every 1–2.5 s, with `envState()` each frame): the loader's sun rises, the still gives way to the flight, the sun comes up over the river's horizon on one side of the frame between ≈0.6 and ≈8.6 s (`rising`, the sun's elevation from −6° to the lit stage, 7–9°), the land dim at first and lighting as the drone comes down, the mark lifts after ≈3 s and is gone by ≈6 s, the flight settles ahead of the boat at 9 s with no jump, the composer takes the camera from there (`composition().composing` true within a few seconds, with no input), and no sky-event notice shows. Check a phone size (390 × 844) too.
+- **The cast net:** record shots 22–24. The net must show in flight, the water ring as it strikes, the haul's pulls move his whole body and the boat, and the bag come up over the gunwale.
+- **The sanko (shot 18):** stills keep the boat where the scene starts; record it (`shot({ film: [18, 0] })`, `resume()`, a frame every 1.5 s) to see her come up through its middle span, the boatman pass under the walkway and come out before the cut.
+- **The opening and the loader:** load the page without `?debug` hooks firing a still (`scripts`: record from load, a frame every 1–2.5 s, with `envState()` each frame): the loader's sun rises, the still gives way to the flight, the sun comes up over the river's horizon on one side of the frame between ≈0.6 and ≈8.6 s (`rising`, the sun's elevation from −6° to the lit stage, 7–9°), the land dim at first and lighting as the drone comes down, the mark lifts after ≈3 s and is gone by ≈6 s, the flight comes down by ≈5 s and goes on round her without a stop, ending behind her looking ahead at 15 s, the composer takes the camera there (`composition().composing` true, with no input), and no sky-event notice shows. Record `composition()` (`pos`, `dir`) and `boatState().course` every frame from load: the look against her course turns from ≈−165° to ≈0° with no hold, and after 15 s the camera turns 0°/s. Check a phone size (390 × 844) too: she stays whole in the frame as it passes her side.
 - **The modes:** after the opening, `document.getElementById('live').click()` in a probe: the screen dips dark and comes up in Bangladesh's own date and hour (`envState()`: `mode` live, `live` true, the day today's); set the timeline (`#tl` value and an `input` event): the button goes hollow (`behind`); a click goes back to now; another click goes back to the cinematic mode, its sunrise again (`rising`). Read the button's class, `aria-pressed` and title, and `#season-own`'s words, at each step.
 - **The opening flight's path:** after any change to rig/opening.ts, run `__river.flight(0.1, 15, 0.5)`:
   - nothing within 15 m but the hero boat, the drift, the fish under the water and the songbirds flying round her (as last measured: nothing standing within 10 m);
-  - the speed rising and falling smoothly (≤ ≈25 m/s: it sets off at ≈19 m/s² over its first second, then no spike over ≈18 m/s² as it comes into its turn), the turn ≤ ≈16°/s, the pitch ≥ ≈−20°;
-  - ending at the follow camera's height (≈3.5 m over the water).
+  - the speed rising and falling smoothly (≤ ≈25 m/s: it sets off at ≈19 m/s² over its first second, then no spike over ≈17 m/s² as it comes into its turn, and ≤ ≈4 m/s² round her), the turn ≤ ≈22°/s (an even turn round her from ≈7 to ≈12.5 s, settling to 0 by 15 s), the pitch ≥ ≈−23°;
+  - ending in the composer's usual shot (≈18 m behind her, 9.5 m up), and then at her pace with no turn (`flight()` runs on a second past the end).
 
   Then take stills along it in daylight: `shot({ hour: 9.5, weather: 'clear' })`, then `flight(999, 1, 999, t)` for t from 0.5 to 9 s, each held for a screenshot. The sunrise does not run in `flight()`: judge it from a recording from load.
 - **The camera left to itself** (rig/compose.ts):
@@ -151,7 +152,10 @@ node scripts/headless/shoot.mjs <outDir> --base http://localhost:5173/ --shots '
 - **The experience, not a still:** load the page (with `?debug` for `__river.ready` and `info()`), then record `requestAnimationFrame` intervals from `ready` (the opening) and from 12 s on, with `info()` (`scale`, `quality`). The film: press C through CDP (`Input.dispatchKeyEvent`) after the opening, not `shot({ film })`, which holds full size.
 - **The CPU:** a CDP `Profiler` profile over the load or a few seconds of frames. On the dev server the functions keep their names (its line numbers are the transformed file's); sum a function's children per frame to see where `step` and `render` go. The share of `(idle)` says whether the frames wait on the GPU.
 - **The GPU per pass:** set `window.__THREE_DEVTOOLS__` (an `EventTarget`) before load to catch the renderer (`observe`), wrap its `render` with `EXT_disjoint_timer_query_webgl2` queries (read them a frame or two later), and tell the passes apart by scene and target: the mirror is the first scene pass, then the scene pass, then the post quads. Per group: `hide(name)`/`show(name)` with the queries, at a still (full size).
-- **What draws:** `stats()` per group; the objects the frame's matrix update visits (walk the scene as three's `updateMatrixWorld` does: a parent that remakes its matrix forces its subtree).
+- **What draws:** `stats()` per group; the objects the frame's matrix update remakes (walk the scene as three's `updateMatrixWorld` does: a node with `matrixAutoUpdate` on remakes its own and forces its subtree's).
+- **Frozen nodes** (after a change to what goes through `still()`): catch the scene through `__THREE_DEVTOOLS__` (`observe`), then after the opening and a few seconds into each film shot (`shot({ film: [i, 0.4] })`, `resume()`) check every node with `matrixAutoUpdate` off: its `position`, `quaternion` and `scale` composed must equal its `matrix`, and its `matrixWorld` its parent's times it. One that differs was moved inside a still group and stands where it was.
+- **A blank frame on a resize:** in a probe added before load, wrap `HTMLCanvasElement`'s `width` setter and the WebGL draw calls: after every resize of the canvas once the page is ready, something must be drawn into it before the next frame (the resizes behind the loader don't show).
+- **A hidden tab:** in a probe, make `document.hidden` true (`Object.defineProperty`), dispatch `visibilitychange`, block the page a few seconds, make it false and dispatch again; `info().scale` and `quality` must not drop in the seconds after.
 - **Another GPU user** (the site open in a browser tab) halves the numbers: check `Get-Counter '\GPU Engine(*engtype_3D)\Utilization Percentage'` before trusting a run.
 
 ## Scans of the land

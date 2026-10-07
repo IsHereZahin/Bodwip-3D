@@ -59,13 +59,21 @@ export interface Rated {
 
 /**
  * The shots weighed: behind her and on her quarters (rad from her bow), and for a sight on her beam too; out from her
- * (m, on a landscape screen), over the water (m).
+ * (m, on a landscape screen: no farther than `DISTS`' last, the user found 26 m too far as she goes), over the water (m).
  */
 const DEG = Math.PI / 180;
 const BEHIND = [100, 120, 140, 160, 180, -160, -140, -120, -100].map((d) => d * DEG);
 const BESIDE = [80, -80].map((d) => d * DEG);
-const DISTS = [10, 17, 26];
+const DISTS = [8, 13, 18];
 const HIGHS = [2.4, 5, 9.5, 16, 23];
+/** How much of the frame's width she takes, on her surroundings and with a sight (on a landscape screen). */
+const HER_SIZE = { on: 0.27, sight: 0.3 };
+/**
+ * The shot on her surroundings the composer most often holds (as measured on the journey): behind her quarter, as far
+ * out as it goes, over the bank's trees. Where the opening flight hands over (rig.ts), so nothing moves at the hand-over;
+ * on a narrow screen its `dist` goes `narrowScale ** 0.6` farther, as the shots weighed do.
+ */
+export const USUAL = { bearing: Math.PI - 0.3, dist: DISTS[DISTS.length - 1], high: 9.5 } as const;
 /**
  * How far round from her course the camera may look (rad): on her surroundings, ahead and a little aside (it gives
  * way between the two); turned to a sight, as far as her beam and a little past, never back.
@@ -104,7 +112,7 @@ const MAJHI_UP = 2.2;
  * lifted over what it passes over (m), and turning to its framing (rad).
  */
 const ARC: Pace = { omega: 0.7, speed: 0.16, accel: 0.05 };
-/** Round her faster while it looks back the way she has come (as the opening flight hands it over, looking back at the sunrise): it comes round behind her sooner. */
+/** Round her faster while it looks back the way she has come (as when it takes the camera looking back: after a rising or setting sun or moon, or from the viewer): it comes round behind her sooner. */
 const ARC_BACK: Pace = { omega: 0.9, speed: 0.32, accel: 0.1 };
 const RUN: Pace = { omega: 0.7, speed: 2.6, accel: 0.8 };
 const DRAW: Pace = { omega: 1.8, speed: 5, accel: 5 };
@@ -217,8 +225,13 @@ export class Composer {
     return { aim: this.aim, score: this.aimScore, subject: this.aimKey };
   }
 
-  /** Takes the camera from where it is now (the follow camera's pose), so the hand-over has no seam; a weighing starts at once. */
-  takeFrom(camera: PerspectiveCamera, m: Moment): void {
+  /**
+   * Takes the camera from where it is now (the follow camera's pose), so the hand-over has no seam; a weighing starts
+   * at once. `third`: the side of the frame she is in, given when the camera was framed as this frames (`poseOf`: the
+   * opening flight's end), so its framing starts there exactly and not a hair of it turns; that shot is then held as
+   * if chosen (left only once it has been held its while, for a much better one, or if it is lost).
+   */
+  takeFrom(camera: PerspectiveCamera, m: Moment, third?: number): void {
     const dx = camera.position.x - m.boat.x;
     const dz = camera.position.z - m.boat.z;
     this.bearing.set(angleDelta(m.course, Math.atan2(dx, dz)));
@@ -226,13 +239,20 @@ export class Composer {
     this.high.set(camera.position.y - m.water);
     this.drawn.set(this.dist.x);
     this.lift.set(0);
-    camera.getWorldDirection(this.q);
-    this.yaw.set(Math.atan2(this.q.x, this.q.z));
-    this.pitch.set(Math.asin(clamp(this.q.y, -1, 1)));
-    this.third = angleDelta(this.yaw.x, Math.atan2(-dx, -dz)) > 0 ? -1 : 1;
+    if (third === undefined) {
+      camera.getWorldDirection(this.q);
+      this.yaw.set(Math.atan2(this.q.x, this.q.z));
+      this.pitch.set(Math.asin(clamp(this.q.y, -1, 1)));
+      this.third = angleDelta(this.yaw.x, Math.atan2(-dx, -dz)) > 0 ? -1 : 1;
+    } else {
+      this.third = third;
+      this.frame(camera.position, m, third, this.worthy(m) ? m.share : 0, this.framing);
+      this.yaw.set(this.framing.yaw);
+      this.pitch.set(this.framing.pitch);
+    }
     this.aim = { bearing: this.bearing.x, dist: this.dist.x, high: this.high.x, third: this.third };
     this.aimKey = '';
-    this.held = HOLD;
+    this.held = third === undefined ? HOLD : 0;
     this.list = [];
     this.rest = 0;
   }
@@ -276,14 +296,32 @@ export class Composer {
     return this.aim ? this.rate(m, this.aim, this.subject, true) : null;
   }
 
+  /**
+   * Where it would stand for `shot` now (drawn in where the bank closes in, lifted over what is under it) and what it
+   * would look at, framed as `pose` frames (a sight in view weighed as `think` weighs it): a camera handed to it there
+   * (the opening flight's end, with `takeFrom`'s `third`) arrives as it would stand, and nothing moves as it takes
+   * over. Between frames only: it shares the weighing's scratch.
+   */
+  poseOf(shot: Shot, m: Moment, pos: Vector3, look: Vector3): void {
+    this.place(m, shot.bearing, this.safeDist(m, shot.bearing, shot.dist, shot.high), shot.high, pos);
+    pos.y = Math.max(pos.y, this.lines.top(pos.x, pos.z) + 1.5, this.lines.groundAt(pos.x, pos.z) + 1.2, m.water + 1.1);
+    this.keepClear(pos);
+    this.lookFrom(pos, m, shot.third, look);
+  }
+
+  /** What it would look at from `pos` with her on the `third` side, framed as `pose` frames (a sight in view weighed as `think` weighs it). Between frames only. */
+  lookFrom(pos: Vector3, m: Moment, third: number, look: Vector3): Vector3 {
+    this.frame(pos, m, third, this.worthy(m) ? m.share : 0, this.framing);
+    const cp = Math.cos(this.framing.pitch);
+    return look.set(pos.x + Math.sin(this.framing.yaw) * cp * 30, pos.y + Math.sin(this.framing.pitch) * 30, pos.z + Math.cos(this.framing.yaw) * cp * 30);
+  }
+
   // ---- choosing ----
 
   /** Goes on with the weighing for `budget` ms; at its end, keeps to the shot aimed for or takes a better one. */
   private think(dt: number, m: Moment, budget: number): void {
-    this.now.season = m.season;
-    this.now.night = 1 - smoothstep(-0.12, 0.05, m.sun.y);
     if (!m.sight) this.poor.clear();
-    const worthy = m.sight !== null && !this.poor.has(m.sight) && sightWorth(m.sight, this.now) > 0.35;
+    const worthy = this.worthy(m);
     this.share = worthy ? m.share : 0;
     const subject = worthy && m.share > 0.3 ? m.sight : null;
     const key = subject ? `${subject.name}@${Math.round(subject.s)}` : '';
@@ -320,6 +358,13 @@ export class Composer {
     this.decide();
     this.list = [];
     this.rest = REST;
+  }
+
+  /** Whether the sight whose stretch she is in is worth showing now (the season and the dark taken from `m` first: the worth reads them). */
+  private worthy(m: Moment): boolean {
+    this.now.season = m.season;
+    this.now.night = 1 - smoothstep(-0.12, 0.05, m.sun.y);
+    return m.sight !== null && !this.poor.has(m.sight) && sightWorth(m.sight, this.now) > 0.35;
   }
 
   /** A new weighing: the shot aimed for first (for its own score now), then the shots behind her and on her quarters (and her beam, for a sight). */
@@ -394,7 +439,7 @@ export class Composer {
     const herD = p.distanceTo(her);
     this.project(p, yaw, pitch, her, tanH, tanV, this.onA);
     const herSize = (2 * Math.atan(BOAT_HALF / herD)) / hfov;
-    const herBest = (subject ? 0.26 : 0.2) * narrowScale(this.camera) ** 0.8;
+    const herBest = (subject ? HER_SIZE.sight : HER_SIZE.on) * narrowScale(this.camera) ** 0.8;
     let boat = this.lines.sees(p, her) * inside(this.onA) * (0.45 + 0.55 * placed(this.onA, shot.third / 3, HER_Y)) * sized(herSize, herBest, 0.6, 0.5);
     this.q.set(m.boat.x - Math.sin(m.course) * MAJHI_BACK, m.water + MAJHI_UP, m.boat.z - Math.cos(m.course) * MAJHI_BACK);
     boat *= 0.35 + 0.65 * inside(this.project(p, yaw, pitch, this.q, tanH, tanV, this.onB));
