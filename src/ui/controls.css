@@ -789,6 +789,22 @@ body.ui-off #ui-restore:focus-visible {
   font-size: 13px;
   color: var(--ink-dim);
 }
+#help .help-about {
+  margin: 18px 0 0;
+  padding-top: 14px;
+  border-top: 1px dashed var(--stitch);
+}
+#help .help-about h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-dim);
+}
+#help .help-about p {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--ink-dim);
+}
 #help kbd {
   font-family: inherit;
   font-size: 12px;

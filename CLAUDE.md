@@ -47,9 +47,9 @@ There are no audio files and no map data.
 ## Commands
 
 - **Dev server:** `npm run dev` serves on <http://localhost:5173>. It listens on `localhost` only, so pass `--base http://localhost:5173/` to the headless scripts, whose default is 127.0.0.1.
-- **Build and check:** `npm run build` writes `dist/` (hashed files in `dist/bundle/`). `npm run typecheck` runs `tsc --noEmit`. `npm run preview` serves `dist/`.
+- **Build and check:** `npm run build` writes `dist/` (hashed files in `dist/bundle/`). `npm run typecheck` runs `tsc --noEmit`. `npm run preview` serves `dist/`. `SITE_URL` (the environment or `.env`) gives the build the site's address for its canonical link, share card, structured data and sitemap (vite.config.ts `seo`).
 - **The build warns that a chunk is over 500 kB.** That is expected: three.js is a large share of it.
-- **Brand:** `node scripts/brand/icons.mjs` remakes the PNG icons from `public/brand/logo.svg` and `favicon.svg`. The loader's backdrop is a still of this world (how to shoot it: verification.md).
+- **Brand:** `node scripts/brand/icons.mjs` remakes the PNG icons from `public/brand/logo.svg` and `favicon.svg`; `node scripts/brand/share.mjs` the share card (`share.jpg`, 1200×630). The loader's backdrop is a still of this world (how to shoot it: verification.md).
 - **Visual check:** with the dev server running, run `node scripts/headless/shoot.mjs <outDir> --base http://localhost:5173/ --shots '<json>'`. It saves PNGs and prints draw calls, triangles, frame ms and every page console message. It needs Chrome (set `CHROME_PATH` if Chrome is not at the default Windows path). The shot format and the debug API are in `docs/ai-helper/verification.md`.
 - **Quality tier:** `?quality=low|high` holds it. Without it, `main.ts` chooses at load: the opening's first view is drawn a few times behind the loader and its GPU cost measured (`gpuCost`, `GPU_AIM`), which sets the starting size and tier; then the adaptive resolution (`ADAPT`) follows the frame rate, and the lower tier (no multisampling) comes in if the picture is slow at three quarters of its size or the frames wait on the CPU. Stills (`shot()`) are always drawn at full size in the high tier (or the tier asked for).
 - **People** (`scripts/humans/`, all MakeHuman, CC0):
@@ -86,6 +86,7 @@ There are no audio files and no map data.
   - Check any change with `__river.flight()` and a recording from load (verification.md).
 - A camera posed anywhere but the follow camera's pose must be taken over in the frame it is let go (`composing`, `showPos`/`showLook`): the next frame's `orbit()` would put it back at the follow pose for a frame.
 - A canvas resized after a frame is drawn goes out blank for that frame (the page's background flashes through). The adaptive resolution's new size is taken up just before the next frame is drawn (`resizeDue`, main.ts), never at the end of one.
+- The loader is removed from the page after the opening, its word with it: the page's own heading for search engines and screen readers is the hidden `h1` at the body's top, never an element of the loader.
 - An SVG element's CSS `transform` replaces its `transform` attribute: animate an inner group (the loader's boat bobs inside the group that places it).
 - The loader animates only transforms and opacity, which the compositor runs on while the load holds the main thread (tasks of 1.5–4.6 s). The waves' `stroke-dashoffset` stood still that long and then jumped (the user saw the mark stop and go back): their dashes are now a strip moved by a transform under the wave's own line (`ld-wave-a`/`-b` clips, index.html).
 - The scene never remakes its own matrix (`scene.matrixAutoUpdate = false`, main.ts), and a group that never moves is added through `still()` (its matrices made once, `matrixWorldAutoUpdate` off on the group). A parent that remakes its matrix makes its whole subtree's be remade (three forces it), so a container that never moves but holds moving or hidden things must not either (the salt farms' group: every hidden crew was remade every frame). Something hidden and not posed (a salt crew, the reapers out of season) has `matrixWorldAutoUpdate` follow its visibility.
@@ -207,7 +208,7 @@ There are no audio files and no map data.
 
 - TypeScript strict. Keep modules small and focused, put the reason in comments, and match the surrounding style.
 - Keep it procedural apart from the six CC0 textures in `public/textures/` and the people's MakeHuman (CC0) data in `public/humans/`; ask before adding any other asset.
-- External requests: those textures and the brand (same origin), and the Google Fonts Noto Serif Bengali (300, 500, 700: the UI and the logo's word) and Amiri (the mosque's kalima, the user's choice), with system fallbacks.
+- External requests: those textures and the brand (same origin), and the Google Fonts Noto Serif Bengali (300, 500, 700: the UI and the logo's word) and Amiri (the mosque's kalima, the user's choice), with system fallbacks; and Vercel Web Analytics (`inject()` at main.ts's foot, the user's request: `/_vercel/insights/script.js` on Vercel, 404 elsewhere; in dev Vercel's debug script from va.vercel-scripts.com, which only logs to the console).
 - The people are realistic but generic: no likeness of any real person.
 - The village is designed in `plan.ts`. Change the layout there (and check it top-down) rather than placing things ad hoc in the builders.
 - Every visible element gets the same level of finish. Before adding anything, ask whether it belongs in a Bengali village and whether it makes the river journey more beautiful.

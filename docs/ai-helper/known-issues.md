@@ -15,6 +15,7 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
 - **The water grid is dense under the camera,** which is wasted from high up.
 - **What is kept out of the mirror casts no shadow** (found 2026-10-07, not fixed: it would change the look). The shadow map is redrawn inside the frame's first `render`, which is the mirror pass, and three draws into it only what the camera of that call sees (`layers.test`, WebGLShadowMap.js); the mirror's camera sees layer 0. So whatever is on `LAYER_NO_REFLECT` alone and set to cast (the trees not mirrored, the date palms, the salt heaps) casts none, except in a frame the mirror skips. To fix: redraw the shadow map in the main pass (hold `shadowMap.needsUpdate` through the mirror's call), then judge the new shadows across the seasons.
 - **A crop chunk's reach shows as a rectangle from high above** (the free camera at ≈40 m over the bil's rim in the rains): the plants stop at a straight edge. From the boat and the film's heights it is not seen.
+- **Search:** the site's address is not chosen, so until a build sets `SITE_URL` the page has no canonical link, shared links no card image, and there is no sitemap. Nothing is registered with Google Search Console or Bing Webmaster Tools yet. The page's text for search is its head, its hidden heading, the noscript line and the help's about section: the world itself is a canvas. Lighthouse's performance (the load's WebGL building) was not measured for search.
 
 ## Performance
 

@@ -34,10 +34,10 @@ export class Hud {
     this.loadNow.replaceChildren(Object.assign(document.createElement('b'), { textContent: season }), ` · ${date} · ${time}`);
   }
 
-  /** The world is built: the still gives way to the opening flight; the mark stays over it `titleSeconds`, then goes. */
-  ready(titleSeconds: number): void {
+  /** The world is built: the still gives way to the opening flight, and the mark goes with it (nothing stands over the drone's shot). */
+  ready(): void {
     this.load?.classList.add('done');
-    window.setTimeout(() => this.lift(), Math.max(0, titleSeconds - 2.8) * 1000);
+    this.lift();
   }
 
   /** The mark fades off the screen and the loader is gone. */

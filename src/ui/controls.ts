@@ -97,7 +97,8 @@ const STEP_KEYS: Record<string, number> = { ArrowRight: 1, ArrowUp: 1, PageUp: 1
  * the Live button (Bangladesh's own date and hour now, or the cinematic morning); in the middle the day's timeline
  * with its sunrise, sunset, moonrise and moonset; on the right the camera, the view, the moon, sound, the map, full
  * screen and the rest. The season, the moon, the view and the rest open as small menus above their buttons. It
- * fades away when the pointer rests and comes back when it moves.
+ * first comes up when the opening flight is over (`show`), then fades away when the pointer rests and comes back
+ * when it moves.
  */
 export class Controls {
   private readonly dock = $<HTMLElement>('#dock');
@@ -257,6 +258,7 @@ export class Controls {
     return this.help.open;
   }
 
+  /** Brings the dock up for the first time (at the opening flight's end); until then movement does not wake it. */
   show(): void {
     this.shown = true;
     this.dock.classList.add('show');

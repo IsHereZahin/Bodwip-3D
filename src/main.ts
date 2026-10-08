@@ -1,5 +1,6 @@
 import { Color, DirectionalLight, HemisphereLight, Matrix4, PCFShadowMap, PerspectiveCamera, PointLight, Quaternion, SRGBColorSpace, Scene, Sphere, Triangle, Vector3, Vector4, WebGLRenderer, type RenderTarget } from 'three';
 import type { InstancedMesh, Light, Mesh, Object3D } from 'three';
+import { inject } from '@vercel/analytics';
 import { Soundscape } from './audio/soundscape';
 import { G, LAYER_NO_REFLECT, LAYER_WATER } from './core/globals';
 import { clamp, smoothstep } from './core/mathx';
@@ -99,8 +100,6 @@ const SESSION_MS = 60000;
 const DIP: readonly [number, number] = [0.6, 1.3];
 /** Days in the moon's month. */
 const SYNODIC = 29.530589;
-/** How long the title stays over the opening flight (s): off before it is half over (the flight is 9 s), so the sun is seen coming up and the land lighting as it comes down. */
-const TITLE_SECONDS = 6;
 /** Untouched this long, the camera turns to watch a sky event by itself. */
 const WATCH_IDLE_MS = 12000;
 /** Milliseconds a frame may spend building the film's next shot ahead of it. */
@@ -1517,8 +1516,12 @@ async function main(hud: Hud): Promise<void> {
       dof: director.active ? director.dof : undefined,
     });
     hud.setCaption(director.caption, director.captionAlpha, pipeline.bar);
-    // the opening flight has come down to the boat: the hint to the controls
-    if (wasFlying && !rig.flying) hud.hintNow();
+    // the opening flight has come down to the boat (or the viewer took the camera): the controls come up, with their
+    // hint. Through the flight they stay down, so nothing stands over the drone's shot (the user's direction)
+    if (wasFlying && !rig.flying) {
+      controls.show();
+      hud.hintNow();
+    }
     wasFlying = rig.flying;
     controls.update(clock, filming() ? 'film' : rig.mode, soundOn, !seasonHeld, mode, filming() ? { index: director.sceneIndex, count: director.sceneCount } : undefined);
     camera.getWorldDirection(forward);
@@ -1563,8 +1566,7 @@ async function main(hud: Hud): Promise<void> {
   let wasFlying = true;
   renderer.setAnimationLoop(frame);
   readyAt = performance.now();
-  hud.ready(TITLE_SECONDS);
-  controls.show();
+  hud.ready();
 
   if (DEBUG) {
     // hooks for headless stills: put the boat, the day and the camera where you want them and freeze
@@ -2022,6 +2024,11 @@ async function main(hud: Hud): Promise<void> {
     });
   }
 }
+
+// the visit counted (Vercel Web Analytics) before the world is built, so a visit that leaves during the load or
+// whose device cannot draw it still counts. On Vercel it loads /_vercel/insights/script.js; in dev, Vercel's debug
+// script, which only logs
+inject();
 
 const hud = new Hud();
 main(hud).catch((err: unknown) => {
