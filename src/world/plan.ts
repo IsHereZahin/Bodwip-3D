@@ -3,11 +3,12 @@
 // 2026-10-05: "beautiful rural Bangladesh + cinematic art direction + realistic environmental logic").
 //
 // The boat comes down the small river from the east into the evening light. On the outer bank of its one
-// broad bend stands the old zamindar house over its bathing ghat, the kash char opposite on the bend's sandy
-// inner side; homesteads line the north bank behind the riverside path. Where the khal leaves the river
+// broad bend stands the old zamindar house over its bathing ghat, a sandy char opposite on the bend's inner
+// side; homesteads line the north bank behind the riverside path. Where the khal leaves the river
 // northward an old banyan shades the village's ghat and its tea stall, and the village road, brick on its
 // embankment, turns from the river up the khal's bank to the old brick bridge (the zamindar's), crosses, and
-// goes on west past the mosque and its pond. The boat turns up the khal, under the bridge, past a side khal
+// goes on west past the mosque and its pond. The boat turns up the khal, past the kashbon on its west bank and
+// under the bridge, past a side khal
 // with its bamboo sanko, into the shapla bil. Fields lie round all of it, and the far villages' groves close
 // every horizon.
 //
@@ -186,8 +187,16 @@ export const KHEJUR_ROW = { side: 2.6, from: 0.22, to: 0.93, count: 7 };
 export const BRIDGE_NEAR: Pt = [23, 262];
 export const SANKO_NEAR: Pt = [150, 476];
 
-/** The inside of the river's broad bend, opposite the zamindar house: a low sandy char where the kash grows. */
+/** The inside of the river's broad bend, opposite the zamindar house: a low sandy char, kash scattered over it. */
 export const CHAR = { x: -455, z: 128, halfLen: 140, halfWid: 34, yaw: 0.22 } as const;
+
+/**
+ * The kashbon: the kash standing thick along the khal's west bank (`side` +1) below the old bridge, `from`–`to` m
+ * along the khal, from near the water's edge back over its grassy bank (`reach` m out from the edge). It is where
+ * the boat comes by in Sharat on the cinematic way (rig/yearJourney.ts), so the kash is seen in plume there (the
+ * user's choice, 2026-10-08: on the char she passed it in summer and it never flowered).
+ */
+export const KASHBON = { from: 95, to: 222, side: 1, reach: 13 } as const;
 
 /**
  * What a salt farm's people do (world/saltworks.ts), in the salt season or in the rains, at points of its frame

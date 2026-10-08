@@ -1,5 +1,6 @@
 import { Color, DirectionalLight, HemisphereLight, Matrix4, PCFShadowMap, PerspectiveCamera, PointLight, Quaternion, SRGBColorSpace, Scene, Sphere, Triangle, Vector3, Vector4, WebGLRenderer, type RenderTarget } from 'three';
 import type { InstancedMesh, Light, Mesh, Object3D } from 'three';
+import { inject } from '@vercel/analytics';
 import { Soundscape } from './audio/soundscape';
 import { G, LAYER_NO_REFLECT, LAYER_WATER } from './core/globals';
 import { clamp, smoothstep } from './core/mathx';
@@ -600,8 +601,6 @@ async function main(hud: Hud): Promise<void> {
     sky.mesh.position.copy(camera.position);
   };
   const sound = new Soundscape();
-  // the blade's splash, heard as near as it is (not at all from across the fields or the air above them)
-  hero.onStroke = (power) => sound.splash(power, smoothstep(90, 12, camera.position.distanceTo(hero.blade)));
   /** How near the water the listener is: 1 on it or by it, fading high above it or away over the fields. */
   const waterNear = () => {
     const p = camera.position;
@@ -668,8 +667,8 @@ async function main(hud: Hud): Promise<void> {
   resize();
   window.addEventListener('resize', resize);
 
-  // ---- sound: browsers allow it only after the first touch or key; muting is remembered ----
-  let soundOn = false;
+  // ---- sound: on by itself as the opening flight ends (the frame loop), where the browser allows it before a
+  // touch or key; where it does not, the first touch or key starts it. Muting is remembered ----
   try {
     sound.muted = localStorage.getItem(MUTED_KEY) === '1';
   } catch {
@@ -679,17 +678,18 @@ async function main(hud: Hud): Promise<void> {
     // the speaker button and M toggle it themselves (else this would start it and the toggle mute it at once)
     if (e.target instanceof Element && e.target.closest('#sound')) return;
     if (e instanceof KeyboardEvent && e.code === 'KeyM') return;
-    if (!sound.muted) {
-      sound.start();
-      soundOn = true;
-    }
+    if (!sound.muted) sound.start();
   };
   // (a touch's pointerdown does not count as a gesture for audio on every browser: its end does)
   for (const type of ['pointerdown', 'pointerup', 'touchend', 'keydown'] as const) window.addEventListener(type, startSound, { passive: true });
   const toggleSound = () => {
-    sound.setMuted(!sound.muted);
-    if (!sound.muted) sound.start();
-    soundOn = !sound.muted;
+    // on but held back by the browser (the speaker shows it silent): the press starts it, rather than muting
+    // what nobody hears
+    if (!sound.muted && !sound.audible) sound.start();
+    else {
+      sound.setMuted(!sound.muted);
+      if (!sound.muted) sound.start();
+    }
     try {
       localStorage.setItem(MUTED_KEY, sound.muted ? '1' : '0');
     } catch {
@@ -1517,10 +1517,16 @@ async function main(hud: Hud): Promise<void> {
       dof: director.active ? director.dof : undefined,
     });
     hud.setCaption(director.caption, director.captionAlpha, pipeline.bar);
-    // the opening flight has come down to the boat: the hint to the controls
-    if (wasFlying && !rig.flying) hud.hintNow();
+    // the opening flight has come down to the boat (or the viewer took the camera): the controls come up, with their
+    // hint, and the sound comes on (unless muted). Through the flight they stay down, so nothing stands over the
+    // drone's shot (the user's direction)
+    if (wasFlying && !rig.flying) {
+      controls.show();
+      hud.hintNow();
+      if (!sound.muted) sound.start();
+    }
     wasFlying = rig.flying;
-    controls.update(clock, filming() ? 'film' : rig.mode, soundOn, !seasonHeld, mode, filming() ? { index: director.sceneIndex, count: director.sceneCount } : undefined);
+    controls.update(clock, filming() ? 'film' : rig.mode, sound.audible, !seasonHeld, mode, filming() ? { index: director.sceneIndex, count: director.sceneCount } : undefined);
     camera.getWorldDirection(forward);
     map.update(rig.boat.pos.x, rig.boat.pos.z, rig.boat.course, t);
 
@@ -1564,7 +1570,6 @@ async function main(hud: Hud): Promise<void> {
   renderer.setAnimationLoop(frame);
   readyAt = performance.now();
   hud.ready(TITLE_SECONDS);
-  controls.show();
 
   if (DEBUG) {
     // hooks for headless stills: put the boat, the day and the camera where you want them and freeze
@@ -2022,6 +2027,11 @@ async function main(hud: Hud): Promise<void> {
     });
   }
 }
+
+// the visit counted (Vercel Web Analytics) before the world is built, so a visit that leaves during the load or
+// whose device cannot draw it still counts. On Vercel it loads /_vercel/insights/script.js; in dev, Vercel's debug
+// script, which only logs
+inject();
 
 const hud = new Hud();
 main(hud).catch((err: unknown) => {

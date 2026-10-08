@@ -331,8 +331,6 @@ function sackGeometry(): BufferGeometry {
 export class HeroBoat {
   readonly group = new Group();
   readonly lantern: PointLight;
-  /** Fired as the blade goes in at each stroke, with how hard he is pulling it (for the splash sound). */
-  onStroke: ((power: number) => void) | null = null;
   /** The paddle's blade (world); `bladeWet` how much of it is in the water (0..1), `bladeDrive` how hard it pulls (1 = the mean). */
   readonly blade = new Vector3();
   bladeWet = 0;
@@ -353,7 +351,6 @@ export class HeroBoat {
   private readonly force: PaddleForce = { thrust: 0, side: 0, x: 0, z: 0 };
   private readonly basis = new Matrix4();
   private wasWet = false;
-  private lastPhase = 0;
   private swingX = 0;
   private swingZ = 0;
   private vSwingX = 0;
@@ -738,8 +735,6 @@ export class HeroBoat {
   /** Sets the boat where `body` has her, works the paddle, poses the boatman, swings the lantern. */
   update(dt: number, t: number, lamp: number, body: BoatBody): void {
     const phase = strokePhase(body.strokeTime);
-    if (phase < this.lastPhase && this.onStroke) this.onStroke(body.power);
-    this.lastPhase = phase;
 
     const g = this.group;
     // her waterline on the water: she sits HERO_SINK deeper than her shape's zero

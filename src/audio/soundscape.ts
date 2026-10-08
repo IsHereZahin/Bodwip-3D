@@ -56,9 +56,10 @@ interface TrainVoice {
 
 /**
  * The whole soundscape is synthesised with Web Audio from one noise buffer and a few oscillators: the khal's
- * water, wind, rain, the paddle's splashes, birds by day, crickets by night, frogs in the rains, the rush of the
- * hill stream's falls and the sluice, thunder, the train. Nothing is downloaded.
- * Browsers only allow audio after a user gesture, so `start()` is called from one.
+ * water, wind, rain, birds by day, crickets by night, frogs in the rains, the rush of the hill stream's falls and
+ * the sluice, thunder, the train (no paddle: the user had its splashes taken out). Nothing is downloaded.
+ * Browsers only allow audio after a user gesture: `start()` before one makes the context but it waits, and a
+ * `start()` from the first gesture wakes it.
  */
 export class Soundscape {
   private ctx: AudioContext | null = null;
@@ -81,6 +82,11 @@ export class Soundscape {
   private trainVoice: TrainVoice | null = null;
   private hidden = false;
   muted = false;
+
+  /** Whether it is really being heard: on, and the browser letting it play (not waiting for a first gesture). */
+  get audible(): boolean {
+    return !this.muted && this.ctx?.state === 'running';
+  }
 
   start(): void {
     if (this.ctx) {
@@ -181,31 +187,6 @@ export class Soundscape {
     g.gain.value = gain;
     this.loop().connect(lp).connect(hp).connect(g).connect(this.master!);
     return g;
-  }
-
-  /**
-   * The paddle's blade going into the water, in a stroke of `power` (a strong one louder and deeper), heard at
-   * `level` (0..1: how near it is to the listener).
-   */
-  splash(power = 1, level = 1): void {
-    const ctx = this.ctx;
-    if (!ctx || !this.master || this.muted || level <= 0.01) return;
-    const t = ctx.currentTime;
-    const s = ctx.createBufferSource();
-    s.buffer = this.noise;
-    s.playbackRate.value = 1.2 + Math.random() * 0.3 - 0.25 * (power - 1);
-    const bp = ctx.createBiquadFilter();
-    bp.type = 'bandpass';
-    bp.frequency.setValueAtTime(1600, t);
-    bp.frequency.exponentialRampToValueAtTime(500, t + 0.35);
-    bp.Q.value = 0.9;
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.09 * (0.55 + 0.45 * power) * level, t + 0.04);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
-    s.connect(bp).connect(g).connect(this.master);
-    s.start(t, Math.random() * 3);
-    s.stop(t + 0.6);
   }
 
   /** A short whistled phrase, like a magpie-robin (doyel) singing from the bank. */
@@ -313,7 +294,8 @@ export class Soundscape {
   /** Thunder after a lightning strike `metres` off: it comes at the speed of sound, a low roll that swells and dies away, quieter from further. */
   thunder(metres: number): void {
     const ctx = this.ctx;
-    if (!ctx || !this.master || this.muted) return;
+    // (not into a clock held still: it would roll as the sound first starts)
+    if (!ctx || !this.master || this.muted || ctx.state !== 'running') return;
     const t = ctx.currentTime + metres / 343;
     const loud = 0.6 * Math.min(1, 900 / Math.max(metres, 300));
     const s = ctx.createBufferSource();
@@ -389,7 +371,8 @@ export class Soundscape {
     const near = Math.min(1, TRAIN_VOICE.near / r);
     this.place(v.engine, TRAIN_VOICE.engine * near, r, side(e, r), snap);
     this.place(v.horn, TRAIN_VOICE.horn * near, r, side(e, r), snap);
-    if (this.muted || this.hidden) return;
+    // (the horn and the rail joints not while the browser holds the sound back: they would sound as it starts)
+    if (this.muted || this.hidden || ctx.state !== 'running') return;
     if (src.horn !== null) this.blowHorn(v, src.horn);
     for (const j of src.joints) {
       const rj = Math.max(1, Math.hypot(j.x - ear.x, j.y - ear.y, j.z - ear.z));
@@ -585,7 +568,9 @@ export class Soundscape {
     // (a rush under the rest, not over it: the user found it drowning the place)
     if (this.falls) this.falls.gain.setTargetAtTime(0.03 * falls, now, 1);
     this.windFilter.frequency.setTargetAtTime(280 + 140 * wind + 260 * Math.sin(now * 0.07) ** 2, now, 2);
-    if (this.muted || this.hidden) return;
+    // (none while the browser holds the sound back for a first touch: its clock stands still, and every call made
+    // meanwhile would sound at once as it starts)
+    if (this.muted || this.hidden || ctx.state !== 'running') return;
     // the birds keep quiet in the rain and a hard wind, as the songbirds do (they sit still then)
     this.nextBird -= dt;
     if (this.nextBird <= 0) {

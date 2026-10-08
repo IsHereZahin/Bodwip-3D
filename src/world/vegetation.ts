@@ -49,7 +49,7 @@ import {
   type Mound,
 } from './geography';
 import { GRAVEYARD_BANYAN, HUB_BANYAN, banyanPerch } from './banyan';
-import { FAR_GROVES, HILLS, WORLD } from './plan';
+import { FAR_GROVES, HILLS, KASHBON, WORLD } from './plan';
 import { roadLines } from './roads';
 import { nearStone } from './stones';
 import { KHAL, SIDE_KHAL, journeyDistance, type Waterway } from './waterways';
@@ -519,6 +519,8 @@ function kashTuft(rng: Rng): BufferGeometry {
 
 /** Kash stands only this far above the water (m): where the bank stays dry. */
 const KASH_ABOVE = 0.4;
+/** How much of its old kashbon the char keeps, as a scatter (the kashbon stands on the khal: plan.ts `KASHBON`). */
+const CHAR_KASH = 0.2;
 
 /** Whether the bank on `side` of a khal `s` m along it is in one of the stretches kash grows along. */
 function kashStretch(way: Waterway, s: number, side: 1 | -1): boolean {
@@ -1248,9 +1250,9 @@ export function buildVegetation(
     });
   }
 
-  // kash: thick over the river's sandy char on the inside of its bend, and in stretches along the khals'
-  // open banks where they stay dry (not below the homesteads' trees, on the ways or at the crossings); the
-  // season keeps its plumes to the autumn
+  // kash: the kashbon thick on the khal's bank below the old bridge, scattered over the river's sandy char, and in
+  // stretches along the khals' open banks where they stay dry (not below the homesteads' trees, on the ways or at
+  // the crossings); the season keeps its plumes to the autumn
   const kashItems: Placement[][] = kash.map(() => []);
   const tuftAt = (x: number, z: number) => {
     const h = terrainHeight(x, z);
@@ -1258,7 +1260,8 @@ export function buildVegetation(
     if (h < WATER_LEVEL + (charShare(x, z) > 0.5 ? 0.12 : KASH_ABOVE) || !onDryLand(x, z, 0) || !occ.free(x, z, 0.5)) return;
     kashItems[rng.int(0, kash.length - 1)].push({ x, y: h - 0.05, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.75, 1.1) });
   };
-  // on the char a kashbon: drifts of it standing thick, with open sand and grass between
+  // on the char a scatter of it in its drifts, with open sand and grass between (the kashbon is the khal's: the boat
+  // passes the char in summer on the cinematic way, when the kash has no plumes)
   const charGrass: { x: number; z: number }[] = [];
   for (let k = 0; k < 26000; k++) {
     const x = rng.range(-640, -270);
@@ -1266,8 +1269,18 @@ export function buildVegetation(
     const c = charShare(x, z);
     if (c < 0.15) continue;
     const drift = smoothstep(0.36, 0.6, fbm(x * 0.025, z * 0.025, 2, 63));
-    if (rng.next() < c * (0.12 + 0.88 * drift)) tuftAt(x, z);
+    if (rng.next() < CHAR_KASH * c * (0.12 + 0.88 * drift)) tuftAt(x, z);
     else if (rng.next() < 0.35 * c) charGrass.push({ x, z });
+  }
+  // the kashbon (plan.ts KASHBON): drifts of it standing thick from near the water's edge back over the bank, thinning
+  // out at its ends
+  const { from, to, side: kashSide, reach } = KASHBON;
+  for (let k = 0; k < 1700; k++) {
+    const s = rng.range(from, to);
+    const p = KHAL.beside(s, kashSide, KHAL.half(s) + rng.range(2.5, reach));
+    const ends = smoothstep(from, from + 22, s) * smoothstep(to, to - 16, s);
+    const drift = smoothstep(0.3, 0.55, fbm(p.x * 0.03, p.z * 0.03, 2, 64));
+    if (rng.next() < ends * (0.3 + 0.7 * drift)) tuftAt(p.x, p.z);
   }
   for (const way of [KHAL, SIDE_KHAL]) {
     for (const side of [-1, 1] as const) {

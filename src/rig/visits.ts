@@ -3,7 +3,8 @@ import { lerp, smoothstep } from '../core/mathx';
 import { BIL, BRIDGE, CREEK_GATE, JOURNEY, MOUNDS, SALT_CREEK, SANKO, bankAt, bilPoint, bridgeToWorld, grandGhat, journeyAt, journeyFrame, saltPoint, shapePoint, terrainHeight } from '../world/geography';
 import { sankoToWorld } from '../world/sites';
 import { ghatPoint, type GhatSite } from '../world/ghatFlight';
-import { BANYAN, CHAR, GRAVE_BANYAN, GRAVEYARD, HILLS, HUB_GHAT, KHEJUR_PATH, MOSQUE, SALT_FIELD, ZAMINDAR } from '../world/plan';
+import { BANYAN, BRIDGE_NEAR, GRAVE_BANYAN, GRAVEYARD, HILLS, HUB_GHAT, KASHBON, KHEJUR_PATH, MOSQUE, SALT_FIELD, ZAMINDAR } from '../world/plan';
+import { KHAL } from '../world/waterways';
 import { RAIL_LENGTH, TRAIN_SPEED, railAt } from '../world/railway';
 import type { Scene } from './director';
 import type { Sightlines } from './sightlines';
@@ -243,13 +244,21 @@ export function mapSpots(lines: Sightlines): Spot[] {
     );
   }
 
-  // the kash char: over its plumes looking across the river to the zamindar house, then up over the char
-  spots.push(
-    spot('kash', 'চরের কাশবন', 'নদীর বাঁকের বালুচরে কাশবন, শরতে সাদা', 'kash', 'river', CHAR, { x: CHAR.x, z: CHAR.z, up: 1.5, size: 40 }, [
-      glide(SHOT, [-474, 3, 108], [-464, 3.4, 118], [-446, 4, 232], [-444, 5, 232]),
-      glide(SHOT, [-462, 4, 120], [-474, 15, 100], [-452, 0, 165], [-450, 0, 172]),
-    ], lines),
-  );
+  // the kashbon on the khal's bank: low over its plumes looking up the khal to the old bridge, then up from over the
+  // water and back across the khal, the kashbon spread below
+  {
+    const { from, to, side, reach } = KASHBON;
+    const bank = (s: number, out: number) => KHAL.beside(s, side, KHAL.half(s) + out);
+    const mid = bank((from + to) / 2, reach / 2);
+    const [a, b, far] = [bank(from + 25, 4), bank(from + 55, 5), bank(to - 20, reach / 2)];
+    const [w0, w1] = [KHAL.beside(from + 45, -side, 1), KHAL.beside(from + 25, -side, KHAL.half(from + 25) + 6)];
+    spots.push(
+      spot('kash', 'খালপাড়ের কাশবন', 'পুরোনো সেতুর আগে খালের পাড়ে কাশবন, শরতে সাদা', 'kash', 'river', mid, { x: mid.x, z: mid.z, up: 1.5, size: 30 }, [
+        glide(SHOT, [a.x, 3, a.z], [b.x, 3.4, b.z], [BRIDGE_NEAR[0], 4, BRIDGE_NEAR[1]], [BRIDGE_NEAR[0], 5, BRIDGE_NEAR[1]]),
+        glide(SHOT, [w0.x, 4, w0.z], [w1.x, 15, w1.z], [mid.x, 0, mid.z], [far.x, 0, far.z]),
+      ], lines),
+    );
+  }
 
   // the zamindar house: first from the river off the foot of its grand ghat, looking up its steps to the pavilions
   // and the house; then up over its landing, rising to see the house's front with its lawn

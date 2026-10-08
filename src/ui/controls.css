@@ -789,6 +789,53 @@ body.ui-off #ui-restore:focus-visible {
   font-size: 13px;
   color: var(--ink-dim);
 }
+#help .help-about {
+  margin: 18px 0 0;
+  padding-top: 14px;
+  border-top: 1px dashed var(--stitch);
+}
+#help .help-about h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--ink-dim);
+}
+#help .help-about p {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--ink-dim);
+}
+/* the maker, and their links */
+#help .help-about .help-by {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-top: 12px;
+}
+#help .help-by b {
+  font-weight: 500;
+  color: var(--ink);
+}
+#help .help-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+}
+#help .help-links a {
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: var(--stitch);
+  text-underline-offset: 3px;
+}
+#help .help-links a:hover {
+  color: var(--alta);
+}
+#help .help-links a:focus-visible {
+  outline: 2px solid var(--alta);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
 #help kbd {
   font-family: inherit;
   font-size: 12px;
