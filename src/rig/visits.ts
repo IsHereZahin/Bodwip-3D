@@ -1,6 +1,6 @@
 import { Vector3 } from 'three';
 import { lerp, smoothstep } from '../core/mathx';
-import { BIL, BRIDGE, JOURNEY, MOUNDS, SANKO, bankAt, bilPoint, bridgeToWorld, grandGhat, journeyAt, journeyFrame, saltPoint, shapePoint, terrainHeight } from '../world/geography';
+import { BIL, BRIDGE, CREEK_GATE, JOURNEY, MOUNDS, SALT_CREEK, SANKO, bankAt, bilPoint, bridgeToWorld, grandGhat, journeyAt, journeyFrame, saltPoint, shapePoint, terrainHeight } from '../world/geography';
 import { sankoToWorld } from '../world/sites';
 import { ghatPoint, type GhatSite } from '../world/ghatFlight';
 import { BANYAN, CHAR, GRAVE_BANYAN, GRAVEYARD, HILLS, HUB_GHAT, KHEJUR_PATH, MOSQUE, SALT_FIELD, ZAMINDAR } from '../world/plan';
@@ -186,14 +186,40 @@ const fp = (u: number, v: number, up: number): [number, number, number] => {
 export function mapSpots(lines: Sightlines): Spot[] {
   const spots: Spot[] = [];
 
-  // the salt farms, where she sets out: along a bund between the beds, then up over all of them
+  // the salt farms, where she sets out, and their water: from high over the river, its sluice gate, the creek
+  // coming up past the farms and the farms behind their embankments, all one water; along a bund between the
+  // beds; up over all of them; and beside the creek, its golpata, the farms' intakes, on to the gate and the river
   {
     const c = saltPoint(SALT_FIELD.w / 2, SALT_FIELD.d / 2);
+    // the gate's way out to the river (north), and across it toward the creek's farm (west)
+    const out = { x: Math.sin(CREEK_GATE.heading), z: Math.cos(CREEK_GATE.heading) };
+    const west = { x: out.z, z: -out.x };
+    const fromGate = (ahead: number, aside: number, up: number): [number, number, number] => [CREEK_GATE.x + out.x * ahead + west.x * aside, up, CREEK_GATE.z + out.z * ahead + west.z * aside];
+    // `back` m up the creek from the gate, `aside` m off its middle toward the creek's farm (clear of its golpata)
+    const onCreek = (back: number, up: number, aside = 0): [number, number, number] => {
+      const p = SALT_CREEK.beside(CREEK_GATE.s - back, 1, aside);
+      return [p.x, up, p.z];
+    };
     spots.push(
-      spot('salt', 'লবণ মাঠ', 'নদীর দক্ষিণ পাড়ে কয়েকটি লবণ মাঠ: শুকনো মাসে লবণ তোলা, বর্ষায় মাছের ঘের', 'salt', 'fields', c, { x: c.x, z: c.z, up: 0.5, size: Math.max(SALT_FIELD.w, SALT_FIELD.d) / 2 }, [
-        glide(SHOT, fp(40, 24.5, 3.5), fp(60, 26, 3.6), fp(92, 30, 0.6), fp(96, 34, 0.7)),
-        glide(SHOT, fp(40, -8, 5), fp(32, -24, 20), fp(48, 30, 0), fp(52, 40, 0)),
-      ], lines),
+      spot(
+        'salt',
+        'লবণ মাঠ',
+        'নদীর দক্ষিণ পাড়ে লবণ মাঠ, খাঁড়ি দিয়ে নদীর সাথে জোড়া: শুকনো মাসে লবণ তোলা, বর্ষায় মাছের ঘের',
+        'salt',
+        'fields',
+        c,
+        { x: c.x, z: c.z, up: 0.5, size: Math.max(SALT_FIELD.w, SALT_FIELD.d) / 2 },
+        [
+          glide(SHOT, fromGate(78, 34, 30), fromGate(64, 22, 36), fp(10, 30, 0), fp(20, 30, 0)),
+          glide(SHOT, fp(40, 24.5, 3.5), fp(60, 26, 3.6), fp(92, 30, 0.6), fp(96, 34, 0.7)),
+          glide(SHOT, fp(40, -8, 5), fp(32, -24, 20), fp(48, 30, 0), fp(52, 40, 0)),
+          glide(SHOT, onCreek(165, 14, 20), onCreek(125, 12, 17), onCreek(40, 0.5), fromGate(25, 0, 1)),
+        ],
+        lines,
+        c,
+        0,
+        0,
+      ),
     );
   }
 

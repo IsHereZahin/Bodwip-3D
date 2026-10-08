@@ -9,7 +9,7 @@
 //   land         DeltaDTM on the low ground, FABDEM on the hills (both bare earth), blended between 5 and 10 m
 //   mangrove     the same, kept between mean sea level and high water springs (the floor of a tidal forest)
 //   tidal flat   tidal wetland in Murray et al.'s map; set at the level the tide stays above for the share of
-//                the satellite passes JRC saw it wet — the tide's own height distribution
+//                the satellite passes JRC saw it wet: the tide's own height distribution
 //   sea water    below the low-water line, deepening with the distance from the shore, then GEBCO offshore
 //   inland water ponds, pans and the ash ponds: their beds a little under the surface the DEM measured
 import { existsSync, readdirSync } from 'node:fs';

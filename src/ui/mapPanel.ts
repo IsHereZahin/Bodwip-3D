@@ -1,7 +1,7 @@
 import { CORRIDOR } from '../render/glsl';
 import type { SpotGroup, SpotIcon } from '../rig/visits';
-import { BIL, JOURNEY, KHAL, RIVER, corridorDistance, journeyAt, landUse, terrainHeight, waterLevelAt } from '../world/geography';
-import { WORLD } from '../world/plan';
+import { BIL, JOURNEY, KHAL, RIVER, SALT_CREEK, SALT_WATERS, corridorDistance, journeyAt, landUse, saltIntake, terrainHeight, waterLevelAt } from '../world/geography';
+import { SALT_FIELDS, WORLD } from '../world/plan';
 import { roadLines } from '../world/roads';
 import './map.css';
 
@@ -63,6 +63,27 @@ const GROUP_ORDER: readonly SpotGroup[] = ['river', 'village', 'fields'];
 /** A world point on the map's fine canvas. */
 const toMap = (x: number, z: number): [number, number] => [((WORLD.x1 - x) / M) * FINE, ((WORLD.z1 - z) / M) * FINE];
 
+/** How far the haze has the land at (x, z) beyond the village's own (0..1): the map fades it to parchment. */
+const hazeAt = (x: number, z: number) => 1 - Math.exp(-Math.max(0, corridorDistance(x, z) - CORRIDOR.clear) * CORRIDOR.haze);
+
+/**
+ * The salt creek's and its feeders' water as pieces of line on the map (from, to, width in its pixels, and how
+ * clear of the haze), and each farm's intake from them: worked out once, drawn every frame the map is open.
+ */
+let saltLines: { a: [number, number]; b: [number, number]; width: number; clear: number }[] | null = null;
+function saltWaterLines(): NonNullable<typeof saltLines> {
+  if (saltLines) return saltLines;
+  saltLines = SALT_FIELDS.map(saltIntake).map(({ edge, water }) => ({ a: toMap(water.x, water.z), b: toMap(edge.x, edge.z), width: 1.2, clear: 0.95 }));
+  for (const way of SALT_WATERS) {
+    for (let s = 0; s < way.length; s += 4) {
+      const a = way.at(s);
+      const b = way.at(Math.min(way.length, s + 4.5));
+      saltLines.push({ a: toMap(a.x, a.z), b: toMap(b.x, b.z), width: Math.max(1.6, ((2 * way.half(s)) / M) * FINE), clear: 0.95 * (1 - hazeAt(a.x, a.z)) });
+    }
+  }
+  return saltLines;
+}
+
 /** The map's colour for the ground at (x, z) (sRGB 0..255), and whether water stands there. */
 function paintAt(x: number, z: number, out: number[]): boolean {
   const h = terrainHeight(x, z);
@@ -94,7 +115,7 @@ function paintAt(x: number, z: number, out: number[]): boolean {
     b *= shade;
   }
   // beyond the village's own land, the haze, a pale parchment
-  const fog = 1 - Math.exp(-Math.max(0, corridorDistance(x, z) - CORRIDOR.clear) * CORRIDOR.haze);
+  const fog = hazeAt(x, z);
   out[0] = r + (214 - r) * fog;
   out[1] = g + (206 - g) * fog;
   out[2] = b + (186 - b) * fog;
@@ -122,7 +143,7 @@ export class MapPanel {
       <header class="map-head">
         <img class="map-logo" src="brand/logo.svg" alt="" width="40" height="40" />
         <div class="map-titles">
-          <h2>নদীগাঁয়ের মানচিত্র</h2>
+          <h2>বদ্বীপের মানচিত্র</h2>
           <p>একটা জায়গা বেছে নিন: সেখানকার দৃশ্য দেখে আবার নৌকায় ফিরবেন</p>
         </div>
         <button type="button" class="ibtn close" aria-label="বন্ধ করুন">✕</button>
@@ -320,6 +341,23 @@ export class MapPanel {
 
   /** The map's lines and words over the ground: the ways, the boat's way, the waters' names. */
   private drawLines(ctx: CanvasRenderingContext2D): void {
+    // the salt creek and its feeders, narrower than the ground's pixels: drawn along their lines, a pale shore
+    // and the water in it, joined to the river as they are, fading into the haze as the ground does; and each
+    // farm's intake from them, the short trough through its embankment
+    ctx.lineCap = 'butt';
+    for (const [shore, colour] of [
+      [1.6, '214, 226, 222'],
+      [0, '62, 112, 128'],
+    ] as const) {
+      for (const line of saltWaterLines()) {
+        ctx.strokeStyle = `rgba(${colour}, ${line.clear.toFixed(3)})`;
+        ctx.lineWidth = line.width + shore;
+        ctx.beginPath();
+        ctx.moveTo(line.a[0], line.a[1]);
+        ctx.lineTo(line.b[0], line.b[1]);
+        ctx.stroke();
+      }
+    }
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     for (const line of roadLines()) {
@@ -375,6 +413,9 @@ export class MapPanel {
     word('নদী', river.x, river.z, river.a, 22);
     const khal = along(KHAL, 0.72);
     word('খাল', khal.x, khal.z, khal.a, 18);
+    // (beside it, east, where it comes up from the coast below the farms)
+    const creek = along(SALT_CREEK, 0.62);
+    word('খাঁড়ি', creek.x - 22, creek.z, creek.a, 15);
     // (south of its badge, over the water)
     word('শাপলা বিল', BIL.x + 10, BIL.z - 70, 0, 22);
   }

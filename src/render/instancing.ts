@@ -24,6 +24,17 @@ export interface InstanceOptions {
   layer?: number;
 }
 
+const e = new Euler();
+const q = new Quaternion();
+const pos = new Vector3();
+const scl = new Vector3();
+/** The matrix that places an instance as `p` says: its lean and yaw, its size, at its place. */
+export function placementMatrix(p: Placement, out: Matrix4): Matrix4 {
+  e.set(p.tx ?? 0, p.ry, p.tz ?? 0, 'YXZ');
+  q.setFromEuler(e);
+  return out.compose(pos.set(p.x, p.y, p.z), q, scl.set(p.s, p.s * (p.sy ?? 1), p.s));
+}
+
 export function instanced(
   geometry: BufferGeometry,
   material: Material,
@@ -41,18 +52,9 @@ export function instanced(
     list.push(p);
   }
   const m = new Matrix4();
-  const q = new Quaternion();
-  const e = new Euler();
-  const pos = new Vector3();
-  const scl = new Vector3();
   for (const list of buckets.values()) {
     const mesh = new InstancedMesh(geometry, material, list.length);
-    list.forEach((p, i) => {
-      e.set(p.tx ?? 0, p.ry, p.tz ?? 0, 'YXZ');
-      q.setFromEuler(e);
-      m.compose(pos.set(p.x, p.y, p.z), q, scl.set(p.s, p.s * (p.sy ?? 1), p.s));
-      mesh.setMatrixAt(i, m);
-    });
+    list.forEach((p, i) => mesh.setMatrixAt(i, placementMatrix(p, m)));
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
     mesh.castShadow = options.cast ?? false;

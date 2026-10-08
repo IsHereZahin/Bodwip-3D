@@ -71,7 +71,7 @@ import { BANYAN_CLEARING, GRAVE_BANYAN_CLEARING, GRAVEYARD_BANYAN, buildBanyan }
 import { MOSQUE_POND_TREES } from './world/plan';
 import { NIGHT_GLOWS, buildLandmarks, lampsGlow } from './world/landmarks';
 import { KALIMA_FONT } from './render/textures';
-import { Train, buildRailway } from './world/railway';
+import { Train, buildRailway, railNearest } from './world/railway';
 import { buildWater } from './world/water';
 import { Ripples } from './world/ripples';
 import { currentAt } from './world/boatPhysics';
@@ -326,17 +326,18 @@ async function main(hud: Hud): Promise<void> {
   const life = new Life();
   scene.add(life.group);
   // the cinematic morning (the user's direction): the clock at its dawn on its day, with its moon; the sun rises in
-  // the opening's first seconds (`sunrise`, step()), then the clock runs on at the wall's pace, and the season
-  // follows the boat's way round the year from that day (yearJourney.ts). Live (`mode`) is Bangladesh's own date,
-  // hour and moon, the clock kept to the wall's (`clock.live`) until the viewer turns it.
+  // the opening's first seconds and the morning brightens on to 8:05 as the flight ends (`sunrise`, step()), then
+  // the clock runs on at the wall's pace, and the season follows the boat's way round the year from that day
+  // (yearJourney.ts). Live (`mode`) is Bangladesh's own date, hour and moon, the clock kept to the wall's
+  // (`clock.live`) until the viewer turns it.
   let mode: TimeMode = 'cinematic';
   const clock = new Clock(plan.dawn, plan.moon, plan.day);
   clock.live = false;
   const yearJourney = new YearJourney(plan.day);
   /** The mode's own moon (the cinematic morning's, or the real one in Live): its age at `time`, going on with the clock's days. */
   const ownMoon = { age: clock.moonAge, time: clock.time };
-  /** The sunrise running: how far into it (s; below 0 it is still to begin), from its dawn's hour to its lit stage's. */
-  let sunrise: { t: number; dawn: number; lit: number } | null = { t: -SUNRISE.from, dawn: plan.dawn, lit: plan.lit };
+  /** The sunrise running: how far into it (s; below 0 it is still to begin), from its dawn's hour by its lit stage's to its morning's. */
+  let sunrise: { t: number; dawn: number; lit: number; morning: number } | null = { t: -SUNRISE.from, dawn: plan.dawn, lit: plan.lit, morning: plan.morning };
   const season = makeSeasonState();
   const weather = new Weather();
   weather.clearUntil = OPENING_CLEAR_SECONDS;
@@ -639,8 +640,11 @@ async function main(hud: Hud): Promise<void> {
    * nearly a pixel to each of its CSS pixels); under `fast` it grows back a step at a time. Still slow at `lowAt`,
    * the lower tier. A frame whose own work on the CPU is `cpuBound` of it waits on the CPU: fewer pixels would not
    * help it, so the size is kept. A frame counts at most `longest` s (one stall alone does not shrink the picture).
+   * A new size costs the frame it is taken up in 60–90 ms (every target made again), so a step to `least` of less
+   * than `smallest` of the size is not taken, and through the opening flight the size only comes down: there it
+   * grew back over the river and came down again round her, a stall each time.
    */
-  const ADAPT = { quick: 20, steady: 60, quickFor: 600, slow: 0.024, fast: 0.0175, aim: 0.018, least: 0.6, leastDense: 0.5, lowAt: 0.75, cpuBound: 0.8, longest: 0.25 };
+  const ADAPT = { quick: 20, steady: 60, quickFor: 600, slow: 0.024, fast: 0.0175, aim: 0.018, least: 0.6, leastDense: 0.5, lowAt: 0.75, cpuBound: 0.8, longest: 0.25, smallest: 0.07 };
   /** Device pixels to a CSS pixel at full size (a denser screen is drawn at most this fine). */
   const densest = () => Math.min(devicePixelRatio || 1, 1.75);
   const leastScale = () => (densest() >= 1.5 ? ADAPT.leastDense : ADAPT.least);
@@ -782,17 +786,24 @@ async function main(hud: Hud): Promise<void> {
     if (clock.speed === SPEEDS[0] && mode === 'live') keepToWall();
     else takeClock();
   };
-  /** The sunrise's hour now: from its dawn up to its lit stage over `SUNRISE.seconds`, eased; then the clock runs on from there. */
+  /**
+   * The sunrise's hour now: from its dawn up to its lit stage over `SUNRISE.seconds`, and on to its morning's hour
+   * by `SUNRISE.until` (the opening's end), each eased; then the clock runs on from there.
+   */
   const riseSun = (dt: number) => {
     if (!sunrise) return;
     sunrise.t += dt;
-    clock.setHour(sunrise.dawn + (sunrise.lit - sunrise.dawn) * smooth(clamp(sunrise.t / SUNRISE.seconds, 0, 1)));
-    if (sunrise.t >= SUNRISE.seconds) sunrise = null;
+    const { seconds, on, until } = SUNRISE;
+    const up = smooth(clamp(sunrise.t / seconds, 0, 1));
+    const brighten = smooth(clamp((sunrise.t - on) / (until - on), 0, 1));
+    clock.setHour(sunrise.dawn + (sunrise.lit - sunrise.dawn) * up + (sunrise.morning - sunrise.lit) * brighten);
+    // (ended on the morning's hour itself: summed, it could fall short of 8:05 by a hair and show 8:04)
+    if (sunrise.t >= until) finishSunrise();
   };
-  /** The sunrise done at once (the film starts over it): the sun at its lit stage. */
+  /** The sunrise done at once (the film starts over it): the clock at its morning's hour. */
   const finishSunrise = () => {
     if (!sunrise) return;
-    clock.setHour(sunrise.lit);
+    clock.setHour(sunrise.morning);
     sunrise = null;
   };
 
@@ -945,7 +956,7 @@ async function main(hud: Hud): Promise<void> {
     clock.setDayOfYear(m.day);
     clock.setHour(m.dawn);
     clock.setMoonAge(m.moon);
-    sunrise = { t: -after, dawn: m.dawn, lit: m.lit };
+    sunrise = { t: -after, dawn: m.dawn, lit: m.lit, morning: m.morning };
   };
   /** Sets a mode's whole world at once (under the dip's dark): its day, hour, moon, season, weather and what goes with them. */
   const setMode = (to: TimeMode) => {
@@ -1234,6 +1245,8 @@ async function main(hud: Hud): Promise<void> {
   let t = 0;
   const focus = new Vector3();
   const forward = new Vector3();
+  /** The listener's right, for which side the train is heard from. */
+  const earRight = new Vector3();
   /**
    * The season from the day of the year, the weather on it, and the wind they make; `settle` jumps
    * straight to where they are heading (for stills and a fresh season) instead of easing there.
@@ -1362,6 +1375,7 @@ async function main(hud: Hud): Promise<void> {
     focus.set(Math.round(focus.x / 12) * 12, 0, Math.round(focus.z / 12) * 12);
     if (env.aimShadow(focus, false)) renderer.shadowMap.needsUpdate = true;
     sound.update(dt, env.night, G.uWind.value.z * gustAt(camera.position.x, camera.position.z), weather.rain, waterNear(), frogsOut(), fallsLoud);
+    sound.train(train.acoustics(camera.position), camera.position, earRight.setFromMatrixColumn(camera.matrixWorld, 0), railNearest(camera.position.x, camera.position.z).distance);
   };
   updateSky(0, true);
   step(0);
@@ -1383,7 +1397,24 @@ async function main(hud: Hud): Promise<void> {
   });
   await renderer.compileAsync(scene, camera);
   for (const o of unhidden) o.visible = false;
+  // and everything standing within reach drawn once, in the opening's view or not, with its shadow: the flight
+  // turns right round her, and each thing first drawn in its frames (its buffers and textures sent to the GPU, its
+  // shadow's program made) held that frame up 60–90 ms, a dozen times over as it came round her
+  updateCulling(camera.position);
+  const outOfView: Object3D[] = [];
+  scene.traverseVisible((o) => {
+    if (!o.frustumCulled) return;
+    o.frustumCulled = false;
+    outOfView.push(o);
+  });
+  renderer.shadowMap.needsUpdate = true;
+  renderer.render(scene, camera);
+  for (const o of outOfView) o.frustumCulled = true;
+  // (drawn again in the frame's own passes: the mirror's first, which casts only what it sees, known-issues.md)
+  renderer.shadowMap.needsUpdate = true;
   renderer.setRenderTarget(null);
+  ripples.compile(renderer);
+  pipeline.compile(renderer);
   hud.progress(1);
 
   // the opening's first view drawn a few times behind the loader to learn what a frame of it costs this device's
@@ -1510,9 +1541,12 @@ async function main(hud: Hud): Promise<void> {
         perf.n = 0;
         const before = perf.scale;
         if (avg > ADAPT.slow && perf.scale > leastScale() && !cpuBound) {
-          perf.scale = Math.max(leastScale(), perf.scale * clamp(Math.sqrt(ADAPT.aim / avg), 0.7, 0.92));
-          perf.cool = now + 3000;
-        } else if (avg < ADAPT.fast && perf.scale < 1 && now > perf.cool) {
+          const next = Math.max(leastScale(), perf.scale * clamp(Math.sqrt(ADAPT.aim / avg), 0.7, 0.92));
+          if (next < perf.scale * (1 - ADAPT.smallest)) {
+            perf.scale = next;
+            perf.cool = now + 3000;
+          }
+        } else if (avg < ADAPT.fast && perf.scale < 1 && now > perf.cool && !rig.flying) {
           perf.scale = Math.min(1, perf.scale + 0.06);
           perf.cool = now + 3000;
         }
@@ -1667,7 +1701,7 @@ async function main(hud: Hud): Promise<void> {
         /** The boat's motion now, for checking the physics. */
         boatState() {
           const r = (v: number, k = 1000) => Math.round(v * k) / k;
-          return { x: r(b0().pos.x, 100), z: r(b0().pos.z, 100), heave: r(b0().pos.y), pitch: r(b0().rotX), roll: r(b0().rotZ), heading: r(b0().heading), course: r(b0().course), speed: r(b0().speed), power: r(b0().power, 100), crew: { x: r(hero.crew.x), z: r(hero.crew.z) }, reach: r(hero.reach), depth: r(WATER_LEVEL - terrainHeight(b0().pos.x, b0().pos.z), 100) };
+          return { x: r(b0().pos.x, 100), z: r(b0().pos.z, 100), heave: r(b0().pos.y), pitch: r(b0().rotX), roll: r(b0().rotZ), heading: r(b0().heading), course: r(b0().course), speed: r(b0().speed), power: r(b0().power, 100), crew: { x: r(hero.crew.x), z: r(hero.crew.z) }, reach: r(hero.reach), shortBy: hero.shortBy.map((v) => r(v, 1000)), depth: r(WATER_LEVEL - terrainHeight(b0().pos.x, b0().pos.z), 100) };
         },
         /**
          * Runs the world `seconds` (1/30 s steps, without drawing) and measures how the hero hull meets the
@@ -1943,13 +1977,14 @@ async function main(hud: Hud): Promise<void> {
           clock.playing = true;
         },
         /** The environment as shown now: the turning year and moon, the crops, the river, the weather, the session, and the sun against the view. */
-        /** The cinematic morning as chosen (rig/cinematic.ts): its day, dawn, lit stage and moon, and the best days as weighed, term by term. */
+        /** The cinematic morning as chosen (rig/cinematic.ts): its day, dawn, lit stage, the opening's end and moon, and the best days as weighed, term by term. */
         cinematic() {
           const r = (v: number) => Math.round(v * 100) / 100;
           return {
             day: plan.day,
             dawn: r(plan.dawn),
             lit: r(plan.lit),
+            morning: r(plan.morning),
             moon: r(plan.moon),
             ranked: plan.ranked.map((w) => ({ day: w.day, score: r(w.score), ...Object.fromEntries(Object.entries(w.terms).map(([k, v]) => [k, r(v)])) })),
           };

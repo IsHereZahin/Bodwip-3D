@@ -178,6 +178,14 @@ export class Ripples {
     this.drops[this.queued++].set(x, z, Math.max(radius, (SIZE / TEXELS) * 1.5), -strength);
   }
 
+  /** Makes its program at load: made in the first frame it runs, it held the opening's first frame up 0.1–0.3 s. */
+  compile(renderer: WebGLRenderer): void {
+    const was = renderer.getRenderTarget();
+    renderer.setRenderTarget(this.targets[0]);
+    renderer.compile(this.scene, this.camera);
+    renderer.setRenderTarget(was);
+  }
+
   /** Whether (x, z) lies in the patch, where its ripples are drawn (a touch elsewhere is not seen ringing). */
   covers(x: number, z: number): boolean {
     const u = this.uniforms.uRipple.value;

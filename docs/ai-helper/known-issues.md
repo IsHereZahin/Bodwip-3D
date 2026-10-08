@@ -26,7 +26,10 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
 - **Measuring:** another tab or program drawing on the same GPU (the site left open in Edge from the dev server, which reloads it on every save) halves headless frame rates and stretches the load. Check `Get-Counter '\GPU Engine(*engtype_3D)\Utilization Percentage'` first, and compare against a baseline build in alternate runs (verification.md).
 - **The mirror pass** redraws layer 0 (trees, kash) at half resolution (a third in the lower tier). Adaptive resolution saves pixels, not vertices.
 - **Hyacinth is never frustum-culled.**
-- **A cut's own frame** still costs ≈130–160 ms in headless Chrome on the production build; the frames round it are 20–40 ms.
+- **The opening flight's last stalls** (2026-10-08, headless, dev server, 1920 × 1080): 3–5 frames of 55–75 ms where the terrain's, the meadow's and the crops' builds fall in one frame (≈3.7, 6.8 and 7.5 s in), and what is hidden at load is still first drawn in the flight (the train, the birds, the banyan's near crown). The load's warm-up draw that took the rest out of it costs ≈0.5 s.
+- **Instance buffers are sent whole every frame:** ≈5 MB a frame while the camera moves (the opening), whatever their count: the fallen petals' (`petals lying`, 26 000 places, ≈2 MB), the falling leaves' and petals' and the floating petals' (≈0.5 MB with few or none in use: no `updateRanges`), and one of ≈2.4 MB not yet traced.
+- **The film's first frame** (started with C) costs ≈0.7 s in headless Chrome on the production build (2026-10-08; the same on the commit before): its whole world is set and built at once. Not yet looked into.
+- **A cut's own frame** costs ≈70–140 ms in headless Chrome (2026-10-08: ≈70–100 ms on the production build over the first cuts, up to 140 ms on the dev server over the whole film); the frames round it are 20–40 ms.
   - The cost is two shots drawn, and the new grass and crop buffers uploaded.
   - The cut's building is capped at `PREPARE_MS`, and the water's next field is uploaded ahead.
   - One shadow-depth program is still first compiled as the film starts.
@@ -34,9 +37,11 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
 - **Never measured:** real phones, Intel and Apple integrated GPUs, and a discrete GPU since the speed pass (one integrated Radeon only).
 - **The salt farms' people** are boatman bodies (≈10 draw calls each, with cloth): up to 13 in the salt season. The film's লবণ মাঠ shot draws ≈1050 calls, the most of any shot. They are posed within `POSED` and drawn within `DRAWN` of their farm (saltworks.ts).
 
+- **The loader still stands still twice** (2026-10-08, a trace of the load, dev server): the whole screen draws no frame for ≈0.5–0.7 s just after it shows (the browser making the WebGL context: `GetString` waits on the GPU process, its compositor busy) and ≈0.3 s near the end of the load (the GPU process busy with what was built). The page cannot draw then; the mark goes on where it was.
+
 ## Accepted simplifications
 
-- **The moon** is drawn about 5× its real size, and its orbit's tilt is ignored: no eclipses, and at new moon it sits on the sun.
+- **The moon** is drawn about 5× its real size, and its orbit's tilt is ignored: no eclipses, and at new moon it sits on the sun. High in an evening shot's sky its reflection lies on the water as a pale blob broken by the waves (জেলের জাল: the moon itself is out of the frame).
 - **Moonrise:** the moon often starts behind the bank's trees; an event's time is when the moon's centre is on the horizon.
 - **New-moon nights** are dark but readable (`glowE` in `environment.ts`).
 - **Rain** streaks are drawn only within 22 m of the camera. They aren't blocked by geometry.
@@ -45,6 +50,7 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
   - Puddles mirror only the hazy sky (there is no real reflection), darkened for the surroundings they would show.
   - Ground under trees and eaves wets like open ground.
   - The terrain's `aPool` sees a hollow only at its vertex spacing (2 m near the camera), so the finer dips come from a noise.
+- **Songbirds after a jump:** when the boat is put somewhere far (a still with `journey`, a film cut, a map visit) the songbirds fly back from where they sat, which can take minutes, so none sit near her for a while. They sit only on the broadleaf trees and the banyans, never on the palms or the bamboo.
 - **Lightning** strikes only far off (650–1700 m): no near strikes, ground flashes or trees hit.
 - **What moves casts no shadow:**
   - the hero boat (a soft spot under the majhi stands in);
@@ -58,7 +64,7 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
   - Rebuilding the textures needs Python + Pillow.
   - A free camera within 1 m of a person can clip the arms at the near plane.
 - **Bank grass is placed at the mean water level.** In the rains some of it stands in water. In the dry months the exposed beds keep their underwater colour (wet mud and pebbles), never cracked dry ground.
-- **The salt creek's water** has the river's colour. The gher's water is painted on the terrain, so the gher fisherman's net sinks "into the ground".
+- **The salt creek's water** and its feeders' have the river's colour (they are one water with it). The gher's water is painted on the terrain, so the gher fisherman's net sinks "into the ground".
 - **The cast net** is a family of shapes (bag ↔ bell), not cloth physics. It ignores wind and obstacles, and the cast runs only on its 25 s cycle near the viewer.
 - **Ripples:**
   - The simulated patch covers ≈15 m where the camera looks; elsewhere only the analytic rings (rain, nets, the boat) show, and a drop outside the patch is lost.
@@ -67,7 +73,10 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
 - **Creatures:**
   - Frogs sit only at the water's edge 9–36 m from the camera (small at that distance), never on the lily pads; their croaking has no throat to go with it.
   - Turtles bask only on the khal's three rocks; their walk off the rock is a slide.
-- **The hill stream:** the ground's 2 m lattice smooths its ledges into steep chutes rather than sheer falls; no spray or mist. Its water is a ribbon (not in the level map). Where the stream and the sluice's spill run below the river's surface, they show through it untinted.
+- **The hill stream:** the ground's 2 m lattice smooths its ledges into steep chutes rather than sheer falls; no spray or mist. Its water is a ribbon (not in the level map).
+- **The train:** its wheels do not turn (solid discs: it would not show), and it runs at one speed, never slowing or stopping. A thin band of sky shows under its coaches from below the embankment (as under a real one). Its sound stops 300 m from the line by the user's rule, not by physics (an air horn carries much farther).
+- **The train's sound:** nothing stands in its way (no hiding behind the embankment, the groves or the houses, no echo); the ground's and the air's toll is one lowpass by distance. Its rails are jointed (13 m), never welded; no brake or flange squeal (it never brakes or turns hard). Its clatter's rhythm is its own train's at 60 km/h, slower than the user's reference recording's faster train. Never heard in a real browser by me: the checks were recordings in headless Chrome.
+- **The sluice:** its spill is one sheet over the steps' edges (skimming flow), not each step's own fall and pool; its froth is a pattern, with no spray. The gate is up or down by the season, not throttling the flow between. Its bund is local (≈30 m along the bank), not a river embankment running on.
 - **The water's shadow** takes four taps of the key light's map; beyond the map's reach the water is lit.
 - **Petals:**
   - The film's tree stands ≈11 m back from the khal (the banks are kept clear of trees), so its petal is carried ≈7 m out by the scene's held breeze (`windToward`).
@@ -109,7 +118,7 @@ These entries are current as of the review of 2026-10-06, made after commit 7181
 
 ## Backlog (proposed, not yet asked for)
 
-- **The salt farms:** only the creek's farm has a sluice and a gola; the others have feeder ditches painted along their embankments. The gher's fish swim through the drowned bunds. A walker's planted foot slides a little as he stops or turns in place.
+- **The salt farms:** only the creek's farm has a gola. The ditch along each farm's embankment foot is painted, not dug. The gher's fish swim through the drowned bunds. A walker's planted foot slides a little as he stops or turns in place.
 
 - **Banks and river life:** roots, mud, reeds and bushes on the banks; ghat details; moored and moving boats; washing and bathing at the ghats, cattle, cooking smoke at dusk, kites overhead; banana rafts in the rains.
 - **Vegetation:** distant coconuts read as poles; the far villages' rows; homestead groves' density.

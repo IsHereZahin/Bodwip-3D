@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <title>নদী — বাংলার গ্রাম, নদী আর ছয় ঋতু</title>
+    <title>বদ্বীপ: বাংলার গ্রাম, নদী আর ছয় ঋতু</title>
     <meta name="description" content="রিয়েল-টাইম 3D: বাংলার এক গ্রামের ছোট নদী দিয়ে মাঝির নৌকা ধীরে বেয়ে চলে, খালে ঢুকে পুরোনো ইটের সেতুর নিচ দিয়ে, খালের শাখায় বাঁশের সাঁকোর নিচ দিয়ে শাপলা বিলে; বাংলাদেশের এই মুহূর্তের সময় থেকে শুরু, পথে পথে ছয় ঋতু।" />
     <meta name="theme-color" content="#0d0c0b" />
     <link rel="icon" href="brand/favicon.svg" type="image/svg+xml" />
@@ -108,16 +108,23 @@
         from { opacity: 0.35; }
         to { opacity: 0.75; }
       }
+      /* each wave's dashes are a strip moved by a transform under the wave's own line (its clip), so the compositor
+         runs them on while the page is busy building: a stroke-dashoffset waited for it, stood still for seconds
+         and then jumped */
       #load .flow {
-        stroke-dasharray: 26 4;
-        animation: ld-flow 6s linear infinite;
+        animation: ld-flow 3s linear infinite;
       }
       #load .flow.b {
-        stroke-dasharray: 18 5;
-        animation-duration: 8s;
+        animation-name: ld-flow-b;
+        animation-duration: 3.07s;
       }
       @keyframes ld-flow {
-        to { stroke-dashoffset: -60; }
+        from { transform: translateX(-30px); }
+        to { transform: none; }
+      }
+      @keyframes ld-flow-b {
+        from { transform: translateX(-23px); }
+        to { transform: none; }
       }
       #load .boat {
         transform-box: fill-box;
@@ -337,6 +344,9 @@
           <defs>
             <clipPath id="ld-disk"><circle cx="50" cy="50" r="46" /></clipPath>
             <radialGradient id="ld-glow"><stop offset="0" stop-color="#ff6a5a" stop-opacity="0.5" /><stop offset="1" stop-color="#ff6a5a" stop-opacity="0" /></radialGradient>
+            <!-- the waves' lines (the logo's strokes, 2.4 and 1.8 wide, with their round ends), for their dashes to run under -->
+            <clipPath id="ld-wave-a"><path d="M2 65.8C14 60.8 26 60.8 40 65.8C54 70.8 66 70.8 80 65.8C94 60.8 96 60.8 100 60.8V63.2C96 63.2 94 63.2 80 68.2C66 73.2 54 73.2 40 68.2C26 63.2 14 63.2 2 68.2Z" /><circle cx="2" cy="67" r="1.2" /><circle cx="100" cy="62" r="1.2" /></clipPath>
+            <clipPath id="ld-wave-b"><path d="M8 75.1C20 71.1 30 71.1 42 75.1C54 79.1 64 79.1 76 75.1C88 71.1 92 71.1 98 71.1V72.9C92 72.9 88 72.9 76 76.9C64 80.9 54 80.9 42 76.9C30 72.9 20 72.9 8 76.9Z" /><circle cx="8" cy="76" r="0.9" /><circle cx="98" cy="72" r="0.9" /></clipPath>
           </defs>
           <g clip-path="url(#ld-disk)">
             <rect width="100" height="100" fill="#006a4e" />
@@ -345,8 +355,8 @@
               <circle cx="45" cy="48" r="23" fill="#f42a41" />
             </g>
             <path d="M0 66C14 61 26 61 40 66S66 71 80 66 100 61 100 61V100H0Z" fill="#00553e" />
-            <path class="flow" d="M2 67C14 62 26 62 40 67S66 72 80 67 96 62 100 62" fill="none" stroke="#f4ecdc" stroke-width="2.4" stroke-linecap="round" />
-            <path class="flow b" d="M8 76C20 72 30 72 42 76S64 80 76 76 92 72 98 72" fill="none" stroke="#f4ecdc" stroke-width="1.8" stroke-linecap="round" opacity="0.7" />
+            <g clip-path="url(#ld-wave-a)"><path class="flow" d="M0 55h27.4v20H0zM30 55h27.4v20H30zM60 55h27.4v20H60zM90 55h27.4v20H90zM120 55h27.4v20H120z" fill="#f4ecdc" /></g>
+            <g clip-path="url(#ld-wave-b)" opacity="0.7"><path class="flow b" d="M0 66h19v20H0zM23 66h19v20H23zM46 66h19v20H46zM69 66h19v20H69zM92 66h19v20H92zM115 66h19v20H115z" fill="#f4ecdc" /></g>
             <g class="boat" fill="#0b2a20">
               <path d="M24 66.5C28 69.7 46 69.7 50 66.5L51.4 64.1C45.4 66.3 28.4 66.3 22.6 64.1Z" />
               <path d="M32 66C32.6 62 34.6 60.4 38 60.4S43.4 62 44 66Z" />
@@ -357,8 +367,8 @@
           </g>
           <circle cx="50" cy="50" r="46" fill="none" stroke="#f4ecdc" stroke-opacity="0.35" stroke-width="1" />
         </svg>
-        <h1>নদী</h1>
-        <p class="verse">আবার আসিব ফিরে ধানসিঁড়িটির তীরে — এই বাংলায়</p>
+        <h1>বদ্বীপ</h1>
+        <p class="verse">আবার আসিব ফিরে ধানসিঁড়িটির তীরে, এই বাংলায়</p>
       </div>
       <p class="now" id="load-now"></p>
     </div>
@@ -368,11 +378,11 @@
         const load = document.getElementById('load');
         const show = () => load.classList.add('type');
         if (!document.fonts) return show();
-        Promise.race([document.fonts.load('700 72px "Noto Serif Bengali"', 'নদী'), new Promise((r) => setTimeout(r, 2500))]).then(show, show);
+        Promise.race([document.fonts.load('700 72px "Noto Serif Bengali"', 'বদ্বীপ'), new Promise((r) => setTimeout(r, 2500))]).then(show, show);
       })();
     </script>
 
-    <button id="brand" type="button" title="নদী: সব নিয়ন্ত্রণ আর তথ্যসূত্র" aria-label="নদী: সব নিয়ন্ত্রণ আর তথ্যসূত্র"><img src="brand/logo.svg" alt="" width="28" height="28" /><span>নদী</span></button>
+    <button id="brand" type="button" title="বদ্বীপ: সব নিয়ন্ত্রণ" aria-label="বদ্বীপ: সব নিয়ন্ত্রণ"><img src="brand/logo.svg" alt="" width="28" height="28" /><span>বদ্বীপ</span></button>
 
     <p id="hint">
       <span class="by-mouse">টেনে চারপাশ দেখুন · স্ক্রল করে কাছে-দূরে · নিচের বারে সময় আর ক্যামেরা · <kbd>?</kbd> সব নিয়ন্ত্রণ</span>
@@ -522,7 +532,7 @@
     <dialog id="help" aria-labelledby="help-title">
       <div class="help-brand">
         <img src="brand/logo.svg" alt="" width="44" height="44" />
-        <div><b>নদী</b><span>বাংলার গ্রাম, নদী আর ছয় ঋতু</span></div>
+        <div><b>বদ্বীপ</b><span>বাংলার গ্রাম, নদী আর ছয় ঋতু</span></div>
       </div>
       <h2 id="help-title">নিয়ন্ত্রণ</h2>
       <form method="dialog">
@@ -578,14 +588,6 @@
         </section>
       </div>
       <p class="help-note">কিছুক্ষণ কিছু না ছুঁলে ক্যামেরা নিজে থেকেই মাঝে মাঝে নৌকা থেকে সরে গিয়ে পথের পাশের ঘাট, বাড়ি, মাঠ আর সেতু দেখায়, সূর্য বা চাঁদের ওঠা-নামার দিকেও ঘুরে যায়। শুরুতে গ্রাম দেখা দেয় সারা বছরের মধ্যে বেছে নেওয়া সবচেয়ে সুন্দর ভোরে: সূর্য ওঠে, তারপর ঘড়ি নিজের গতিতে চলে, আর যাত্রার সাথে সাথে ছয় ঋতু ঘুরে আসে। লাইভ চালু করলে বাংলাদেশের এই মুহূর্তের তারিখ, সময়, ঋতু আর চাঁদ।</p>
-      <section class="help-sources" aria-labelledby="sources-title">
-        <h3 id="sources-title">তথ্যসূত্র</h3>
-        <p>গ্রামটি কল্পনায় গড়া: বাংলার নানা গ্রামের নদী, খাল, বিল, বাড়ি আর পথ থেকে নিয়ে এক জায়গায় সাজানো, কোনো একটা আসল জায়গার মানচিত্র নয়। মাটি, গাছ, ঘর আর শব্দ কোডে তৈরি।</p>
-        <ul id="sources">
-          <li>মাটির স্তর আর গাছের বাকল: Poly Haven (polyhaven.com), CC0।</li>
-          <li>মানুষদের শরীর, কঙ্কাল, ত্বক, চোখ আর চুল: MakeHuman (makehumancommunity.org), CC0।</li>
-        </ul>
-      </section>
     </dialog>
 
     <div id="err" role="alert" hidden></div>

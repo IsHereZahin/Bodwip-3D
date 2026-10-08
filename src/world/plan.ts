@@ -112,9 +112,10 @@ export const SIDE_KHAL_POINTS: readonly Pt[] = [
 ];
 
 /**
- * The tidal creek (খাঁড়ি) that brings the sea's salt water up to the salt field (SALT_FIELD) from the south, out
- * of the haze toward the coast, ending beside the field's settling pond, where a sluice lets the brine in. It is
- * not joined to the river, whose water is fresh: salt is made from the sea's. South to north.
+ * The tidal creek (খাঁড়ি) that brings the sea's salt water up from the south, out of the haze toward the coast,
+ * past the salt farms (each lets it in at its `intake`, from the creek or a feeder, SALT_FEEDERS), and on into
+ * the river through a sluice gate in the river's embankment: the river and the salt farms are one water (the
+ * user's choice, 2026-10-08; this near the coast the river is tidal). South to north.
  */
 export const SALT_CREEK_POINTS: readonly Pt[] = [
   [-1345, -560],
@@ -125,7 +126,30 @@ export const SALT_CREEK_POINTS: readonly Pt[] = [
   [-1272, -195],
   [-1294, -140],
   [-1266, -100],
-  [-1259, -68],
+  [-1265, -68],
+  [-1266, -40],
+  [-1268, -16],
+  [-1270, 4],
+];
+
+/**
+ * The channels (নালা) that take the creek's water on to the farms it does not pass, each from the creek: west
+ * along under the broad farm's south end to the long narrow one's at the hill's foot, and east to the small old
+ * one's settling pond.
+ */
+export const SALT_FEEDERS: readonly (readonly Pt[])[] = [
+  [
+    [-1276, -186],
+    [-1240, -183],
+    [-1206, -186],
+    [-1190, -194],
+    [-1181, -197],
+  ],
+  [
+    [-1267, -48],
+    [-1283, -48],
+    [-1298, -48],
+  ],
 ];
 
 /** The shapla bil: its middle, half its length (along the khal's way in) and half its width (m). */
@@ -192,8 +216,9 @@ export type SaltTask =
  * over the fields, its inner bunds `bunds` m over the pans' floor (least, most), and the rains standing `rains`
  * m deep in its pans, over some of its bunds and under the rest (at least 0.2 m below the fields: `dig` − `rains`
  * ≥ 0.2, or they would stand in the hollows beyond its embankment); `grassy` when its bunds are old and grassed.
- * `seed` sets which bed is at which stage. render/patch.ts paints it, world/geography.ts digs it and keeps its
- * water, world/saltworks.ts builds what stands on it: keep them in step.
+ * `seed` sets which bed is at which stage; `intake`, where across its settling pond's end (m, v) the water is let
+ * in through its embankment, from the creek or a feeder, whichever is nearest. render/patch.ts paints it,
+ * world/geography.ts digs it and keeps its water, world/saltworks.ts builds what stands on it: keep them in step.
  */
 export interface SaltFarm {
   x: number;
@@ -212,6 +237,7 @@ export interface SaltFarm {
   rains: number;
   grassy: boolean;
   seed: number;
+  intake: number;
   work: readonly SaltTask[];
 }
 
@@ -239,6 +265,7 @@ export const SALT_FIELDS: readonly SaltFarm[] = [
     rains: 0.32,
     grassy: false,
     seed: 0,
+    intake: 41,
     work: [
       { do: 'rake', when: 'salt', count: 3 },
       // the salt in baskets on their heads down the crystallizers' bund to the gola at the far corner
@@ -265,6 +292,7 @@ export const SALT_FIELDS: readonly SaltFarm[] = [
     rains: 0.4,
     grassy: false,
     seed: 0.37,
+    intake: 15,
     work: [
       // two dressing a bed's floor with their spades, an older man on the bund watching them
       { do: 'spade', when: 'salt', at: [35.5, 17.6], facing: 0 },
@@ -291,6 +319,7 @@ export const SALT_FIELDS: readonly SaltFarm[] = [
     rains: 0.31,
     grassy: false,
     seed: 0.71,
+    intake: 17,
     work: [
       { do: 'rake', when: 'salt', count: 2, who: 'tarun' },
       { do: 'carry', when: 'salt', path: [[28.4, 15], [58.4, 15], [61.2, 15]] },
@@ -299,7 +328,8 @@ export const SALT_FIELDS: readonly SaltFarm[] = [
   {
     x: -1330,
     z: -48,
-    yaw: 1.485,
+    // (its settling pond toward the creek, west of it)
+    yaw: 4.627,
     w: 46,
     d: 28,
     pond: 0.4,
@@ -313,6 +343,7 @@ export const SALT_FIELDS: readonly SaltFarm[] = [
     rains: 0.36,
     grassy: true,
     seed: 0.19,
+    intake: 12,
     work: [
       { do: 'rake', when: 'salt', count: 1, who: 'majhi' },
       { do: 'inspect', when: 'salt', path: [[26.5, 7], [26.5, 21]], who: 'majhi' },
@@ -521,8 +552,20 @@ export const HILL_STREAM: { points: readonly Pt[]; width: number } = {
  * the fields' water pours out through it into the river; in the dry months the gate is down and the drain dry.
  * The drain's start in the fields, its width and depth (m), and how far back from the river's edge the
  * headwall stands (m).
+ *
+ * It stands at the end of an earth bund (বাঁধ, `bund`; the user's choice, 2026-10-08): the high land carried out over
+ * the low bank to the river's edge round the drain, its crest (m) as high as that land and over the river's highest,
+ * so the fields' water stands above the river all through the rains and falls out. The crest runs `back` m inland
+ * from the headwall and `half` m either side of the drain; its sides slope one in `slope`, its river face one in
+ * `front` (steeper: held by the wing walls round the outfall).
  */
-export const SLUICE: { fields: Pt; width: number; depth: number; back: number } = { fields: [-576, 214], width: 3.4, depth: 0.7, back: 2.2 };
+export const SLUICE: {
+  fields: Pt;
+  width: number;
+  depth: number;
+  back: number;
+  bund: { crest: number; back: number; half: number; slope: number; front: number };
+} = { fields: [-576, 214], width: 3.4, depth: 0.7, back: 2.2, bund: { crest: 2.7, back: 16, half: 5.5, slope: 2, front: 1.4 } };
 
 export const KHAL_ROCKS: readonly { s: number; c: number; r: number }[] = [
   { s: 110, c: -1.4, r: 1.0 },

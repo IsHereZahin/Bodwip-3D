@@ -183,6 +183,8 @@ export class Boatman {
   readonly crew: Crew = { x: 0, z: 0 };
   /** How far his hands' holds were from his shoulders this frame, over his arms' length (debug). */
   stretch = 0;
+  /** How far each wrist (left, right) still fell short of its hold this frame once he had leant to it, m (debug: over 0 his hand floats off his arm). */
+  readonly shortBy: [number, number] = [0, 0];
   readonly body: Human;
   /** The mathal when it comes off (`Outfit.hat` false): a child of his frame, placed by whoever moves him; else null. */
   readonly hat: Group | null = null;
@@ -711,6 +713,7 @@ export class Boatman {
     for (const arm of this.arms) {
       const shoulder = body.shoulder(arm.side, arm.shoulder);
       solveTwoBone(shoulder, arm.wrist, dims.upperArm, dims.foreArm, this.poleOf(arm), arm.elbowAt, this.end);
+      this.shortBy[arm.side < 0 ? 0 : 1] = this.end.distanceTo(arm.wrist);
       body.setHand(arm.grip, oar.holds[arm.side < 0 ? 0 : 1].at, arm.barQ);
       body.setArm(arm.side, arm.elbowAt);
     }

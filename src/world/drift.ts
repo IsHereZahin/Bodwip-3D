@@ -6,7 +6,7 @@ import { patchMaterial } from '../render/patch';
 import { hyacinthLeafTexture } from '../render/textures';
 import { windAt } from '../env/wind';
 import type { BoatBody } from './boatPhysics';
-import { PONDS, SALT_CREEK, WATER_LEVEL, inlandWaterAt, meanWaterLevelAt, pondReach, risenLevel, saltFarmAt, terrainHeight, waterLevelAt, waterwayAt } from './geography';
+import { PONDS, SALT_WATERS, WATER_LEVEL, inlandWaterAt, meanWaterLevelAt, pondReach, risenLevel, saltFarmAt, terrainHeight, waterLevelAt, waterwayAt } from './geography';
 import { HERO_HULL, heroBeamAtWater, hullHalfWidthAt, type HullShape } from './hull';
 import { wakeHeight } from './wake';
 import { INLAND, SHELTERED, waveHeightSlope } from './waves';
@@ -487,9 +487,9 @@ export class Drift {
       const z = vz + Math.sin(a) * r;
       if (!inlandWaterAt(x, z) || waterLevelAt(x, z) - terrainHeight(x, z) < FLOATS) continue;
       // in the khal (and on its way across the bil) they gather in the slack water along the banks, out of the
-      // boats' way; none in the salt creek, whose water is the sea's
+      // boats' way; none in the salt creek or its feeders, whose water is the sea's
       const w = waterwayAt(x, z);
-      if (w && (w.d < w.half - Math.min(EDGE, w.half * 0.4) || w.way === SALT_CREEK)) continue;
+      if (w && (w.d < w.half - Math.min(EDGE, w.half * 0.4) || SALT_WATERS.includes(w.way))) continue;
       // none on the pond the village keeps clean, nor in the salt farms' brine
       if (KEPT.some((p) => pondReach(p, x, z) < 1.3) || saltFarmAt(x, z, 2)) continue;
       return [x, z];

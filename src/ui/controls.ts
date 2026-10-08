@@ -101,7 +101,7 @@ const STEP_KEYS: Record<string, number> = { ArrowRight: 1, ArrowUp: 1, PageUp: 1
  */
 export class Controls {
   private readonly dock = $<HTMLElement>('#dock');
-  /** The mark in the corner, up with the dock: the way to the help and the sources. */
+  /** The mark in the corner, up with the dock: the way to the help. */
   private readonly brand = $<HTMLElement>('#brand');
   private readonly play = $<HTMLButtonElement>('#play');
   private readonly speed = $<HTMLButtonElement>('#speed');

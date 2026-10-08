@@ -2,9 +2,43 @@
    event notice, the film's navigation and the help sheet. A thin pane of glass over the scene, a running stitch
    along its top as on a kantha; it steps aside when nobody uses it. */
 
+/* The panels' colours, all here. The dock, its menus, the help and the map are জামদানি (the user's choice,
+   2026-10-08): a muslin's white, an indigo-black thread for the words, alta's red for what is picked. What sits on
+   the scene alone (the corner's mark, the hint, the toast, the film's way through its scenes, the restore button)
+   keeps the dark glass, whose values the shared buttons fall back to here. */
+:root {
+  --icon: rgba(236, 211, 168, 0.82);
+  --soft: rgba(236, 211, 168, 0.12);
+  --on: rgba(236, 211, 168, 0.16);
+}
+#dock,
+.pop,
+#help,
+#mapdlg {
+  /* (the page is dark; the scrollbars on the muslin follow it light) */
+  color-scheme: light;
+  --ink: #1d2330;
+  --ink-dim: rgba(29, 35, 48, 0.66);
+  --icon: rgba(29, 35, 48, 0.78);
+  --line: rgba(29, 35, 48, 0.14);
+  --soft: rgba(29, 35, 48, 0.06);
+  --on: rgba(184, 40, 46, 0.12);
+  --key: rgba(29, 35, 48, 0.3);
+  --stitch: rgba(184, 40, 46, 0.5);
+  --alta: #b8282e;
+  --sheet: rgba(246, 243, 236, 0.96);
+  /* (thinner, the muslin over the night's dark reads as grey) */
+  --glass: rgba(246, 243, 236, 0.85);
+  --well: rgba(29, 35, 48, 0.05);
+  /* the sky's own marks, darkened to read on the muslin */
+  --sun-mark: #b5651d;
+  --moon-mark: #4a5c8c;
+  --moon-hours: rgba(58, 78, 140, 0.55);
+  --moon-dark: rgba(29, 35, 48, 0.72);
+  --moon-lit: #fffdf8;
+}
+
 #dock {
-  --line: rgba(236, 211, 168, 0.13);
-  --glass: rgba(12, 11, 10, 0.42);
   position: fixed;
   left: 50%;
   bottom: max(16px, env(safe-area-inset-bottom));
@@ -37,7 +71,7 @@
   right: 22px;
   top: 4px;
   height: 1px;
-  background: repeating-linear-gradient(90deg, rgba(236, 211, 168, 0.26) 0 7px, transparent 7px 13px);
+  background: repeating-linear-gradient(90deg, var(--stitch) 0 7px, transparent 7px 13px);
   pointer-events: none;
 }
 #dock.show {
@@ -89,7 +123,7 @@
   border-radius: 50%;
   display: grid;
   place-items: center;
-  color: rgba(236, 211, 168, 0.82);
+  color: var(--icon);
 }
 .chip,
 #toast button {
@@ -103,7 +137,7 @@
 .ibtn:hover,
 .chip:hover,
 #toast button:hover {
-  background: rgba(236, 211, 168, 0.12);
+  background: var(--soft);
   color: var(--ink);
 }
 .ibtn:focus-visible,
@@ -118,7 +152,7 @@
   outline-offset: 2px;
 }
 .ibtn[aria-pressed='true'] {
-  background: rgba(236, 211, 168, 0.16);
+  background: var(--on);
   color: var(--ink);
 }
 .ibtn[hidden] {
@@ -178,11 +212,15 @@
   height: 40px;
   overflow: visible;
 }
+/* (a hair of the thread round the arcs: the pale seasons, শরৎ's and শীত's, would be lost on the muslin) */
+#ring-arcs {
+  filter: drop-shadow(0 0 0.6px rgba(29, 35, 48, 0.6));
+}
 .ring-arc {
   fill: none;
   stroke-width: 3;
   stroke-linecap: round;
-  opacity: 0.38;
+  opacity: 0.5;
   transition: opacity 0.8s ease, stroke-width 0.8s ease;
 }
 .ring-arc.now {
@@ -190,8 +228,8 @@
   stroke-width: 4.2;
 }
 #ring-mark {
-  fill: #fff4de;
-  filter: drop-shadow(0 0 3px rgba(255, 220, 170, 0.9));
+  fill: var(--alta);
+  filter: drop-shadow(0 0 2px rgba(184, 40, 46, 0.45));
 }
 
 .when {
@@ -230,10 +268,10 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: rgba(236, 211, 168, 0.5);
+  background: var(--ink-dim);
 }
 .live:hover {
-  background: rgba(236, 211, 168, 0.12);
+  background: var(--soft);
 }
 .live.on {
   border-color: rgba(240, 92, 80, 0.55);
@@ -269,7 +307,7 @@
   padding: 3px;
   gap: 2px;
   border-radius: 999px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--well);
   border: 1px solid var(--line);
   margin-right: 4px;
 }
@@ -287,17 +325,20 @@
   color: var(--ink);
 }
 .seg button[aria-pressed='true'] {
-  background: rgba(236, 211, 168, 0.16);
+  background: var(--on);
   color: var(--ink);
 }
 
+/* (the disc's rim drawn, so the lit side keeps its edge on the muslin) */
 #moon-btn .moon-dark,
 .pop .moon-dark {
-  fill: rgba(236, 211, 168, 0.16);
+  fill: var(--moon-dark);
+  stroke: var(--moon-dark);
+  stroke-width: 1;
 }
 #moon-btn .moon-lit,
 .pop .moon-lit {
-  fill: #e9eefc;
+  fill: var(--moon-lit);
 }
 
 /* the day: sun events above the bar, moon events below, the moon's hours as a pale line */
@@ -326,7 +367,7 @@
   top: 20px;
   height: 6px;
   border-radius: 3px;
-  box-shadow: inset 0 0 0 1px rgba(236, 211, 168, 0.16);
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 .tl-tick {
   position: absolute;
@@ -346,7 +387,7 @@
   bottom: -5px;
   height: 2px;
   border-radius: 1px;
-  background: rgba(214, 224, 255, 0.65);
+  background: var(--moon-hours);
 }
 #tl {
   position: absolute;
@@ -374,8 +415,8 @@
   height: 12px;
   margin-top: 7px;
   border-radius: 50%;
-  background: #fff4de;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 0 10px rgba(255, 214, 160, 0.9);
+  background: var(--ink);
+  box-shadow: 0 0 0 2px var(--moon-lit), 0 0 8px rgba(184, 40, 46, 0.55);
 }
 #tl::-moz-range-track {
   height: 26px;
@@ -386,14 +427,14 @@
   height: 12px;
   border: 0;
   border-radius: 50%;
-  background: #fff4de;
-  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 0 10px rgba(255, 214, 160, 0.9);
+  background: var(--ink);
+  box-shadow: 0 0 0 2px var(--moon-lit), 0 0 8px rgba(184, 40, 46, 0.55);
 }
 #tl:focus-visible::-webkit-slider-thumb {
-  box-shadow: 0 0 0 2px var(--ink), 0 0 10px rgba(255, 214, 160, 0.9);
+  box-shadow: 0 0 0 2px var(--moon-lit), 0 0 0 4px var(--alta);
 }
 #tl:focus-visible::-moz-range-thumb {
-  box-shadow: 0 0 0 2px var(--ink), 0 0 10px rgba(255, 214, 160, 0.9);
+  box-shadow: 0 0 0 2px var(--moon-lit), 0 0 0 4px var(--alta);
 }
 .tl-mark {
   position: absolute;
@@ -407,15 +448,15 @@
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: #f3c27e;
+  color: var(--sun-mark);
   cursor: pointer;
 }
 .tl-mark.moonrise,
 .tl-mark.moonset {
-  color: #d3defc;
+  color: var(--moon-mark);
 }
 .tl-mark:hover {
-  background: rgba(236, 211, 168, 0.14);
+  background: var(--soft);
 }
 .tl-mark svg {
   width: 15px;
@@ -432,8 +473,8 @@
   max-width: calc(100vw - 16px);
   padding: 8px;
   border-radius: 14px;
-  border: 1px solid rgba(236, 211, 168, 0.16);
-  background: rgba(16, 14, 12, 0.86);
+  border: 1px solid var(--line);
+  background: var(--sheet);
   -webkit-backdrop-filter: blur(16px) saturate(1.2);
   backdrop-filter: blur(16px) saturate(1.2);
   box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
@@ -488,10 +529,10 @@
   transition: background 0.2s ease;
 }
 .pop-item:hover {
-  background: rgba(236, 211, 168, 0.1);
+  background: var(--soft);
 }
 .pop-item[aria-checked='true'] {
-  background: rgba(236, 211, 168, 0.16);
+  background: var(--on);
 }
 .pop-item span {
   display: flex;
@@ -506,7 +547,7 @@
   margin-left: auto;
   font-family: inherit;
   font-size: 11px;
-  border: 1px solid rgba(236, 211, 168, 0.3);
+  border: 1px solid var(--key);
   border-radius: 4px;
   padding: 0 5px;
   color: var(--ink-dim);
@@ -524,7 +565,7 @@
 }
 .pop-item.journey {
   margin-top: 6px;
-  border-top: 1px dashed rgba(236, 211, 168, 0.16);
+  border-top: 1px dashed var(--line);
   border-radius: 0 0 9px 9px;
   padding-top: 10px;
 }
@@ -677,8 +718,8 @@ body.ui-off #ui-restore:focus-visible {
   box-sizing: border-box;
   padding: 22px 26px 24px;
   border-radius: 18px;
-  border: 1px solid rgba(236, 211, 168, 0.18);
-  background: rgba(18, 15, 12, 0.94);
+  border: 1px solid var(--line);
+  background: var(--sheet);
   color: var(--ink);
   font-family: var(--font);
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
@@ -692,7 +733,7 @@ body.ui-off #ui-restore:focus-visible {
   gap: 12px;
   margin: 0 0 16px;
   padding-bottom: 14px;
-  border-bottom: 1px dashed rgba(236, 211, 168, 0.18);
+  border-bottom: 1px dashed var(--stitch);
 }
 #help .help-brand div {
   display: flex;
@@ -748,29 +789,10 @@ body.ui-off #ui-restore:focus-visible {
   font-size: 13px;
   color: var(--ink-dim);
 }
-/* the data's sources, small, as each asks to be credited */
-#help .help-sources {
-  margin-top: 16px;
-  font-size: 11.5px;
-  color: var(--ink-dim);
-}
-#help .help-sources p {
-  margin: 0 0 6px;
-}
-#help .help-sources ul {
-  margin: 0;
-  padding-left: 18px;
-}
-#help .help-sources ul + p {
-  margin-top: 6px;
-}
-#help .help-sources a {
-  color: inherit;
-}
 #help kbd {
   font-family: inherit;
   font-size: 12px;
-  border: 1px solid rgba(236, 211, 168, 0.35);
+  border: 1px solid var(--key);
   border-radius: 4px;
   padding: 0 5px;
 }

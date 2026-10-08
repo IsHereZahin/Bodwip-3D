@@ -8,6 +8,7 @@ import {
   Mesh,
   MeshStandardMaterial,
   Quaternion,
+  TorusGeometry,
   Vector2,
   Vector3,
 } from 'three';
@@ -17,11 +18,13 @@ import { Rng } from '../core/rng';
 import { MeshBuilder, mixRgb, rgb, scaleRgb, type RGB } from '../render/builder';
 import { instanced, type Placement } from '../render/instancing';
 import { patchMaterial } from '../render/patch';
-import { weaveTexture } from '../render/textures';
+import { brickTexture, plasterTexture, weaveTexture } from '../render/textures';
 import type { Outfit } from './boatman';
 import { Fisher, type FisherPlace } from './fisher';
 import type { Ripples } from './ripples';
-import { SALT_CREEK, WATER_LEVEL, saltLocal, saltPoint, saltRains, terrainHeight, waterLevelAt } from './geography';
+import { CREEK_GATE, SALT_CREEK, WATER_LEVEL, saltIntake, saltPoint, saltRains, terrainHeight, waterLevelAt } from './geography';
+import { Frame } from './houses';
+import { meshGround } from './terrain';
 import { PLAIN, SALT_FIELD, SALT_FIELDS, type SaltFarm, type SaltTask } from './plan';
 import { Feeder, Raker, Spader, Walker, Watcher, basketGeometry, type Drop } from './saltHands';
 
@@ -31,8 +34,9 @@ import { Feeder, Raker, Spader, Walker, Watcher, basketGeometry, type Drop } fro
 // stand in its pans as real water. Here is what stands on it: the earth bunds between the beds, each its own
 // height, so that the rains drown some and not others; the heaps of salt raked up along the crystallizers' bunds
 // (white and drying while the salt season runs, gone to market in the rains), and where the carriers tip theirs;
-// at the creek's farm a gola, the low thatched shed the salt is kept in, with an old heap under black sheeting
-// beside it, the sluice where the creek's salt water is let in, and in the rains the watchman's hut; and the
+// at every farm the culvert its water is let in by, from the creek or a feeder, and where the creek passes through
+// the river's embankment its sluice gate; at the creek's farm a gola, the low thatched shed the salt is kept in,
+// with an old heap under black sheeting beside it, and in the rains the watchman's hut; and the
 // people at work, each farm its own (world/saltHands.ts): raking, carrying, looking the beds over, dressing a
 // bed with the kodal and watching it done, and in the rains, when no salt can be made and the flooded farms are
 // kept as fish and shrimp ghers as the coast's salt farmers do, casting the net over them and feeding them.
@@ -40,7 +44,7 @@ import { Feeder, Raker, Spader, Walker, Watcher, basketGeometry, type Drop } fro
 /** The gher's fisherman's clothes in the rains: a faded lungi, a dark sando. */
 const GHER_OUTFIT: Outfit = { lungi: ['#3f4f5e', '#b7b2a2', '#1e2833'], vest: '#5a5650', gamchha: ['#9a7a2a', '#e8dfcc', '#4a3a12'], seed: 95 };
 
-/** The creek's farm: its gola, its sluice, its gher's fisherman and its watchman's hut. */
+/** The creek's farm: its gola, its gher's fisherman and its watchman's hut. */
 const F = SALT_FIELD;
 /** A bund's cross-section (m): its foot and its crown (its height is its own, the farm's `bunds`). */
 const BUND = { foot: 0.8, crown: 0.36 };
@@ -283,7 +287,10 @@ export class SaltWorks {
     // it never moves: remaking its own matrix every frame would make every crew's be remade with it, those not
     // drawn too (each crew's own update follows whether it is drawn, update())
     this.group.matrixAutoUpdate = false;
-    this.buildSluice(rng);
+    // (their own chances, so the heaps and the crews keep theirs)
+    const works = new Rng(612);
+    this.buildIntakes(works);
+    this.buildCreekGate();
     this.buildHut();
     this.gherFisher = new Fisher(ripples, gherStand());
     this.gherFisher.group.visible = false;
@@ -526,75 +533,156 @@ export class SaltWorks {
   }
 
   /**
-   * The sluice where the creek's salt water is let in: a culvert of planks through the creek's bank at its head,
-   * its gate raised in grooves between two posts, a plank across its top to walk on; and an open trough of planks
-   * from it to the field's edge, a little water in it.
+   * Where each farm lets the sea's water in (geography.ts `saltIntake`): a culvert of planks through the bank of
+   * the creek or its feeder, its gate raised in grooves between two posts, a plank across its top to walk on; and
+   * an open trough of planks from it to the farm's embankment, a little water in it.
    */
-  private buildSluice(rng: Rng): void {
-    const end = SALT_CREEK.at(SALT_CREEK.length);
-    const f = saltLocal(end.x, end.z);
-    const edge = saltPoint(0.4, f.v);
-    const dx = edge.x - end.x;
-    const dz = edge.z - end.z;
-    const len = Math.hypot(dx, dz);
-    const yaw = Math.atan2(dx, dz);
-    const q = new Quaternion().setFromAxisAngle(UP, yaw);
-    const ux = dx / len;
-    const uz = dz / len;
-    const half = SALT_CREEK.half(SALT_CREEK.length);
+  private buildIntakes(rng: Rng): void {
     const wood = new MeshBuilder();
-    const plank = (along: number, across: number, y: number, w: number, h: number, d: number, c: RGB) => {
-      const x = end.x + ux * along + uz * across;
-      const z = end.z + uz * along - ux * across;
-      wood.add(new BoxGeometry(w, h, d), new Matrix4().compose(new Vector3(x, y, z), q, new Vector3(1, 1, 1)), scaleRgb(c, rng.range(0.85, 1.05)));
-    };
+    const water = new MeshBuilder();
     const timber = rgb('#5b4a36');
     const wet = rgb('#3c3226');
-    // the culvert: from just in the water up through the bank
-    const c0 = half - 0.4;
-    const c1 = half + 3.2;
-    const floorAt = (a: number) => {
-      const x = end.x + ux * a;
-      const z = end.z + uz * a;
-      return terrainHeight(x, z);
-    };
-    for (const side of [-1, 1]) {
-      for (let a = c0; a < c1; a += 0.9) {
-        const g = Math.min(floorAt(a), WATER_LEVEL + 0.3);
-        plank(a + 0.45, side * 0.5, g + 0.55, 0.08, 1.3, 0.92, a < half + 0.6 ? wet : timber);
+    for (const farm of SALT_FIELDS) {
+      const { edge, water: end, half } = saltIntake(farm);
+      const dx = edge.x - end.x;
+      const dz = edge.z - end.z;
+      const len = Math.hypot(dx, dz);
+      const q = new Quaternion().setFromAxisAngle(UP, Math.atan2(dx, dz));
+      const ux = dx / len;
+      const uz = dz / len;
+      const plank = (along: number, across: number, y: number, w: number, h: number, d: number, c: RGB) => {
+        const x = end.x + ux * along + uz * across;
+        const z = end.z + uz * along - ux * across;
+        wood.add(new BoxGeometry(w, h, d), new Matrix4().compose(new Vector3(x, y, z), q, new Vector3(1, 1, 1)), scaleRgb(c, rng.range(0.85, 1.05)));
+      };
+      // the culvert: from just in the water up through the bank (on the ground as it is drawn: a feeder's banks
+      // are cut finer than the terrain's lattice)
+      const c0 = half - 0.4;
+      const c1 = half + 3.2;
+      const floorAt = (a: number) => meshGround(end.x + ux * a, end.z + uz * a);
+      for (const side of [-1, 1]) {
+        for (let a = c0; a < c1; a += 0.9) {
+          const g = Math.min(floorAt(a), WATER_LEVEL + 0.3);
+          plank(a + 0.45, side * 0.5, g + 0.55, 0.08, 1.3, 0.92, a < half + 0.6 ? wet : timber);
+        }
       }
-    }
-    // the gate between its posts at the water's end, raised a hand's breadth
-    const gy = WATER_LEVEL + 0.4;
-    for (const side of [-1, 1]) plank(c0 + 0.2, side * 0.62, gy + 0.4, 0.14, 2.0, 0.14, timber);
-    plank(c0 + 0.2, 0, gy + 0.25, 1.0, 0.9, 0.06, wet);
-    plank(c0 + 0.2, 0, gy + 1.35, 1.4, 0.1, 0.16, timber);
-    // a plank across the top to walk on
-    plank(half + 1.4, 0, floorAt(half + 1.4) + 1.25, 2.2, 0.06, 0.5, timber);
-    // the trough on to the field
-    const t0 = c1;
-    const t1 = len;
-    const n = Math.max(1, Math.ceil((t1 - t0) / 1.5));
-    for (let k = 0; k < n; k++) {
-      const a = t0 + ((k + 0.5) * (t1 - t0)) / n;
-      const g = floorAt(a);
-      const l = (t1 - t0) / n + 0.05;
-      plank(a, 0, g + 0.04, 0.7, 0.05, l, timber);
-      for (const side of [-1, 1]) plank(a, side * 0.33, g + 0.2, 0.05, 0.32, l, timber);
+      // the gate between its posts at the water's end, raised a hand's breadth
+      const gy = WATER_LEVEL + 0.4;
+      for (const side of [-1, 1]) plank(c0 + 0.2, side * 0.62, gy + 0.4, 0.14, 2.0, 0.14, timber);
+      plank(c0 + 0.2, 0, gy + 0.25, 1.0, 0.9, 0.06, wet);
+      plank(c0 + 0.2, 0, gy + 1.35, 1.4, 0.1, 0.16, timber);
+      // a plank across the top to walk on
+      plank(half + 1.4, 0, floorAt(half + 1.4) + 1.25, 2.2, 0.06, 0.5, timber);
+      // the trough on to the farm, and the brine in it: a dark glossy strip
+      const t0 = c1;
+      const t1 = len;
+      const n = Math.max(1, Math.ceil((t1 - t0) / 1.5));
+      for (let k = 0; k < n; k++) {
+        const a = t0 + ((k + 0.5) * (t1 - t0)) / n;
+        const g = floorAt(a);
+        const l = (t1 - t0) / n + 0.05;
+        plank(a, 0, g + 0.04, 0.7, 0.05, l, timber);
+        for (const side of [-1, 1]) plank(a, side * 0.33, g + 0.2, 0.05, 0.32, l, timber);
+        water.add(new BoxGeometry(0.58, 0.02, l), new Matrix4().compose(new Vector3(end.x + ux * a, g + 0.12, end.z + uz * a), q, new Vector3(1, 1, 1)), rgb('#2c3734'));
+      }
     }
     const mesh = new Mesh(wood.build(), patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.85 }), { grime: 0.5, wetline: true }));
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     this.group.add(mesh);
-    // the brine in the trough: a dark glossy strip
-    const water = new MeshBuilder();
-    for (let k = 0; k < n; k++) {
-      const a = t0 + ((k + 0.5) * (t1 - t0)) / n;
-      const x = end.x + ux * a;
-      const z = end.z + uz * a;
-      water.add(new BoxGeometry(0.58, 0.02, (t1 - t0) / n + 0.05), new Matrix4().compose(new Vector3(x, floorAt(a) + 0.12, z), q, new Vector3(1, 1, 1)), rgb('#2c3734'));
-    }
     this.group.add(new Mesh(water.build(), patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.08 }), {})));
+  }
+
+  /**
+   * The sluice gate (জলকপাট) where the creek passes through the river's embankment into the river: an old brick
+   * headwall across its cut, three vents through it with their iron gates raised in their guides so the tide
+   * comes and goes, the wall running on into the banks either side, a cement deck along its top with an iron
+   * railing, and over each gate its hoist: a frame, the screw, the wheel.
+   */
+  private buildCreekGate(): void {
+    const g = CREEK_GATE;
+    const f = new Frame(g.x, 0, g.z, g.heading);
+    const brick = new MeshBuilder();
+    const cement = new MeshBuilder();
+    const iron = new MeshBuilder();
+    const red: RGB = rgb('#8f7466');
+    const grey: RGB = rgb('#9a958a');
+    const dark: RGB = rgb('#3a3632');
+    const half = SALT_CREEK.half(g.s);
+    const bed = WATER_LEVEL - SALT_CREEK.depth(g.s);
+    const foot = bed - 0.4;
+    // the vents' tops over the rains' highest water; the deck at the embankment's top, or over the vents
+    const ventTop = WATER_LEVEL + 1.05;
+    const across = (x: number) => {
+      const p = f.p(x, 0, 0);
+      return terrainHeight(p.x, p.z);
+    };
+    const deck = Math.max(WATER_LEVEL + 2.35, across(half + 10) + 0.55, across(-half - 10) + 0.55);
+    const pier = 0.7;
+    const vents = 3;
+    const span = 2 * half + 0.8;
+    const vent = (span - (vents - 1) * pier) / vents;
+    const T = 0.9;
+    // the vents' middles across the cut
+    const ventAt = (i: number) => -span / 2 + vent / 2 + i * (vent + pier);
+    // the piers between the vents, and over each vent the breast wall up to the deck
+    for (let i = 0; i < vents - 1; i++) f.box(brick, ventAt(i) + vent / 2 + pier / 2, (foot + deck) / 2, 0, pier, deck - foot, T, scaleRgb(red, 0.95), 1.5);
+    for (let i = 0; i < vents; i++) f.box(brick, ventAt(i), (ventTop + deck) / 2, 0, vent + 0.02, deck - ventTop, T, red, 1.5);
+    // the vents' cement floor, a little out either side of the wall
+    f.box(cement, 0, bed - 0.1, 0, span + 0.4, 0.3, T + 3, scaleRgb(grey, 0.8), 1);
+    // the wall on into the banks either side, in lengths that follow the bank up to the embankment, its end
+    // turned back along the embankment on each face
+    const reach = half + 11;
+    for (const side of [-1, 1]) {
+      for (let x = span / 2; x < reach - 0.01; x += 1.5) {
+        const w = Math.min(1.5, reach - x);
+        const c = side * (x + w / 2);
+        const low = Math.min(across(c), bed) - 0.4;
+        f.box(brick, c, (low + deck) / 2, 0, w + 0.02, deck - low, T, scaleRgb(red, 0.9 + 0.08 * (Math.round(x / 1.5) % 2)), 1.5);
+      }
+      const end = across(side * reach) - 0.3;
+      for (const face of [-1, 1]) f.box(brick, side * (reach - 0.25), (end + deck) / 2, face * (T / 2 + 0.9), 0.5, deck - end, 1.8, scaleRgb(red, 0.92), 1.5);
+    }
+    // the deck: a cement slab along the top, a little over either face
+    f.box(cement, 0, deck + 0.08, 0, 2 * reach + 0.2, 0.16, T + 0.5, grey, 1);
+    // the railing along both edges of the deck
+    const posts = Math.round((2 * reach - 0.4) / 1.6);
+    for (const face of [-1, 1]) {
+      const z = face * (T / 2 + 0.15);
+      for (let k = 0; k <= posts; k++) f.box(iron, -reach + 0.2 + (k * (2 * reach - 0.4)) / posts, deck + 0.66, z, 0.05, 1.0, 0.05, dark, 1);
+      f.box(iron, 0, deck + 1.13, z, 2 * reach - 0.3, 0.05, 0.05, dark, 1);
+      f.box(iron, 0, deck + 0.68, z, 2 * reach - 0.3, 0.035, 0.035, dark, 1);
+    }
+    // each gate: its iron guides down the river face, the plate raised in them clear of the water, and over the
+    // deck its hoist frame, the screw up through it and the wheel
+    const face = T / 2 + 0.08;
+    const plateH = 1.5;
+    const plateLow = ventTop - 0.15;
+    for (let i = 0; i < vents; i++) {
+      const x = ventAt(i);
+      for (const s of [-1, 1]) f.box(iron, x + s * (vent / 2 + 0.05), (bed + deck + 1.6) / 2, face, 0.1, deck + 1.6 - bed, 0.14, dark, 1);
+      f.box(iron, x, plateLow + plateH / 2, face + 0.03, vent + 0.08, plateH, 0.07, rgb('#4a3f36'), 1);
+      f.box(iron, x, deck + 1.6, face, vent + 0.4, 0.14, 0.18, dark, 1);
+      f.box(iron, x, (plateLow + plateH + deck + 1.75) / 2, face, 0.05, deck + 1.75 - plateLow - plateH, 0.05, rgb('#5a524a'), 1);
+      const hub = f.p(x, deck + 1.8, face);
+      iron.add(new TorusGeometry(0.34, 0.026, 6, 20).rotateX(Math.PI / 2), new Matrix4().makeTranslation(hub.x, hub.y, hub.z), rgb('#2e2a26'));
+      for (let k = 0; k < 4; k++) {
+        const spoke = new CylinderGeometry(0.013, 0.013, 0.68, 4).rotateZ(Math.PI / 2).rotateY((k * Math.PI) / 4);
+        iron.add(spoke, new Matrix4().makeTranslation(hub.x, hub.y, hub.z), rgb('#2e2a26'));
+      }
+    }
+    const brickSet = brickTexture(921);
+    const plaster = plasterTexture(922, { fallen: false });
+    for (const [b, m] of [
+      [brick, patchMaterial(new MeshStandardMaterial({ map: brickSet.map, normalMap: brickSet.normal, normalScale: new Vector2(0.8, 0.8), vertexColors: true, roughness: 0.88 }), { grime: 0.8, wetline: true })],
+      [cement, patchMaterial(new MeshStandardMaterial({ map: plaster.map, normalMap: plaster.normal, vertexColors: true, roughness: 0.92 }), { grime: 0.55, wetline: true })],
+      [iron, patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.6, metalness: 0.4 }), { grime: 0.5 })],
+    ] as const) {
+      const mesh = new Mesh(b.build(), m);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      this.group.add(mesh);
+    }
   }
 
   /** The gher's watchman's hut (টং ঘর): a mat-walled room on bamboo legs at the farm's corner, a thatched roof, a ladder. */
