@@ -1,9 +1,9 @@
 import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
-import { SLUICE_SITE, carve, channelAt } from './channels';
+import { SLUICE_SITE, carve, channelAt, sluiceOutfall } from './channels';
 import { FeatureGrid, HOMESTEAD_MOUNDS, MOUNDS, PONDS, POND_BANK, local, pondReach, shapeDistance, shapePoint, type Mound, type Pond } from './layout';
 import { ghatFlight, ghatLocal, ghatPoint, type GhatSite, type GhatStep } from './ghatFlight';
-import { BANYAN, FAR_GROVES, GRAVE_BANYAN, HILLS, LOW_WATER, MOSQUE, MOSQUE_GROUNDS, MOUND, PLAIN, POND_LEVEL, POND_RISE, SALT_BAND, SALT_DRAIN, SALT_FIELD, SALT_FIELDS, TEA_STALL, WATER_LEVEL, WORLD, ZAMINDAR_GROUNDS, type SaltFarm } from './plan';
+import { BANYAN, FAR_GROVES, GRAVE_BANYAN, HILLS, LOW_WATER, MOSQUE, MOSQUE_GROUNDS, MOUND, PLAIN, POND_LEVEL, POND_RISE, SALT_BAND, SALT_DRAIN, SALT_FIELD, SALT_FIELDS, SLUICE, TEA_STALL, WATER_LEVEL, WORLD, ZAMINDAR_GROUNDS, type SaltFarm } from './plan';
 import { railGround, railShare } from './railway';
 import { onRoad, roadCover, roadEdge, roadGround, roadNear } from './roads';
 import { BRIDGE, SANKO, bridgeDeck, bridgeEnds, bridgeFrame, bridgeSoffit, bridgeToWorld, onBridge, onSanko, sankoDeck, sankoEnds, sankoFrame, type Point2 } from './sites';
@@ -13,6 +13,8 @@ import {
   KHAL,
   RIVER,
   SALT_CREEK,
+  SALT_FEEDER_WAYS,
+  SALT_WATERS,
   SIDE_KHAL,
   WATERWAYS,
   bilLocal,
@@ -100,8 +102,9 @@ const EDGE_DEPTH = 0.12;
 function bankWidth(way: (typeof WATERWAYS)[number], x: number, z: number): number {
   if (way === SIDE_KHAL) return 3;
   if (way === KHAL) return 5;
-  // the salt creek's banks are the tide's mud, wide and low
+  // the salt creek's banks are the tide's mud, wide and low; its feeders are dug through the fields
   if (way === SALT_CREEK) return 9;
+  if (SALT_FEEDER_WAYS.includes(way)) return 2.5;
   // the river's char: on the inside of its broad bend the bank lies down into a long, low beach of sand
   return 7 + 30 * charShare(x, z);
 }
@@ -240,6 +243,37 @@ export function saltPoint(u: number, v: number, farm: SaltFarm = SALT_FIELD): { 
   return { x: farm.x + a * s + b * c, z: farm.z + a * c - b * s };
 }
 
+/**
+ * Where a farm lets the sea's water in (world/saltworks.ts builds its culvert there): `edge` on its embankment's
+ * outer face at its settling pond's end, across it at its `intake`, and `water` the middle of the salt water
+ * nearest that (the creek or a feeder) with its half-width there. For setting things up, not per frame.
+ */
+export function saltIntake(farm: SaltFarm): { edge: { x: number; z: number }; water: { x: number; z: number }; half: number } {
+  const edge = saltPoint(0.4, farm.intake, farm);
+  let best = { gap: Infinity, x: edge.x, z: edge.z, half: 0 };
+  for (const way of SALT_WATERS) {
+    const s = way.line.nearestS(edge.x, edge.z);
+    const p = way.at(s);
+    const gap = Math.hypot(p.x - edge.x, p.z - edge.z) - way.half(s);
+    if (gap < best.gap) best = { gap, x: p.x, z: p.z, half: way.half(s) };
+  }
+  return { edge, water: { x: best.x, z: best.z }, half: best.half };
+}
+
+/**
+ * Where the creek's sluice gate stands, in the river's embankment just back from its bank's top: its point on the
+ * creek's middle, `s` m along the creek, and the creek's heading there (toward the river).
+ */
+export const CREEK_GATE = (() => {
+  for (let s = SALT_CREEK.length; s > 0; s -= 0.5) {
+    const p = SALT_CREEK.at(s);
+    const f = RIVER.frame(p.x, p.z);
+    if (!f || f.d - RIVER.half(f.s) >= 9) return { s, x: p.x, z: p.z, heading: p.heading };
+  }
+  const p = SALT_CREEK.at(SALT_CREEK.length);
+  return { s: SALT_CREEK.length, x: p.x, z: p.z, heading: p.heading };
+})();
+
 /** How far (x, z) lies inside a farm's edge (m; negative outside it). */
 function saltEdge(farm: SaltFarm, x: number, z: number): number {
   const { u, v } = saltLocal(x, z, farm);
@@ -341,6 +375,38 @@ export function groveShare(x: number, z: number): number {
   return share;
 }
 
+/**
+ * The earth bund the sluice stands at the end of (plan.ts `SLUICE.bund`): its crest, sloping off at its sides, its
+ * inland end and its river face, and left open between the wing walls in front of the headwall (the outfall: the
+ * apron's). The drain is cut through it (`sluiceGround`), down to its bed.
+ */
+function sluiceBund(x: number, z: number, h: number): number {
+  const { crest, back, half, slope, front } = SLUICE.bund;
+  const s = SLUICE_SITE;
+  const dx = x - s.x;
+  const dz = z - s.z;
+  // (toward the river, and across)
+  const a = dx * s.out.x + dz * s.out.z;
+  const c = Math.abs(dz * s.out.x - dx * s.out.z);
+  const reach = crest * Math.max(slope, front);
+  if (a < -back - reach || a > reach || c > half + reach) return h;
+  if (a > 0.25 && c < sluiceOutfall(a)) return h;
+  const drop = Math.hypot(Math.max(0, c - half) / slope, Math.max(0, -back - a) / slope + Math.max(0, a) / front);
+  return Math.max(h, crest - drop);
+}
+
+/**
+ * The sluice's bund over the bank as the river has shaped it (its bank's slope cut the land down there: the bund laid
+ * in the land would be cut away with it), and the drain cut through it again, down to its bed.
+ */
+function sluiceGround(x: number, z: number, h: number): number {
+  const raised = sluiceBund(x, z, h);
+  if (raised === h) return h;
+  const c = channelAt(x, z);
+  if (!c || c.ch.name !== 'drain') return raised;
+  return carve(c.ch, c.d, raised, sluiceBund(c.x, c.z, -Infinity));
+}
+
 /** The land before the waters are cut in: the fields, the levee, the hills, the mounds, the road's and the railway's embankments, the ponds' banks. */
 function landHeight(x: number, z: number): number {
   const char = charShare(x, z);
@@ -366,9 +432,9 @@ function channelGround(x: number, z: number, h: number): number {
   return carve(ch, d, h, landHeight(c.x, c.z));
 }
 
-/** Height of the ground at (x, z): the land, with the small channels, then the river, the khals and the bil cut in. */
+/** Height of the ground at (x, z): the land, with the small channels, then the river, the khals and the bil cut in, and the sluice's bund on the river's bank. */
 export function terrainHeight(x: number, z: number): number {
-  return bilGround(x, z, wayGround(x, z, channelGround(x, z, landHeight(x, z))));
+  return bilGround(x, z, sluiceGround(x, z, wayGround(x, z, channelGround(x, z, landHeight(x, z)))));
 }
 
 /** The surface of a pond's water over (x, z), or null where there is none. */
@@ -533,7 +599,10 @@ export function landUse(x: number, z: number): LandUse {
   verge = Math.max(verge, smoothstep(3, -3, shapeDistance(ZAMINDAR_GROUNDS, x, z) + edgeWobble(x, z) * 2));
   // the hills are forest: the grove's floor under their trees
   mound = Math.max(mound, hillShare(x, z), groveShare(x, z));
-  const sand = charShare(x, z) * (1 - mound);
+  // the sluice's bund is earth, grassed over, standing out of the char's sand to its toe
+  const bund = smoothstep(WATER_LEVEL + 0.4, WATER_LEVEL + 1, sluiceBund(x, z, -Infinity));
+  verge = Math.max(verge, bund);
+  const sand = charShare(x, z) * (1 - mound) * (1 - bund);
   const marsh = bilMarsh(x, z);
   const salt = saltShare(x, z);
   const flats = creekFlats(x, z) * (1 - salt);
@@ -684,4 +753,4 @@ export function bankAt(x: number, z: number): BankSpot | null {
   return best;
 }
 
-export { KHAL, RIVER, SALT_CREEK, SIDE_KHAL, WATERWAYS };
+export { KHAL, RIVER, SALT_CREEK, SALT_WATERS, SIDE_KHAL, WATERWAYS };

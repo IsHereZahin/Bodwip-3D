@@ -1,22 +1,29 @@
 import { Vector3 } from 'three';
 import { DEG, angleDelta, clamp, lerp, smoothstep } from '../core/mathx';
 import { moonDirectionOn, moonIllumination, sunDirectionOn } from '../env/astro';
-import { YEAR, makeSeasonState, seasonAt } from '../env/season';
+import { SEASON_NAMES, SEASON_STARTS, makeSeasonState, seasonAt } from '../env/season';
 import { JOURNEY, journeyAt } from '../world/geography';
-import { highView, openingSide } from './opening';
+import { OPENING_SECONDS, highView, openingSide } from './opening';
 
 // The cinematic mode, the experience the site opens in (the user's direction, 2026-10-07; Live is Bangladesh's own
 // date and hour). Its moment is the user's: dawn, the sun coming up the river in the drone's first seconds and the
-// land lit within a few more; then the clock runs on as it does. What the system chooses is the day: every day of
-// the year is weighed by what its season puts in the land, the water and the air on a morning, by where its sun
-// comes up in the drone's view, and by the moon that could stand in its morning sky. She sets out on the best, and
-// the year turns on from there as she goes (yearJourney.ts).
+// land lit within a few more, the morning brightening on to 8:05 as the drone goes round her; then the clock runs on
+// as it does. What the system chooses is the day: every day of the year is weighed by what its season puts in the
+// land, the water and the air on a morning, by where its sun comes up in the drone's view, and by the moon that could
+// stand in its morning sky. She sets out on the best, and the year turns on from there as she goes (yearJourney.ts).
 
 /**
- * Where the sunrise runs in the opening: from this many seconds into it, over these many: through the drone's whole
- * descent (rig/opening.ts, 9 s), so the land is seen lighting up as it comes down (the user's wish, 2026-10-07).
+ * Where the sunrise runs in the opening (s, its own time from `from` s into the flight): up to the lit stage over
+ * `seconds`, through the drone's descent (rig/opening.ts), so the land is seen lighting up as it comes down (the
+ * user's wish, 2026-10-07); and from `on`, the morning brightening on to its hour (`MORNING`) as the drone goes round
+ * her, there at `until`, as the flight hands the camera over (the user's wish, 2026-10-08). The two ramps overlap, so
+ * the sun never stops at the lit stage.
  */
-export const SUNRISE = { from: 0.6, seconds: 8 };
+export const SUNRISE = { from: 0.6, seconds: 8, on: 6, until: OPENING_SECONDS - 0.6 };
+/** The hour the opening hands over at, and the clock runs on from: 8:05 in the morning (the user's), as the clock shows it. */
+const MORNING = 8 + 5 / 60;
+/** The season the site opens in (SEASON_NAMES' বসন্ত, spring: the user's, 2026-10-08). */
+const SPRING = SEASON_NAMES.indexOf('বসন্ত');
 /** The sun's elevation (°) the sunrise starts from: under the horizon, the land still dim, the sky beginning to glow (environment.ts LOOKS). */
 const DAWN = -6;
 /**
@@ -31,11 +38,12 @@ const MOON_DOWN = 2.5;
 /** The drone's frame across (°, either side of its middle) at a landscape screen (rig.ts `fovFor`). */
 const HALF_FRAME = 36;
 
-/** A cinematic morning: its day of the year, the hours of its dawn and its lit stage, and the moon's age. */
+/** A cinematic morning: its day of the year, the hours of its dawn, its lit stage and the opening's end (`morning`), and the moon's age. */
 export interface Morning {
   day: number;
   dawn: number;
   lit: number;
+  morning: number;
   moon: number;
 }
 
@@ -96,11 +104,12 @@ function morningMoon(day: number, hour: number, course: number): { age: number; 
 export function morningOn(day: number): Morning {
   const season = seasonAt(day, makeSeasonState());
   const lit = hourAt(day, lerp(LIT[0], LIT[1], smoothstep(0.3, 1, season.fog)));
-  return { day, dawn: hourAt(day, DAWN), lit, moon: morningMoon(day, lit, journeyAt(JOURNEY.opening).heading).age };
+  return { day, dawn: hourAt(day, DAWN), lit, morning: Math.max(lit, MORNING), moon: morningMoon(day, lit, journeyAt(JOURNEY.opening).heading).age };
 }
 
 /**
- * Weighs every day of the year for the opening's morning and returns the best. Each term is what the eye would
+ * Weighs every day of spring (বসন্ত, 1 Falgun to the end of Chaitra: the user's, 2026-10-08, the site opens in it)
+ * for the opening's morning and returns the best. Each term is what the eye would
  * see in it, at the opening: the land (green, the paddy ripe or the mustard out, the kash, the blossom, the lilies;
  * dust and dry land against it), the water (full to the banks is the better mirror), the air (a veil of mist on the
  * river, never a fog that drowns the sunrise's colour; dust haze against it), the sky (a few clouds to catch the
@@ -113,7 +122,7 @@ export function planCinematic(): Plan {
   const course = journeyAt(along).heading;
   const season = makeSeasonState();
   const weighed: Weighed[] = [];
-  for (let day = 0; day < Math.floor(YEAR); day++) {
+  for (let day = SEASON_STARTS[SPRING]; day < SEASON_STARTS[(SPRING + 1) % SEASON_STARTS.length]; day++) {
     const s = seasonAt(day, season);
     const lit = hourAt(day, lerp(LIT[0], LIT[1], smoothstep(0.3, 1, s.fog)));
     const rise = hourAt(day, 0);

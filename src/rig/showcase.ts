@@ -2,8 +2,8 @@ import { Vector3 } from 'three';
 import { clamp, smoothstep } from '../core/mathx';
 import type { SeasonState } from '../env/season';
 import { BIL, BRIDGE, HOMESTEAD_MOUNDS, JOURNEY, PONDS, SANKO, WATER_LEVEL, grandGhat, journeyAt, journeyFrame, saltPoint, terrainHeight } from '../world/geography';
-import { BANYAN, GRAVE_BANYAN, HILLS, HUB_GHAT, MOSQUE, SALT_FIELDS, TEA_STALL, ZAMINDAR } from '../world/plan';
-import { kashStand } from '../world/vegetation';
+import { BANYAN, GRAVE_BANYAN, HILLS, HUB_GHAT, KASHBON, MOSQUE, SALT_FIELDS, TEA_STALL, ZAMINDAR } from '../world/plan';
+import { KHAL } from '../world/waterways';
 import type { Ghat } from '../world/village';
 import { FISHER_SITE } from '../world/fisher';
 import type { Sightlines } from './sightlines';
@@ -182,9 +182,12 @@ export function findSights(ghats: readonly Ghat[], lines: Sightlines): Sight[] {
   for (const h of HILLS) add({ name: 'পাহাড়', x: h.x, z: h.z, up: h.h * 0.45, size: Math.min(h.r * 0.5, 70), rank: 6, reach: 320 });
   // the bil opening out as she comes into it, its shapla in bloom
   add({ name: 'শাপলা বিল', x: BIL.x, z: BIL.z, up: 0.5, size: 110, rank: 8, worth: (n) => (0.6 + 0.4 * n.season.lily) * (1 - 0.6 * n.night) });
-  // the kash in plume (Sharat), the fisherman at his net, the salt farms (salt in the dry months, a gher in the rains)
-  const kash = kashStand();
-  if (kash) add({ name: 'কাশবন', x: kash.x, z: kash.z, up: 1.5, size: 24, rank: 7, worth: (n) => smoothstep(0.25, 0.6, n.season.kash) * (1 - 0.7 * n.night) });
+  // the kashbon in plume (Sharat), the fisherman at his net, the salt farms (salt in the dry months, a gher in the
+  // rains). The kashbon is seen from the khal beside it, not from far down it: on the cinematic way she comes by it
+  // in Sharat, but 120 m short of it the year is still in the rains and the kash not yet in plume
+  const kashMid = (KASHBON.from + KASHBON.to) / 2;
+  const kash = KHAL.beside(kashMid, KASHBON.side, KHAL.half(kashMid) + KASHBON.reach / 2);
+  add({ name: 'কাশবন', x: kash.x, z: kash.z, up: 1.5, size: 30, rank: 7, front: KHAL.at(kashMid), reach: 70, worth: (n) => smoothstep(0.25, 0.6, n.season.kash) * (1 - 0.7 * n.night) });
   add({ name: 'জেলের জাল', x: FISHER_SITE.x, z: FISHER_SITE.z, up: 1.2, size: 7, rank: 6 });
   for (const farm of SALT_FIELDS) {
     const c = saltPoint(farm.w / 2, farm.d / 2, farm);

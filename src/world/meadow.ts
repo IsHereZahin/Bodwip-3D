@@ -58,8 +58,6 @@ const LATTICE = 1.6;
 /** How far a clump reaches past its chunk's square, leaning and swaying (≈0.9 m in a storm), and up over its foot (m). */
 const CLUMP_OUT = 1.5;
 const CLUMP_TOP = 2.2;
-/** How far any part of a clump or a flower can be from its foot, swaying (m): those out of view are dropped by it (patch.ts `cull`). */
-const CLUMP_REACH = 3;
 
 /** The quality tier's share of the grass's reach, for the shaders' bands. */
 const REACH = { value: 1 };
@@ -243,7 +241,6 @@ export class Meadow {
         translucency: 1.7,
         foliage: true,
         vertex: { key: `meadow-grass-${lod}`, pars: FADE_PARS, code: fade(lod), uniforms: { uMeadowReach: REACH } },
-        cull: CLUMP_REACH,
       });
     const flowerMat = patchMaterial(new MeshStandardMaterial({ vertexColors: true, side: DoubleSide, roughness: 0.7 }), {
       wind: 0.1,
@@ -251,7 +248,6 @@ export class Meadow {
       translucency: 1.2,
       foliage: true,
       vertex: { key: 'meadow-flower', pars: FADE_PARS, code: fade(0), uniforms: { uMeadowReach: REACH } },
-      cull: CLUMP_REACH,
     });
     const make = (view: Group, shape: BufferGeometry, material: Material, capacity: number): Layer => {
       // each set its own copy: the birth times are per set

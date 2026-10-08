@@ -60,6 +60,14 @@ export const SLUICE_SITE = (() => {
   return { x: m.x, z: m.z, face: Math.atan2(m.ox, m.oz), out: { x: m.ox, z: m.oz } };
 })();
 
+/**
+ * How far either side of the sluice's middle its outfall lies open `a` m out from the headwall toward the river
+ * (m): the wing walls' line, flaring out (falls.ts builds them on it; geography's bund keeps its earth outside it).
+ */
+export function sluiceOutfall(a: number): number {
+  return SLUICE.width / 2 + 1.1 + 0.45 * a;
+}
+
 export const CHANNELS: readonly Channel[] = [
   channel('stream', HILL_STREAM.points, HILL_STREAM.width, 0.75, 1.1, WATER_LEVEL + 0.15),
   // (its bed above the river's highest, so the fields' water always falls out into it, even in the rains)

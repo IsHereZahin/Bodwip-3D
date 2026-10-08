@@ -1,7 +1,7 @@
 import { CORRIDOR } from '../render/glsl';
 import type { SpotGroup, SpotIcon } from '../rig/visits';
-import { BIL, JOURNEY, KHAL, RIVER, corridorDistance, journeyAt, landUse, terrainHeight, waterLevelAt } from '../world/geography';
-import { WORLD } from '../world/plan';
+import { BIL, JOURNEY, KHAL, RIVER, SALT_CREEK, SALT_WATERS, corridorDistance, journeyAt, landUse, saltIntake, terrainHeight, waterLevelAt } from '../world/geography';
+import { SALT_FIELDS, WORLD } from '../world/plan';
 import { roadLines } from '../world/roads';
 import './map.css';
 
@@ -63,6 +63,27 @@ const GROUP_ORDER: readonly SpotGroup[] = ['river', 'village', 'fields'];
 /** A world point on the map's fine canvas. */
 const toMap = (x: number, z: number): [number, number] => [((WORLD.x1 - x) / M) * FINE, ((WORLD.z1 - z) / M) * FINE];
 
+/** How far the haze has the land at (x, z) beyond the village's own (0..1): the map fades it to parchment. */
+const hazeAt = (x: number, z: number) => 1 - Math.exp(-Math.max(0, corridorDistance(x, z) - CORRIDOR.clear) * CORRIDOR.haze);
+
+/**
+ * The salt creek's and its feeders' water as pieces of line on the map (from, to, width in its pixels, and how
+ * clear of the haze), and each farm's intake from them: worked out once, drawn every frame the map is open.
+ */
+let saltLines: { a: [number, number]; b: [number, number]; width: number; clear: number }[] | null = null;
+function saltWaterLines(): NonNullable<typeof saltLines> {
+  if (saltLines) return saltLines;
+  saltLines = SALT_FIELDS.map(saltIntake).map(({ edge, water }) => ({ a: toMap(water.x, water.z), b: toMap(edge.x, edge.z), width: 1.2, clear: 0.95 }));
+  for (const way of SALT_WATERS) {
+    for (let s = 0; s < way.length; s += 4) {
+      const a = way.at(s);
+      const b = way.at(Math.min(way.length, s + 4.5));
+      saltLines.push({ a: toMap(a.x, a.z), b: toMap(b.x, b.z), width: Math.max(1.6, ((2 * way.half(s)) / M) * FINE), clear: 0.95 * (1 - hazeAt(a.x, a.z)) });
+    }
+  }
+  return saltLines;
+}
+
 /** The map's colour for the ground at (x, z) (sRGB 0..255), and whether water stands there. */
 function paintAt(x: number, z: number, out: number[]): boolean {
   const h = terrainHeight(x, z);
@@ -94,7 +115,7 @@ function paintAt(x: number, z: number, out: number[]): boolean {
     b *= shade;
   }
   // beyond the village's own land, the haze, a pale parchment
-  const fog = 1 - Math.exp(-Math.max(0, corridorDistance(x, z) - CORRIDOR.clear) * CORRIDOR.haze);
+  const fog = hazeAt(x, z);
   out[0] = r + (214 - r) * fog;
   out[1] = g + (206 - g) * fog;
   out[2] = b + (186 - b) * fog;
@@ -105,13 +126,6 @@ export class MapPanel {
   private readonly dialog: HTMLDialogElement;
   private readonly base: HTMLCanvasElement;
   private readonly view: HTMLCanvasElement;
-  /**
-   * The map under the boat (its ground, its lines and words, its places' badges), drawn again only when it changes:
-   * as its ground is painted, a place is picked out, or a font comes. Drawn whole every frame, its badges' shadows
-   * and its ways cost a weak device the map's own pace.
-   */
-  private readonly under = document.createElement('canvas');
-  private underKey = '';
   private readonly tip: HTMLElement;
   private readonly spots: { spot: MapSpot; card: HTMLButtonElement; path: Path2D }[] = [];
   private readonly actions: MapActions;
@@ -129,7 +143,7 @@ export class MapPanel {
       <header class="map-head">
         <img class="map-logo" src="brand/logo.svg" alt="" width="40" height="40" />
         <div class="map-titles">
-          <h2>নদীগাঁয়ের মানচিত্র</h2>
+          <h2>বদ্বীপের মানচিত্র</h2>
           <p>একটা জায়গা বেছে নিন: সেখানকার দৃশ্য দেখে আবার নৌকায় ফিরবেন</p>
         </div>
         <button type="button" class="ibtn close" aria-label="বন্ধ করুন">✕</button>
@@ -158,8 +172,8 @@ export class MapPanel {
     this.base.width = Math.round((WORLD.x1 - WORLD.x0) / M);
     this.base.height = Math.round((WORLD.z1 - WORLD.z0) / M);
     this.view = d.querySelector('.map-view') as HTMLCanvasElement;
-    this.view.width = this.under.width = this.base.width * FINE;
-    this.view.height = this.under.height = this.base.height * FINE;
+    this.view.width = this.base.width * FINE;
+    this.view.height = this.base.height * FINE;
     this.tip = d.querySelector('.map-tip') as HTMLElement;
 
     // the list: the places by where they are, each a card with its sign, its name and a line about it
@@ -327,6 +341,23 @@ export class MapPanel {
 
   /** The map's lines and words over the ground: the ways, the boat's way, the waters' names. */
   private drawLines(ctx: CanvasRenderingContext2D): void {
+    // the salt creek and its feeders, narrower than the ground's pixels: drawn along their lines, a pale shore
+    // and the water in it, joined to the river as they are, fading into the haze as the ground does; and each
+    // farm's intake from them, the short trough through its embankment
+    ctx.lineCap = 'butt';
+    for (const [shore, colour] of [
+      [1.6, '214, 226, 222'],
+      [0, '62, 112, 128'],
+    ] as const) {
+      for (const line of saltWaterLines()) {
+        ctx.strokeStyle = `rgba(${colour}, ${line.clear.toFixed(3)})`;
+        ctx.lineWidth = line.width + shore;
+        ctx.beginPath();
+        ctx.moveTo(line.a[0], line.a[1]);
+        ctx.lineTo(line.b[0], line.b[1]);
+        ctx.stroke();
+      }
+    }
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
     for (const line of roadLines()) {
@@ -382,6 +413,9 @@ export class MapPanel {
     word('নদী', river.x, river.z, river.a, 22);
     const khal = along(KHAL, 0.72);
     word('খাল', khal.x, khal.z, khal.a, 18);
+    // (beside it, east, where it comes up from the coast below the farms)
+    const creek = along(SALT_CREEK, 0.62);
+    word('খাঁড়ি', creek.x - 22, creek.z, creek.a, 15);
     // (south of its badge, over the water)
     word('শাপলা বিল', BIL.x + 10, BIL.z - 70, 0, 22);
   }
@@ -392,47 +426,9 @@ export class MapPanel {
     if (this.painted < this.base.height || !this.image) this.paint();
     const ctx = this.view.getContext('2d');
     if (!ctx) return;
-    const key = `${this.painted}|${this.hovered}|${document.fonts.status}`;
-    if (key !== this.underKey) {
-      this.underKey = key;
-      this.drawUnder();
-    }
-    ctx.drawImage(this.under, 0, 0);
-    // the boat: a small boat on her course, a slow ring round her (round-jointed, as over the finished map's lines)
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    const [bx, by] = toMap(boatX, boatZ);
-    const pulse = (time % 2.4) / 2.4;
-    ctx.strokeStyle = `rgba(255, 210, 122, ${0.75 * (1 - pulse)})`;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.arc(bx, by, 8 + 16 * pulse, 0, Math.PI * 2);
-    ctx.stroke();
-    ctx.save();
-    ctx.translate(bx, by);
-    ctx.rotate(Math.atan2(-Math.cos(course), -Math.sin(course)));
-    ctx.fillStyle = '#ffd27a';
-    ctx.strokeStyle = '#2a1c10';
-    ctx.lineWidth = 1.6;
-    ctx.beginPath();
-    ctx.moveTo(13, 0);
-    ctx.quadraticCurveTo(4, 6, -11, 4);
-    ctx.lineTo(-13, 0);
-    ctx.lineTo(-11, -4);
-    ctx.quadraticCurveTo(4, -6, 13, 0);
-    ctx.closePath();
-    ctx.fill();
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  /** The map under the boat: its ground, its lines and words once the ground is all in, and the places' badges. */
-  private drawUnder(): void {
-    const ctx = this.under.getContext('2d');
-    if (!ctx) return;
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
-    ctx.drawImage(this.base, 0, 0, this.under.width, this.under.height);
+    ctx.drawImage(this.base, 0, 0, this.view.width, this.view.height);
     if (this.painted >= this.base.height) this.drawLines(ctx);
     // the places: a badge each, in its group's colour, its sign in it; the one picked out larger, ringed in gold
     this.spots.forEach((s, i) => {
@@ -461,5 +457,29 @@ export class MapPanel {
       ctx.fill(s.path);
       ctx.restore();
     });
+    // the boat: a small boat on her course, a slow ring round her
+    const [bx, by] = toMap(boatX, boatZ);
+    const pulse = (time % 2.4) / 2.4;
+    ctx.strokeStyle = `rgba(255, 210, 122, ${0.75 * (1 - pulse)})`;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(bx, by, 8 + 16 * pulse, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.save();
+    ctx.translate(bx, by);
+    ctx.rotate(Math.atan2(-Math.cos(course), -Math.sin(course)));
+    ctx.fillStyle = '#ffd27a';
+    ctx.strokeStyle = '#2a1c10';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(13, 0);
+    ctx.quadraticCurveTo(4, 6, -11, 4);
+    ctx.lineTo(-13, 0);
+    ctx.lineTo(-11, -4);
+    ctx.quadraticCurveTo(4, -6, 13, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
   }
 }

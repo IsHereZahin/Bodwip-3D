@@ -300,6 +300,20 @@ export class Pipeline {
     return this.sceneRT;
   }
 
+  /**
+   * Makes the programs of the passes a frame draws only now and then (the light shafts once the sun is in the frame,
+   * the depth of field in the film) at load: made in a frame, each held it up (the shafts' as the sun came up in the
+   * opening's flight).
+   */
+  compile(renderer: WebGLRenderer): void {
+    renderer.setRenderTarget(this.rays);
+    for (const material of [this.mRays, this.mDof]) {
+      this.quad.material = material;
+      renderer.compile(this.quadScene, this.quadCam);
+    }
+    renderer.setRenderTarget(null);
+  }
+
   get size(): { width: number; height: number } {
     return { width: this.width, height: this.height };
   }

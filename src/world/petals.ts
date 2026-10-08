@@ -2,7 +2,6 @@ import { Group, InstancedBufferAttribute, InstancedMesh, Matrix4, Mesh, Quaterni
 import { G, LAYER_NO_REFLECT } from '../core/globals';
 import { clamp, lerp, smoothstep } from '../core/mathx';
 import { Rng } from '../core/rng';
-import { sendFirst } from '../render/instancing';
 
 import { WATER_LEVEL, meanWaterLevelAt, onLandmark, risenLevel, terrainHeight, waterRise, waterwayAt } from './geography';
 import { PETAL_LENGTH, PETAL_TINTS, PETAL_WITHERED, bloomAt, petalGeometry, petalMaterial } from './leaves';
@@ -228,7 +227,8 @@ export class PetalCarpet {
       }
     }
     this.lying.count = n;
-    sendFirst(n, this.lying.instanceMatrix, this.lyingColor);
+    this.lying.instanceMatrix.needsUpdate = true;
+    this.lyingColor.needsUpdate = true;
   }
 
   private floatOn(t: number, boat: Vector3, heading: number): void {
@@ -266,7 +266,8 @@ export class PetalCarpet {
       }
     }
     this.afloat.count = n;
-    sendFirst(n, this.afloat.instanceMatrix, this.afloatColor);
+    this.afloat.instanceMatrix.needsUpdate = true;
+    this.afloatColor.needsUpdate = true;
   }
 
   /** A crown's carpet, begun the first time it comes within reach (its floating petals along the bank laid at once). */

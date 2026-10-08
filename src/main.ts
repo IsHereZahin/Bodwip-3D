@@ -1,5 +1,6 @@
 import { Color, DirectionalLight, HemisphereLight, Matrix4, PCFShadowMap, PerspectiveCamera, PointLight, Quaternion, SRGBColorSpace, Scene, Sphere, Triangle, Vector3, Vector4, WebGLRenderer, type RenderTarget } from 'three';
 import type { InstancedMesh, Light, Mesh, Object3D } from 'three';
+import { inject } from '@vercel/analytics';
 import { Soundscape } from './audio/soundscape';
 import { G, LAYER_NO_REFLECT, LAYER_WATER } from './core/globals';
 import { clamp, smoothstep } from './core/mathx';
@@ -71,7 +72,7 @@ import { BANYAN_CLEARING, GRAVE_BANYAN_CLEARING, GRAVEYARD_BANYAN, buildBanyan }
 import { MOSQUE_POND_TREES } from './world/plan';
 import { NIGHT_GLOWS, buildLandmarks, lampsGlow } from './world/landmarks';
 import { KALIMA_FONT } from './render/textures';
-import { Train, buildRailway } from './world/railway';
+import { Train, buildRailway, railNearest } from './world/railway';
 import { buildWater } from './world/water';
 import { Ripples } from './world/ripples';
 import { currentAt } from './world/boatPhysics';
@@ -82,8 +83,6 @@ const MIST = new Color(0.8, 0.72, 0.6);
 const DEBUG = new URLSearchParams(location.search).has('debug');
 /** How far a press on the film must move (CSS pixels) to be a drag that takes the camera, not a tap. */
 const DRAG_PX = 8;
-/** The map's sheet is at most 1240 px wide (ui/map.css): a screen this wide or narrower (CSS px) is covered but for its margins. */
-const MAP_COVERS = 1280;
 /** Where the viewer's choice to mute the sound is remembered. */
 const MUTED_KEY = 'nodi.muted';
 /** The cinematic morning's first minutes stay clear whatever the season (s); then its weather comes. */
@@ -108,9 +107,9 @@ const WATCH_IDLE_MS = 12000;
 /** Milliseconds a frame may spend building the film's next shot ahead of it. */
 const WARM_MS = 3;
 /**
- * Milliseconds the cut's own frame may spend on the ground along the shot coming in, its grass and its crops (past
- * where it opens): past it they are built by their own updates over the next frames (nearest and ahead first,
- * growing in as the shot dissolves in) rather than stalling the cut.
+ * Milliseconds the cut's own frame may spend on the grass and the crops the shot coming in still lacks: past it
+ * they are built by their own updates over the next frames (nearest and ahead first, growing in as the shot
+ * dissolves in) rather than stalling the cut.
  */
 const PREPARE_MS = 30;
 
@@ -118,16 +117,12 @@ const PREPARE_MS = 30;
 const nextTask = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
 /**
- * A group that never moves once built (the trees, the houses, the landmarks): its matrices are made once and none
- * is remade. (three's frame walk still visits each node, but one that neither remakes its own matrix nor is forced
- * by a parent remaking its own costs only the visit; with `matrixAutoUpdate` on, all of them were remade every
- * frame.) Nothing in it may be moved afterwards: it would stand where it was.
+ * A group that never moves once built (the trees, the houses, the landmarks): its matrices are made once, and
+ * the frame's matrix update passes over it (thousands of objects otherwise remade every pass).
  */
 const still = <T extends Object3D>(group: T): T => {
   group.updateMatrixWorld(true);
-  group.traverse((o) => {
-    o.matrixAutoUpdate = false;
-  });
+  group.matrixWorldAutoUpdate = false;
   return group;
 };
 
@@ -332,17 +327,18 @@ async function main(hud: Hud): Promise<void> {
   const life = new Life();
   scene.add(life.group);
   // the cinematic morning (the user's direction): the clock at its dawn on its day, with its moon; the sun rises in
-  // the opening's first seconds (`sunrise`, step()), then the clock runs on at the wall's pace, and the season
-  // follows the boat's way round the year from that day (yearJourney.ts). Live (`mode`) is Bangladesh's own date,
-  // hour and moon, the clock kept to the wall's (`clock.live`) until the viewer turns it.
+  // the opening's first seconds and the morning brightens on to 8:05 as the flight ends (`sunrise`, step()), then
+  // the clock runs on at the wall's pace, and the season follows the boat's way round the year from that day
+  // (yearJourney.ts). Live (`mode`) is Bangladesh's own date, hour and moon, the clock kept to the wall's
+  // (`clock.live`) until the viewer turns it.
   let mode: TimeMode = 'cinematic';
   const clock = new Clock(plan.dawn, plan.moon, plan.day);
   clock.live = false;
   const yearJourney = new YearJourney(plan.day);
   /** The mode's own moon (the cinematic morning's, or the real one in Live): its age at `time`, going on with the clock's days. */
   const ownMoon = { age: clock.moonAge, time: clock.time };
-  /** The sunrise running: how far into it (s; below 0 it is still to begin), from its dawn's hour to its lit stage's. */
-  let sunrise: { t: number; dawn: number; lit: number } | null = { t: -SUNRISE.from, dawn: plan.dawn, lit: plan.lit };
+  /** The sunrise running: how far into it (s; below 0 it is still to begin), from its dawn's hour by its lit stage's to its morning's. */
+  let sunrise: { t: number; dawn: number; lit: number; morning: number } | null = { t: -SUNRISE.from, dawn: plan.dawn, lit: plan.lit, morning: plan.morning };
   const season = makeSeasonState();
   const weather = new Weather();
   weather.clearUntil = OPENING_CLEAR_SECONDS;
@@ -480,13 +476,9 @@ async function main(hud: Hud): Promise<void> {
     },
     prepare: (points) => {
       // only what is missing, and nothing uploaded: the camera's own update shows it (the film is moving). The
-      // ground where the shot opens all at once; for a moment the ground along the rest of its way, the grass and
-      // the crops, from where it opens. What is left is built by their own updates over the next frames, under the
-      // dissolve (a coarser patch standing in for one not built yet, the grass and crops growing in): a skip or a
-      // map place's first shot, which nothing was built ahead for, built the whole way at once and stalled
-      terrain.warm(points[0], Infinity);
+      // ground all at once; the grass and the crops for a moment, from where the shot opens
+      for (const p of points) terrain.warm(p, Infinity);
       const until = performance.now() + PREPARE_MS;
-      for (const p of points) terrain.warm(p, until);
       for (const p of points) {
         meadow.warm(p, until);
         crops.warm(p, until);
@@ -609,8 +601,6 @@ async function main(hud: Hud): Promise<void> {
     sky.mesh.position.copy(camera.position);
   };
   const sound = new Soundscape();
-  // the blade's splash, heard as near as it is (not at all from across the fields or the air above them)
-  hero.onStroke = (power) => sound.splash(power, smoothstep(90, 12, camera.position.distanceTo(hero.blade)));
   /** How near the water the listener is: 1 on it or by it, fading high above it or away over the fields. */
   const waterNear = () => {
     const p = camera.position;
@@ -649,14 +639,17 @@ async function main(hud: Hud): Promise<void> {
    * nearly a pixel to each of its CSS pixels); under `fast` it grows back a step at a time. Still slow at `lowAt`,
    * the lower tier. A frame whose own work on the CPU is `cpuBound` of it waits on the CPU: fewer pixels would not
    * help it, so the size is kept. A frame counts at most `longest` s (one stall alone does not shrink the picture).
+   * A new size costs the frame it is taken up in 60–90 ms (every target made again), so a step to `least` of less
+   * than `smallest` of the size is not taken, and through the opening flight the size only comes down: there it
+   * grew back over the river and came down again round her, a stall each time.
    */
-  const ADAPT = { quick: 20, steady: 60, quickFor: 600, slow: 0.024, fast: 0.0175, aim: 0.018, least: 0.6, leastDense: 0.5, lowAt: 0.75, cpuBound: 0.8, longest: 0.25 };
+  const ADAPT = { quick: 20, steady: 60, quickFor: 600, slow: 0.024, fast: 0.0175, aim: 0.018, least: 0.6, leastDense: 0.5, lowAt: 0.75, cpuBound: 0.8, longest: 0.25, smallest: 0.07 };
   /** Device pixels to a CSS pixel at full size (a denser screen is drawn at most this fine). */
   const densest = () => Math.min(devicePixelRatio || 1, 1.75);
   const leastScale = () => (densest() >= 1.5 ? ADAPT.leastDense : ADAPT.least);
   /** The GPU's milliseconds for a frame the calibration at load aims under (it leaves room for the CPU's part). */
   const GPU_AIM = 14;
-  const perf = { scale: 1, acc: 0, cpu: 0, n: 0, frames: 0, cool: 0, locked: false, ms: 16, driftMs: 0, under: 0 };
+  const perf = { scale: 1, acc: 0, cpu: 0, n: 0, frames: 0, cool: 0, locked: false, ms: 16, driftMs: 0 };
   const resize = () => {
     const w = Math.max(1, innerWidth);
     const h = Math.max(1, innerHeight);
@@ -674,8 +667,8 @@ async function main(hud: Hud): Promise<void> {
   resize();
   window.addEventListener('resize', resize);
 
-  // ---- sound: browsers allow it only after the first touch or key; muting is remembered ----
-  let soundOn = false;
+  // ---- sound: on by itself as the opening flight ends (the frame loop), where the browser allows it before a
+  // touch or key; where it does not, the first touch or key starts it. Muting is remembered ----
   try {
     sound.muted = localStorage.getItem(MUTED_KEY) === '1';
   } catch {
@@ -685,17 +678,18 @@ async function main(hud: Hud): Promise<void> {
     // the speaker button and M toggle it themselves (else this would start it and the toggle mute it at once)
     if (e.target instanceof Element && e.target.closest('#sound')) return;
     if (e instanceof KeyboardEvent && e.code === 'KeyM') return;
-    if (!sound.muted) {
-      sound.start();
-      soundOn = true;
-    }
+    if (!sound.muted) sound.start();
   };
   // (a touch's pointerdown does not count as a gesture for audio on every browser: its end does)
   for (const type of ['pointerdown', 'pointerup', 'touchend', 'keydown'] as const) window.addEventListener(type, startSound, { passive: true });
   const toggleSound = () => {
-    sound.setMuted(!sound.muted);
-    if (!sound.muted) sound.start();
-    soundOn = !sound.muted;
+    // on but held back by the browser (the speaker shows it silent): the press starts it, rather than muting
+    // what nobody hears
+    if (!sound.muted && !sound.audible) sound.start();
+    else {
+      sound.setMuted(!sound.muted);
+      if (!sound.muted) sound.start();
+    }
     try {
       localStorage.setItem(MUTED_KEY, sound.muted ? '1' : '0');
     } catch {
@@ -792,17 +786,24 @@ async function main(hud: Hud): Promise<void> {
     if (clock.speed === SPEEDS[0] && mode === 'live') keepToWall();
     else takeClock();
   };
-  /** The sunrise's hour now: from its dawn up to its lit stage over `SUNRISE.seconds`, eased; then the clock runs on from there. */
+  /**
+   * The sunrise's hour now: from its dawn up to its lit stage over `SUNRISE.seconds`, and on to its morning's hour
+   * by `SUNRISE.until` (the opening's end), each eased; then the clock runs on from there.
+   */
   const riseSun = (dt: number) => {
     if (!sunrise) return;
     sunrise.t += dt;
-    clock.setHour(sunrise.dawn + (sunrise.lit - sunrise.dawn) * smooth(clamp(sunrise.t / SUNRISE.seconds, 0, 1)));
-    if (sunrise.t >= SUNRISE.seconds) sunrise = null;
+    const { seconds, on, until } = SUNRISE;
+    const up = smooth(clamp(sunrise.t / seconds, 0, 1));
+    const brighten = smooth(clamp((sunrise.t - on) / (until - on), 0, 1));
+    clock.setHour(sunrise.dawn + (sunrise.lit - sunrise.dawn) * up + (sunrise.morning - sunrise.lit) * brighten);
+    // (ended on the morning's hour itself: summed, it could fall short of 8:05 by a hair and show 8:04)
+    if (sunrise.t >= until) finishSunrise();
   };
-  /** The sunrise done at once (the film starts over it): the sun at its lit stage. */
+  /** The sunrise done at once (the film starts over it): the clock at its morning's hour. */
   const finishSunrise = () => {
     if (!sunrise) return;
-    clock.setHour(sunrise.lit);
+    clock.setHour(sunrise.morning);
     sunrise = null;
   };
 
@@ -955,7 +956,7 @@ async function main(hud: Hud): Promise<void> {
     clock.setDayOfYear(m.day);
     clock.setHour(m.dawn);
     clock.setMoonAge(m.moon);
-    sunrise = { t: -after, dawn: m.dawn, lit: m.lit };
+    sunrise = { t: -after, dawn: m.dawn, lit: m.lit, morning: m.morning };
   };
   /** Sets a mode's whole world at once (under the dip's dark): its day, hour, moon, season, weather and what goes with them. */
   const setMode = (to: TimeMode) => {
@@ -1244,6 +1245,8 @@ async function main(hud: Hud): Promise<void> {
   let t = 0;
   const focus = new Vector3();
   const forward = new Vector3();
+  /** The listener's right, for which side the train is heard from. */
+  const earRight = new Vector3();
   /**
    * The season from the day of the year, the weather on it, and the wind they make; `settle` jumps
    * straight to where they are heading (for stills and a fresh season) instead of easing there.
@@ -1372,6 +1375,7 @@ async function main(hud: Hud): Promise<void> {
     focus.set(Math.round(focus.x / 12) * 12, 0, Math.round(focus.z / 12) * 12);
     if (env.aimShadow(focus, false)) renderer.shadowMap.needsUpdate = true;
     sound.update(dt, env.night, G.uWind.value.z * gustAt(camera.position.x, camera.position.z), weather.rain, waterNear(), frogsOut(), fallsLoud);
+    sound.train(train.acoustics(camera.position), camera.position, earRight.setFromMatrixColumn(camera.matrixWorld, 0), railNearest(camera.position.x, camera.position.z).distance);
   };
   updateSky(0, true);
   step(0);
@@ -1393,7 +1397,24 @@ async function main(hud: Hud): Promise<void> {
   });
   await renderer.compileAsync(scene, camera);
   for (const o of unhidden) o.visible = false;
+  // and everything standing within reach drawn once, in the opening's view or not, with its shadow: the flight
+  // turns right round her, and each thing first drawn in its frames (its buffers and textures sent to the GPU, its
+  // shadow's program made) held that frame up 60–90 ms, a dozen times over as it came round her
+  updateCulling(camera.position);
+  const outOfView: Object3D[] = [];
+  scene.traverseVisible((o) => {
+    if (!o.frustumCulled) return;
+    o.frustumCulled = false;
+    outOfView.push(o);
+  });
+  renderer.shadowMap.needsUpdate = true;
+  renderer.render(scene, camera);
+  for (const o of outOfView) o.frustumCulled = true;
+  // (drawn again in the frame's own passes: the mirror's first, which casts only what it sees, known-issues.md)
+  renderer.shadowMap.needsUpdate = true;
   renderer.setRenderTarget(null);
+  ripples.compile(renderer);
+  pipeline.compile(renderer);
   hud.progress(1);
 
   // the opening's first view drawn a few times behind the loader to learn what a frame of it costs this device's
@@ -1441,22 +1462,6 @@ async function main(hud: Hud): Promise<void> {
     }
   }
 
-  // a phone's (or a tablet's) screen that refreshes 110 times a second or more is drawn for at every other refresh:
-  // 60 a second, evenly. Drawn for at its full rate it would only heat until it slowed, and slowed unevenly
-  const everyOther =
-    matchMedia('(pointer: coarse)').matches &&
-    (await new Promise<number>((resolve) => {
-      // its refresh: the middle of a dozen frames' intervals (or 60 Hz in a hidden tab, whose frames do not come)
-      const times: number[] = [];
-      const tick = (time: number) => {
-        times.push(time);
-        if (times.length < 13) requestAnimationFrame(tick);
-        else resolve(times.slice(1).map((v, i) => v - times[i]).sort((a, b) => a - b)[6]);
-      };
-      requestAnimationFrame(tick);
-      setTimeout(() => resolve(1000 / 60), 1000);
-    })) < 1000 / 110;
-  let skipped = false;
   /** A new size the adaptive resolution has chosen, taken up just before the next frame is drawn. */
   let resizeDue = false;
 
@@ -1469,8 +1474,6 @@ async function main(hud: Hud): Promise<void> {
     if (!document.hidden) away = true;
   });
   const frame = () => {
-    // (on such a screen, every other refresh passes undrawn)
-    if (everyOther && (skipped = !skipped)) return;
     renderer.info.reset();
     const now = performance.now();
     const raw = Math.max(0, (now - last) / 1000);
@@ -1497,44 +1500,43 @@ async function main(hud: Hud): Promise<void> {
     const loop = rig.mode === 'follow' || director.active ? rig.fade : 0;
     // a dissolve: the shot being left, still moving in its own world, drawn first for this one to melt over
     const leaving = director.leaving;
-    // under the map where it covers nearly the whole screen (a phone's, a laptop's), the world is drawn a frame in
-    // three: what shows at its edges is dimmed under it and still moves, and on a weak device the map keeps its own
-    // pace. The world goes on every frame (step); on a wide screen, where it shows beside the map, it is drawn whole
-    const underMap = map.isOpen && innerWidth <= MAP_COVERS;
-    perf.under = underMap ? perf.under + 1 : 0;
-    if (!underMap || perf.under % 3 === 1) {
-      // (a canvas resized after a frame is drawn goes out blank for that frame: a flash of the page behind it)
-      if (resizeDue) {
-        resizeDue = false;
-        resize();
-      }
-      if (leaving) drawLeaving(leaving);
-      updateCulling(camera.position);
-      pipeline.render(renderer, scene, camera, {
-        exposure: env.exposure,
-        fade: Math.max(cut, loop),
-        fadeColor: loop > cut ? MIST : BLACK,
-        night: env.night,
-        letterbox: Math.max(director.letterbox, rig.openingBars),
-        dissolve: leaving ? director.dissolve : 0,
-        dof: director.active ? director.dof : undefined,
-      });
+    // (a canvas resized after a frame is drawn goes out blank for that frame: a flash of the page behind it)
+    if (resizeDue) {
+      resizeDue = false;
+      resize();
     }
+    if (leaving) drawLeaving(leaving);
+    updateCulling(camera.position);
+    pipeline.render(renderer, scene, camera, {
+      exposure: env.exposure,
+      fade: Math.max(cut, loop),
+      fadeColor: loop > cut ? MIST : BLACK,
+      night: env.night,
+      letterbox: Math.max(director.letterbox, rig.openingBars),
+      dissolve: leaving ? director.dissolve : 0,
+      dof: director.active ? director.dof : undefined,
+    });
     hud.setCaption(director.caption, director.captionAlpha, pipeline.bar);
-    // the opening flight has come down to the boat: the hint to the controls
-    if (wasFlying && !rig.flying) hud.hintNow();
+    // the opening flight has come down to the boat (or the viewer took the camera): the controls come up, with their
+    // hint, and the sound comes on (unless muted). Through the flight they stay down, so nothing stands over the
+    // drone's shot (the user's direction)
+    if (wasFlying && !rig.flying) {
+      controls.show();
+      hud.hintNow();
+      if (!sound.muted) sound.start();
+    }
     wasFlying = rig.flying;
-    controls.update(clock, filming() ? 'film' : rig.mode, soundOn, !seasonHeld, mode, filming() ? { index: director.sceneIndex, count: director.sceneCount } : undefined);
+    controls.update(clock, filming() ? 'film' : rig.mode, sound.audible, !seasonHeld, mode, filming() ? { index: director.sceneIndex, count: director.sceneCount } : undefined);
     camera.getWorldDirection(forward);
     map.update(rig.boat.pos.x, rig.boat.pos.z, rig.boat.course, t);
 
     // adaptive resolution: hold ~45–60 fps by trading pixels (ADAPT)
     perf.frames++;
-    // (not through a dissolve, which draws two shots a frame for a moment, nor under the map; the first frames settle in)
+    // (not through a dissolve, which draws two shots a frame for a moment; the first frames settle in)
     if (away) {
       away = false;
       perf.acc = perf.cpu = perf.n = 0;
-    } else if (perf.frames > 10 && !perf.locked && !document.hidden && !leaving && !underMap) {
+    } else if (perf.frames > 10 && !perf.locked && !document.hidden && !leaving) {
       perf.acc += Math.min(raw, ADAPT.longest);
       perf.cpu += (performance.now() - now) / 1000;
       if (++perf.n >= (perf.frames < ADAPT.quickFor ? ADAPT.quick : ADAPT.steady)) {
@@ -1545,9 +1547,12 @@ async function main(hud: Hud): Promise<void> {
         perf.n = 0;
         const before = perf.scale;
         if (avg > ADAPT.slow && perf.scale > leastScale() && !cpuBound) {
-          perf.scale = Math.max(leastScale(), perf.scale * clamp(Math.sqrt(ADAPT.aim / avg), 0.7, 0.92));
-          perf.cool = now + 3000;
-        } else if (avg < ADAPT.fast && perf.scale < 1 && now > perf.cool) {
+          const next = Math.max(leastScale(), perf.scale * clamp(Math.sqrt(ADAPT.aim / avg), 0.7, 0.92));
+          if (next < perf.scale * (1 - ADAPT.smallest)) {
+            perf.scale = next;
+            perf.cool = now + 3000;
+          }
+        } else if (avg < ADAPT.fast && perf.scale < 1 && now > perf.cool && !rig.flying) {
           perf.scale = Math.min(1, perf.scale + 0.06);
           perf.cool = now + 3000;
         }
@@ -1565,7 +1570,6 @@ async function main(hud: Hud): Promise<void> {
   renderer.setAnimationLoop(frame);
   readyAt = performance.now();
   hud.ready(TITLE_SECONDS);
-  controls.show();
 
   if (DEBUG) {
     // hooks for headless stills: put the boat, the day and the camera where you want them and freeze
@@ -1702,7 +1706,7 @@ async function main(hud: Hud): Promise<void> {
         /** The boat's motion now, for checking the physics. */
         boatState() {
           const r = (v: number, k = 1000) => Math.round(v * k) / k;
-          return { x: r(b0().pos.x, 100), z: r(b0().pos.z, 100), heave: r(b0().pos.y), pitch: r(b0().rotX), roll: r(b0().rotZ), heading: r(b0().heading), course: r(b0().course), speed: r(b0().speed), power: r(b0().power, 100), crew: { x: r(hero.crew.x), z: r(hero.crew.z) }, reach: r(hero.reach), depth: r(WATER_LEVEL - terrainHeight(b0().pos.x, b0().pos.z), 100) };
+          return { x: r(b0().pos.x, 100), z: r(b0().pos.z, 100), heave: r(b0().pos.y), pitch: r(b0().rotX), roll: r(b0().rotZ), heading: r(b0().heading), course: r(b0().course), speed: r(b0().speed), power: r(b0().power, 100), crew: { x: r(hero.crew.x), z: r(hero.crew.z) }, reach: r(hero.reach), shortBy: hero.shortBy.map((v) => r(v, 1000)), depth: r(WATER_LEVEL - terrainHeight(b0().pos.x, b0().pos.z), 100) };
         },
         /**
          * Runs the world `seconds` (1/30 s steps, without drawing) and measures how the hero hull meets the
@@ -1978,13 +1982,14 @@ async function main(hud: Hud): Promise<void> {
           clock.playing = true;
         },
         /** The environment as shown now: the turning year and moon, the crops, the river, the weather, the session, and the sun against the view. */
-        /** The cinematic morning as chosen (rig/cinematic.ts): its day, dawn, lit stage and moon, and the best days as weighed, term by term. */
+        /** The cinematic morning as chosen (rig/cinematic.ts): its day, dawn, lit stage, the opening's end and moon, and the best days as weighed, term by term. */
         cinematic() {
           const r = (v: number) => Math.round(v * 100) / 100;
           return {
             day: plan.day,
             dawn: r(plan.dawn),
             lit: r(plan.lit),
+            morning: r(plan.morning),
             moon: r(plan.moon),
             ranked: plan.ranked.map((w) => ({ day: w.day, score: r(w.score), ...Object.fromEntries(Object.entries(w.terms).map(([k, v]) => [k, r(v)])) })),
           };
@@ -2022,6 +2027,11 @@ async function main(hud: Hud): Promise<void> {
     });
   }
 }
+
+// the visit counted (Vercel Web Analytics) before the world is built, so a visit that leaves during the load or
+// whose device cannot draw it still counts. On Vercel it loads /_vercel/insights/script.js; in dev, Vercel's debug
+// script, which only logs
+inject();
 
 const hud = new Hud();
 main(hud).catch((err: unknown) => {

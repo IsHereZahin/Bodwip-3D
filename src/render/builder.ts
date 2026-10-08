@@ -176,3 +176,40 @@ export function card(
   const i3 = b.vertex(p.copy(o).sub(right).add(up), normal, 0, 1, color);
   b.quad(i0, i1, i2, i3);
 }
+
+/**
+ * The tops of a crown made only of `card`s (four corners each, in order): in each `cell` m square seen from above,
+ * the middle of its highest card, kept where that is in the crown's top `upper` share of its height and no
+ * square beside it rises more than a square's width over it (on the crown's top, not its steep side). A card's
+ * middle is in its leaves, where a bird sits on the crown; its corners are mostly air.
+ */
+export function crownTops(leaves: BufferGeometry, cell = 1, upper = 0.4): Vector3[] {
+  const pos = leaves.getAttribute('position');
+  const key = (i: number, j: number) => (i + 4096) * 8192 + j + 4096;
+  const best = new Map<number, { p: Vector3; i: number; j: number }>();
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let q = 0; q + 3 < pos.count; q += 4) {
+    const x = (pos.getX(q) + pos.getX(q + 1) + pos.getX(q + 2) + pos.getX(q + 3)) / 4;
+    const y = (pos.getY(q) + pos.getY(q + 1) + pos.getY(q + 2) + pos.getY(q + 3)) / 4;
+    const z = (pos.getZ(q) + pos.getZ(q + 1) + pos.getZ(q + 2) + pos.getZ(q + 3)) / 4;
+    lo = Math.min(lo, y);
+    hi = Math.max(hi, y);
+    const i = Math.floor(x / cell);
+    const j = Math.floor(z / cell);
+    const was = best.get(key(i, j));
+    if (!was) best.set(key(i, j), { p: new Vector3(x, y, z), i, j });
+    else if (y > was.p.y) was.p.set(x, y, z);
+  }
+  const floor = hi - (hi - lo) * upper;
+  const tops: Vector3[] = [];
+  for (const { p, i, j } of best.values()) {
+    if (p.y < floor) continue;
+    let open = true;
+    for (let di = -1; di <= 1 && open; di++) {
+      for (let dj = -1; dj <= 1 && open; dj++) open = (best.get(key(i + di, j + dj))?.p.y ?? -Infinity) - p.y <= cell;
+    }
+    if (open) tops.push(p);
+  }
+  return tops;
+}

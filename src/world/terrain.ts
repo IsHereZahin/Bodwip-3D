@@ -182,10 +182,8 @@ export function meshGround(x: number, z: number): number {
   const tx = fx - i;
   const tz = fz - j;
   const at = (a: number, b: number) => terrainHeight(root.x0 + a * step, root.z0 + b * step);
-  const h00 = at(i, j);
-  const h01 = at(i, j + 1);
-  const a = h00 + (at(i + 1, j) - h00) * tx;
-  const b = h01 + (at(i + 1, j + 1) - h01) * tx;
+  const a = at(i, j) + (at(i + 1, j) - at(i, j)) * tx;
+  const b = at(i, j + 1) + (at(i + 1, j + 1) - at(i, j + 1)) * tx;
   return a + (b - a) * tz;
 }
 
@@ -231,10 +229,6 @@ export function groundLattice(x0: number, z0: number, size: number, step: number
 
 /** Quads along a patch's side. */
 const N = 64;
-/** A patch's heights per side (one sample of border round its vertices, for the normals), its vertices, and its skirt's. */
-const S = N + 3;
-const V = (N + 1) * (N + 1);
-const SKIRT = 4 * (N + 1);
 /** The smallest patch (m): ≈2 m between vertices. */
 const LEAF = 128;
 const ROOT = rootSquare();
@@ -252,71 +246,34 @@ interface Node {
   size: number;
 }
 
-/**
- * One patch's geometry: a 64 × 64 grid of the ground plus a skirt round it, normals from a ring of neighbours.
- * Built a row at a time (`next`: a row of heights, then a row of vertices), so a frame can stop between rows and go
- * on in the next: a whole patch is 10-20 ms of work here, and several times that on a phone. (A plain object, not a
- * generator: the engine left a generator's loops unoptimized, and the load's ground took twice as long.)
- */
-class PatchRows {
-  private readonly step: number;
-  private readonly x0: number;
-  private readonly z0: number;
-  /** Heights with a one-sample border for the normals: S × S. */
-  private readonly hs: Float32Array;
-  private readonly pos: Float32Array;
-  private readonly nrm: Float32Array;
-  private readonly col: Float32Array;
-  private readonly zone: Float32Array;
-  private readonly splat: Float32Array;
-  private readonly pool: Float32Array;
-  private readonly covers: Cover[] = [];
-  private readonly normals: [number, number, number][] = [];
-  private readonly holding: number[] = [];
-  /** Rows done: first the heights' S, then the vertices' N + 1. */
-  private row = 0;
-
-  constructor(n: Node) {
-    this.step = n.size / N;
-    this.x0 = n.x - n.size / 2;
-    this.z0 = n.z - n.size / 2;
-    this.hs = new Float32Array(S * S);
-    const all = V + SKIRT;
-    this.pos = new Float32Array(all * 3);
-    this.nrm = new Float32Array(all * 3);
-    this.col = new Float32Array(all * 3);
-    this.zone = new Float32Array(all);
-    this.splat = new Float32Array(all * 4);
-    this.pool = new Float32Array(all);
-  }
-
-  /** Builds the next row: the geometry once the last is done, else null. */
-  next(): BufferGeometry | null {
-    if (this.row < S) {
-      this.heights(this.row++);
-      return null;
-    }
-    const j = this.row++ - S;
-    this.vertices(j);
-    return j === N ? this.finish() : null;
-  }
-
-  private heights(j: number): void {
-    const { hs, step, x0, z0 } = this;
-    for (let i = 0; i < S; i++) hs[j * S + i] = terrainHeight(x0 + (i - 1) * step, z0 + (j - 1) * step);
-  }
-
-  private write(k: number, x: number, y: number, z: number, nx: number, ny: number, nz: number, c: Cover, holds: number): void {
-    this.pos.set([x, y, z], k * 3);
-    this.nrm.set([nx, ny, nz], k * 3);
-    this.col.set(c.color, k * 3);
-    this.zone[k] = c.zone;
-    this.splat.set([c.grass, c.dirt, c.sand, c.pebbles], k * 4);
-    this.pool[k] = holds;
-  }
-
-  private vertices(j: number): void {
-    const { hs, step, x0, z0 } = this;
+/** One patch's geometry: a 64 × 64 grid of the ground plus a skirt round it, normals from a ring of neighbours. */
+function patchGeometry(n: Node): BufferGeometry {
+  const step = n.size / N;
+  const x0 = n.x - n.size / 2;
+  const z0 = n.z - n.size / 2;
+  const S = N + 3; // heights with a one-sample border for the normals
+  const hs = new Float32Array(S * S);
+  for (let j = 0; j < S; j++) for (let i = 0; i < S; i++) hs[j * S + i] = terrainHeight(x0 + (i - 1) * step, z0 + (j - 1) * step);
+  const V = (N + 1) * (N + 1);
+  const skirt = 4 * (N + 1);
+  const pos = new Float32Array((V + skirt) * 3);
+  const nrm = new Float32Array((V + skirt) * 3);
+  const col = new Float32Array((V + skirt) * 3);
+  const zone = new Float32Array(V + skirt);
+  const splat = new Float32Array((V + skirt) * 4);
+  const pool = new Float32Array(V + skirt);
+  const write = (k: number, x: number, y: number, z: number, nx: number, ny: number, nz: number, c: Cover, holds: number) => {
+    pos.set([x, y, z], k * 3);
+    nrm.set([nx, ny, nz], k * 3);
+    col.set(c.color, k * 3);
+    zone[k] = c.zone;
+    splat.set([c.grass, c.dirt, c.sand, c.pebbles], k * 4);
+    pool[k] = holds;
+  };
+  const covers: Cover[] = [];
+  const normals: [number, number, number][] = [];
+  const holding: number[] = [];
+  for (let j = 0; j <= N; j++) {
     for (let i = 0; i <= N; i++) {
       const x = x0 + i * step;
       const z = z0 + j * step;
@@ -326,91 +283,80 @@ class PatchRows {
       const dz = (hs[(j + 2) * S + i + 1] - hs[j * S + i + 1]) / (2 * step);
       const l = Math.hypot(dx, 1, dz);
       const c = cover(x, z, h);
-      this.covers.push(c);
-      this.normals.push([-dx / l, 1 / l, -dz / l]);
+      covers.push(c);
+      normals.push([-dx / l, 1 / l, -dz / l]);
       // how readily rain stands here: on trodden earth and swept yards (packed hard), in a hollow below its
       // neighbours, never on a slope it runs off; the paddy holds its own water (the plots' in render/patch.ts)
       const hollow = (hs[(j + 1) * S + i] + hs[(j + 1) * S + i + 2] + hs[j * S + i + 1] + hs[(j + 2) * S + i + 1]) / 4 - h;
       const holds = Math.min(1, c.bare * 0.7 + Math.max(0, hollow) * 5) * (1 - smoothstep(0.04, 0.16, Math.hypot(dx, dz))) * (c.zone > 0 ? 0.3 : 1);
-      this.holding.push(holds);
-      this.write(j * (N + 1) + i, x, h, z, -dx / l, 1 / l, -dz / l, c, holds);
+      holding.push(holds);
+      write(j * (N + 1) + i, x, h, z, -dx / l, 1 / l, -dz / l, c, holds);
     }
   }
-
-  private finish(): BufferGeometry {
-    const { pos, normals, covers, holding } = this;
-    // the skirt: each edge vertex again, hung below so a coarser neighbour's edge cannot show a gap
-    const drop = this.step * 2 + 1;
-    const edge: number[] = [];
-    for (let i = 0; i <= N; i++) edge.push(i);
-    for (let j = 0; j <= N; j++) edge.push(j * (N + 1) + N);
-    for (let i = N; i >= 0; i--) edge.push(N * (N + 1) + i);
-    for (let j = N; j >= 0; j--) edge.push(j * (N + 1));
-    edge.forEach((v, k) => {
-      const n3 = normals[v];
-      this.write(V + k, pos[v * 3], pos[v * 3 + 1] - drop, pos[v * 3 + 2], n3[0], n3[1], n3[2], covers[v], holding[v]);
-    });
-    const idx = new Uint32Array(N * N * 6 + edge.length * 6);
-    let q = 0;
-    for (let j = 0; j < N; j++) {
-      for (let i = 0; i < N; i++) {
-        const a = j * (N + 1) + i;
-        const b = a + 1;
-        const d = a + N + 1;
-        const e = d + 1;
-        idx[q++] = a;
-        idx[q++] = d;
-        idx[q++] = b;
-        idx[q++] = b;
-        idx[q++] = d;
-        idx[q++] = e;
-      }
-    }
-    for (let k = 0; k + 1 < edge.length; k++) {
-      const a = edge[k];
-      const b = edge[k + 1];
-      const sa = V + k;
-      const sb = V + k + 1;
-      // wound to face outward (the edge runs round the patch anticlockwise seen from above): a gap shows
-      // from outside the patch, where the neighbour is
+  // the skirt: each edge vertex again, hung below so a coarser neighbour's edge cannot show a gap
+  const drop = step * 2 + 1;
+  const edge: number[] = [];
+  for (let i = 0; i <= N; i++) edge.push(i);
+  for (let j = 0; j <= N; j++) edge.push(j * (N + 1) + N);
+  for (let i = N; i >= 0; i--) edge.push(N * (N + 1) + i);
+  for (let j = N; j >= 0; j--) edge.push(j * (N + 1));
+  edge.forEach((v, k) => {
+    const n3 = normals[v];
+    write(V + k, pos[v * 3], pos[v * 3 + 1] - drop, pos[v * 3 + 2], n3[0], n3[1], n3[2], covers[v], holding[v]);
+  });
+  const idx = new Uint32Array(N * N * 6 + edge.length * 6);
+  let q = 0;
+  for (let j = 0; j < N; j++) {
+    for (let i = 0; i < N; i++) {
+      const a = j * (N + 1) + i;
+      const b = a + 1;
+      const d = a + N + 1;
+      const e = d + 1;
       idx[q++] = a;
+      idx[q++] = d;
       idx[q++] = b;
-      idx[q++] = sa;
       idx[q++] = b;
-      idx[q++] = sb;
-      idx[q++] = sa;
+      idx[q++] = d;
+      idx[q++] = e;
     }
-    const g = new BufferGeometry();
-    g.setAttribute('position', new BufferAttribute(pos, 3));
-    g.setAttribute('normal', new BufferAttribute(this.nrm, 3));
-    g.setAttribute('color', new BufferAttribute(this.col, 3));
-    g.setAttribute('aZone', new BufferAttribute(this.zone, 1));
-    g.setAttribute('aSplat', new BufferAttribute(this.splat, 4));
-    g.setAttribute('aPool', new BufferAttribute(this.pool, 1));
-    g.setIndex(new BufferAttribute(idx.subarray(0, q), 1));
-    g.computeBoundingSphere();
-    return g;
   }
+  for (let k = 0; k + 1 < edge.length; k++) {
+    const a = edge[k];
+    const b = edge[k + 1];
+    const sa = V + k;
+    const sb = V + k + 1;
+    // wound to face outward (the edge runs round the patch anticlockwise seen from above): a gap shows
+    // from outside the patch, where the neighbour is
+    idx[q++] = a;
+    idx[q++] = b;
+    idx[q++] = sa;
+    idx[q++] = b;
+    idx[q++] = sb;
+    idx[q++] = sa;
+  }
+  const g = new BufferGeometry();
+  g.setAttribute('position', new BufferAttribute(pos, 3));
+  g.setAttribute('normal', new BufferAttribute(nrm, 3));
+  g.setAttribute('color', new BufferAttribute(col, 3));
+  g.setAttribute('aZone', new BufferAttribute(zone, 1));
+  g.setAttribute('aSplat', new BufferAttribute(splat, 4));
+  g.setAttribute('aPool', new BufferAttribute(pool, 1));
+  g.setIndex(new BufferAttribute(idx.subarray(0, q), 1));
+  g.computeBoundingSphere();
+  return g;
 }
-
-/** Frames a patch begun but no longer asked for is kept half-built before it is let go. */
-const ABANDON = 120;
 
 export class Terrain {
   readonly group = new Group();
   private readonly material: MeshStandardMaterial;
   private readonly built = new Map<string, Mesh>();
   private readonly lastUsed = new Map<string, number>();
-  /** Patches being built a few rows a frame, and the frame each was last asked for. */
-  private readonly building = new Map<string, { rows: PatchRows; asked: number }>();
   private frame = 0;
   private readonly root: Node;
 
   /** `ground`: the photo layers; without them the terrain keeps its painted colours. */
   constructor(ground: GroundSet | null) {
     this.group.name = 'terrain';
-    // it and its patches lie where their vertices say: their matrices are never remade
-    this.group.matrixAutoUpdate = false;
     this.material = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.94, metalness: 0 }), {
       terrain: true,
       splat: ground ?? undefined,
@@ -423,11 +369,11 @@ export class Terrain {
     this.frame++;
     const want: Node[] = [];
     this.select(this.root, eye, want);
-    const until = all ? Infinity : performance.now() + BUDGET_MS;
+    const start = performance.now();
     const show = new Set<Mesh>();
     for (const n of want) {
       let mesh = this.built.get(n.key);
-      if (!mesh && performance.now() < until) mesh = this.advance(n, until);
+      if (!mesh && (all || performance.now() - start < BUDGET_MS)) mesh = this.build(n);
       if (mesh) {
         show.add(mesh);
         this.lastUsed.set(n.key, this.frame);
@@ -442,13 +388,12 @@ export class Terrain {
           break;
         }
         if (key === '') {
-          show.add(this.advance(this.root, Infinity) as Mesh);
+          show.add(this.build(this.root));
           break;
         }
       }
     }
     for (const mesh of this.built.values()) mesh.visible = show.has(mesh);
-    for (const [key, job] of this.building) if (this.frame - job.asked > ABANDON) this.building.delete(key);
     this.evict();
   }
 
@@ -462,9 +407,7 @@ export class Terrain {
     for (const n of want) {
       if (!this.built.has(n.key)) {
         if (performance.now() > until) return false;
-        const mesh = this.advance(n, until);
-        if (!mesh) return false;
-        mesh.visible = false;
+        this.build(n).visible = false;
       }
       this.lastUsed.set(n.key, this.frame);
     }
@@ -491,28 +434,13 @@ export class Terrain {
     }
   }
 
-  /**
-   * Builds more of `n`'s patch, row by row, until `until` (performance.now(); at least a row); its mesh once it is
-   * done, else undefined (it goes on from there the next time it is asked for).
-   */
-  private advance(n: Node, until: number): Mesh | undefined {
-    let job = this.building.get(n.key);
-    if (!job) this.building.set(n.key, (job = { rows: new PatchRows(n), asked: this.frame }));
-    job.asked = this.frame;
-    do {
-      const geometry = job.rows.next();
-      if (geometry) {
-        this.building.delete(n.key);
-        const mesh = new Mesh(geometry, this.material);
-        mesh.receiveShadow = true;
-        mesh.name = 'terrain';
-        mesh.matrixAutoUpdate = false;
-        this.built.set(n.key, mesh);
-        this.group.add(mesh);
-        return mesh;
-      }
-    } while (performance.now() < until);
-    return undefined;
+  private build(n: Node): Mesh {
+    const mesh = new Mesh(patchGeometry(n), this.material);
+    mesh.receiveShadow = true;
+    mesh.name = 'terrain';
+    this.built.set(n.key, mesh);
+    this.group.add(mesh);
+    return mesh;
   }
 
   /** Drops the patches unused longest once more than KEEP are built. */

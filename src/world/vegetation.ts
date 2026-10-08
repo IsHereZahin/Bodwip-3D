@@ -4,10 +4,10 @@ import { LAYER_NO_REFLECT } from '../core/globals';
 import { smoothstep } from '../core/mathx';
 import { fbm } from '../core/noise';
 import { Rng } from '../core/rng';
-import { MeshBuilder, card, rgb, scaleRgb, taperedTube, type RGB } from '../render/builder';
+import { MeshBuilder, card, crownTops, rgb, scaleRgb, taperedTube, type RGB } from '../render/builder';
 import { instanced, type Placement } from '../render/instancing';
 import { CORRIDOR } from '../render/glsl';
-import { patchMaterial } from '../render/patch';
+import { patchMaterial, swayOf, type Sway } from '../render/patch';
 import type { Surfaces } from '../render/surfaces';
 import {
   bananaLeafTexture,
@@ -20,6 +20,7 @@ import {
 } from '../render/textures';
 import {
   BIL,
+  CREEK_GATE,
   HOMESTEAD_MOUNDS,
   MOUNDS,
   PONDS,
@@ -41,12 +42,14 @@ import {
   pondReach,
   routeGap,
   SALT_CREEK,
+  SALT_WATERS,
   shapePoint,
   terrainHeight,
   waterLevelAt,
   type Mound,
 } from './geography';
-import { BANYAN, FAR_GROVES, GRAVE_BANYAN, HILLS, WORLD } from './plan';
+import { GRAVEYARD_BANYAN, HUB_BANYAN, banyanPerch } from './banyan';
+import { FAR_GROVES, HILLS, KASHBON, WORLD } from './plan';
 import { roadLines } from './roads';
 import { nearStone } from './stones';
 import { KHAL, SIDE_KHAL, journeyDistance, type Waterway } from './waterways';
@@ -516,6 +519,8 @@ function kashTuft(rng: Rng): BufferGeometry {
 
 /** Kash stands only this far above the water (m): where the bank stays dry. */
 const KASH_ABOVE = 0.4;
+/** How much of its old kashbon the char keeps, as a scatter (the kashbon stands on the khal: plan.ts `KASHBON`). */
+const CHAR_KASH = 0.2;
 
 /** Whether the bank on `side` of a khal `s` m along it is in one of the stretches kash grows along. */
 function kashStretch(way: Waterway, s: number, side: 1 | -1): boolean {
@@ -534,6 +539,15 @@ export interface Crown {
   blossom: boolean;
   /** Which tree it is. */
   kind: 'mango' | 'rain' | 'akashmoni' | 'garjan' | 'far' | 'banyan';
+  perch: CrownPerch;
+}
+
+/** Where a small bird sits on a tree's crown (world/songbirds.ts): on the tops of its leaves, swaying as they do. */
+export interface CrownPerch extends Sway {
+  /** The tree as it is placed: its foot (its root, for the wind), its turn and its size. */
+  place: Placement;
+  /** The tops of its crown's leaves in its own frame (as its leaves' `position`), shared by the trees of its shape. */
+  tops: readonly Vector3[];
 }
 
 /** The trees' own wood and leaves, kept for `crownDetail` (set when the vegetation is built). */
@@ -898,14 +912,22 @@ export function buildVegetation(
     [B.tal, { h: 13, r: 3 }],
     [B.bamboo, { h: 12, r: 3.2 }],
   ]);
+  // the tops of each broadleaf shape's crown, for the birds to sit on
+  const topsOf = new Map<Bucket, Vector3[][]>();
   const put = (b: Bucket, p: Placement) => {
     // out where the land fades away the trees thin out and stop (each one its own chance, so no line shows)
     const out = corridorDistance(p.x, p.z);
     if (out > CORRIDOR.trees[0] && rng.next() < smoothstep(CORRIDOR.trees[0], CORRIDOR.trees[1], out)) return;
-    b.items[rng.int(0, b.items.length - 1)].push(p);
+    const shape = rng.int(0, b.items.length - 1);
+    b.items[shape].push(p);
     const c = crownOf.get(b);
-    // these take the spring's red flower where the shader gives it (`seasonal: 'tree'`); the hills' garjan does not
-    if (c) CROWNS.push({ x: p.x, y: p.y + c.y * p.s, z: p.z, r: c.r * p.s, blossom: b !== B.garjan, kind: c.kind });
+    if (c) {
+      let tops = topsOf.get(b);
+      if (!tops) topsOf.set(b, (tops = b.parts.map((parts) => crownTops(parts.leaves))));
+      const perch = { place: p, tops: tops[shape], ...swayOf(b.leaves) };
+      // these take the spring's red flower where the shader gives it (`seasonal: 'tree'`); the hills' garjan does not
+      CROWNS.push({ x: p.x, y: p.y + c.y * p.s, z: p.z, r: c.r * p.s, blossom: b !== B.garjan, kind: c.kind, perch });
+    }
     const st = stemOf.get(b);
     if (st) STEMS.push({ x: p.x, z: p.z, top: p.y + st.h * p.s, r: st.r * p.s });
   };
@@ -1030,8 +1052,8 @@ export function buildVegetation(
   // the old trees along the river's and the khals' banks, on the levee's top: a rain tree, a mango, a palm
   // leaning out over the water; thicker where the homesteads are, few along the fields, none on the char
   for (const way of WATERWAYS) {
-    // (the salt creek has its own: golpata in the tide's mud)
-    if (way === SALT_CREEK) continue;
+    // (the salt creek has its own: golpata in the tide's mud; its feeders are dug through the fields)
+    if (SALT_WATERS.includes(way)) continue;
     const step = way === SIDE_KHAL ? 26 : 16;
     for (let s = 0; s < way.length; s += step * rng.range(0.7, 1.3)) {
       for (const side of [-1, 1] as const) {
@@ -1193,9 +1215,9 @@ export function buildVegetation(
   }
 
   // golpata along the salt creek, in clumps in the tide's mud just above the water, thick near the salt field
-  // and on toward the coast
+  // and on toward the coast, none at its sluice gate or past it to the river
   for (const side of [-1, 1] as const) {
-    for (let s = rng.range(2, 6); s < SALT_CREEK.length - 8; s += rng.range(3, 9)) {
+    for (let s = rng.range(2, 6); s < CREEK_GATE.s - 12; s += rng.range(3, 9)) {
       const c = SALT_CREEK.beside(s, side, SALT_CREEK.half(s) + rng.range(0.4, 4));
       for (let k = 0; k < rng.int(1, 4); k++) {
         const x = c.x + (k ? rng.range(-2.5, 2.5) : 0);
@@ -1228,9 +1250,9 @@ export function buildVegetation(
     });
   }
 
-  // kash: thick over the river's sandy char on the inside of its bend, and in stretches along the khals'
-  // open banks where they stay dry (not below the homesteads' trees, on the ways or at the crossings); the
-  // season keeps its plumes to the autumn
+  // kash: the kashbon thick on the khal's bank below the old bridge, scattered over the river's sandy char, and in
+  // stretches along the khals' open banks where they stay dry (not below the homesteads' trees, on the ways or at
+  // the crossings); the season keeps its plumes to the autumn
   const kashItems: Placement[][] = kash.map(() => []);
   const tuftAt = (x: number, z: number) => {
     const h = terrainHeight(x, z);
@@ -1238,7 +1260,8 @@ export function buildVegetation(
     if (h < WATER_LEVEL + (charShare(x, z) > 0.5 ? 0.12 : KASH_ABOVE) || !onDryLand(x, z, 0) || !occ.free(x, z, 0.5)) return;
     kashItems[rng.int(0, kash.length - 1)].push({ x, y: h - 0.05, z, ry: rng.range(0, Math.PI * 2), s: rng.range(0.75, 1.1) });
   };
-  // on the char a kashbon: drifts of it standing thick, with open sand and grass between
+  // on the char a scatter of it in its drifts, with open sand and grass between (the kashbon is the khal's: the boat
+  // passes the char in summer on the cinematic way, when the kash has no plumes)
   const charGrass: { x: number; z: number }[] = [];
   for (let k = 0; k < 26000; k++) {
     const x = rng.range(-640, -270);
@@ -1246,8 +1269,18 @@ export function buildVegetation(
     const c = charShare(x, z);
     if (c < 0.15) continue;
     const drift = smoothstep(0.36, 0.6, fbm(x * 0.025, z * 0.025, 2, 63));
-    if (rng.next() < c * (0.12 + 0.88 * drift)) tuftAt(x, z);
+    if (rng.next() < CHAR_KASH * c * (0.12 + 0.88 * drift)) tuftAt(x, z);
     else if (rng.next() < 0.35 * c) charGrass.push({ x, z });
+  }
+  // the kashbon (plan.ts KASHBON): drifts of it standing thick from near the water's edge back over the bank, thinning
+  // out at its ends
+  const { from, to, side: kashSide, reach } = KASHBON;
+  for (let k = 0; k < 1700; k++) {
+    const s = rng.range(from, to);
+    const p = KHAL.beside(s, kashSide, KHAL.half(s) + rng.range(2.5, reach));
+    const ends = smoothstep(from, from + 22, s) * smoothstep(to, to - 16, s);
+    const drift = smoothstep(0.3, 0.55, fbm(p.x * 0.03, p.z * 0.03, 2, 64));
+    if (rng.next() < ends * (0.3 + 0.7 * drift)) tuftAt(p.x, p.z);
   }
   for (const way of [KHAL, SIDE_KHAL]) {
     for (const side of [-1, 1] as const) {
@@ -1274,7 +1307,7 @@ export function buildVegetation(
   // grass tufts along the waters' banks: thickest along the lip of the bank, where it shows from the boat
   const grassItems: Placement[][] = grass.map(() => []);
   for (const way of WATERWAYS) {
-    if (way === SALT_CREEK) continue;
+    if (SALT_WATERS.includes(way)) continue;
     for (const side of [-1, 1] as const) {
       for (let s = 0; s < way.length; s += 1.3) {
         const p0 = way.at(s);
@@ -1295,9 +1328,13 @@ export function buildVegetation(
     (g, i) => grassItems[i].length && group.add(instanced(g, mats.grass, grassItems[i], { layer: LAYER_NO_REFLECT, receive: true })),
   );
 
-  // the banyan's crown too (world/banyan.ts builds it)
-  CROWNS.push({ x: BANYAN.x, y: terrainHeight(BANYAN.x, BANYAN.z) + 11, z: BANYAN.z, r: BANYAN.crown, blossom: false, kind: 'banyan' });
-  CROWNS.push({ x: GRAVE_BANYAN.x, y: terrainHeight(GRAVE_BANYAN.x, GRAVE_BANYAN.z) + 10, z: GRAVE_BANYAN.z, r: GRAVE_BANYAN.crown, blossom: false, kind: 'banyan' });
+  // the banyans' crowns too (world/banyan.ts builds them, before the vegetation)
+  for (const [spec, middle] of [
+    [HUB_BANYAN, 11],
+    [GRAVEYARD_BANYAN, 10],
+  ] as const) {
+    CROWNS.push({ x: spec.x, y: terrainHeight(spec.x, spec.z) + middle, z: spec.z, r: spec.crown, blossom: false, kind: 'banyan', perch: banyanPerch(spec) });
+  }
 
   return group;
 }

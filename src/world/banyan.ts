@@ -1,11 +1,12 @@
 import { DoubleSide, Group, Mesh, MeshStandardMaterial, Vector2, Vector3 } from 'three';
 import { Rng } from '../core/rng';
-import { MeshBuilder, card, mixRgb, rgb, scaleRgb, slab, taperedTube, type RGB } from '../render/builder';
-import { patchMaterial } from '../render/patch';
+import { MeshBuilder, card, crownTops, mixRgb, rgb, scaleRgb, slab, taperedTube, type RGB } from '../render/builder';
+import { patchMaterial, swayOf } from '../render/patch';
 import type { Surfaces } from '../render/surfaces';
 import { leafClusterTexture, plasterTexture } from '../render/textures';
 import { terrainHeight } from './geography';
 import { BANYAN, GRAVE_BANYAN } from './plan';
+import type { CrownPerch } from './vegetation';
 
 // The old banyan (বটগাছ) at the corner of the river and the khal, the village's meeting place: a trunk grown
 // from many fused stems, great limbs spreading level far out over the ground and the water, roots let down
@@ -27,6 +28,15 @@ export interface BanyanSpec {
 export const HUB_BANYAN: BanyanSpec = { ...BANYAN, seed: 404, platform: true };
 export const GRAVEYARD_BANYAN: BanyanSpec = { ...GRAVE_BANYAN, seed: 431, platform: false };
 const BARK: RGB = rgb('#8a8072');
+
+/** Where a bird sits on each banyan's crown, kept as it is built. */
+const PERCHES = new Map<BanyanSpec, CrownPerch>();
+/** Where a bird sits on this banyan's crown (vegetation.ts `treeCrowns`): known once `buildBanyan` has built it. */
+export function banyanPerch(spec: BanyanSpec): CrownPerch {
+  const perch = PERCHES.get(spec);
+  if (!perch) throw new Error('banyanPerch: the banyan is built before the vegetation (main.ts)');
+  return perch;
+}
 
 /** Points along a gently curving limb from `a` to `b`, sagging `sag` m in its middle. */
 function limb(a: Vector3, b: Vector3, sag: number, n = 6): Vector3[] {
@@ -167,18 +177,20 @@ export function buildBanyan(bark: Surfaces['bark'], spec: BanyanSpec = HUB_BANYA
   );
   const plasterSet = plasterTexture(406, { fallen: false });
   const stoneMat = patchMaterial(new MeshStandardMaterial({ map: plasterSet.map, normalMap: plasterSet.normal, vertexColors: true, roughness: 0.92 }), { grime: 0.45 });
-  for (const [b, m] of [
-    [wood, woodMat],
-    [leaves, leafMat],
-    [stone, stoneMat],
+  const foliage = leaves.build();
+  for (const [g, m] of [
+    [wood.build(), woodMat],
+    [foliage, leafMat],
+    [stone.build(), stoneMat],
   ] as const) {
-    const mesh = new Mesh(b.build(), m);
+    const mesh = new Mesh(g, m);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     group.add(mesh);
   }
   group.position.set(X, Y, Z);
   group.updateMatrixWorld(true);
+  PERCHES.set(spec, { place: { x: X, y: Y, z: Z, ry: 0, s: 1 }, tops: crownTops(foliage), ...swayOf(leafMat) });
   return group;
 }
 

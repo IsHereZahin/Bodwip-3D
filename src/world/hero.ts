@@ -61,6 +61,8 @@ const CROSS_HOLD = 0.068;
 const SHAFT_TOP = 0.028;
 const SHAFT_THROAT = 0.032;
 const LOWER_HOLD = 0.5;
+/** The paddle's bamboo: how far apart its nodes are (m). */
+const BAMBOO_NODE = 0.34;
 const LOWER_HOLD_RADIUS = SHAFT_TOP + ((SHAFT_THROAT - SHAFT_TOP) * LOWER_HOLD) / (PADDLE_REACH - BLADE_LENGTH / 2);
 /** Middle of the boatman's feet on the stern platform: toward the side he paddles on (+x). */
 const STANCE = new Vector3(0.24, 0.33, -2.95);
@@ -329,8 +331,6 @@ function sackGeometry(): BufferGeometry {
 export class HeroBoat {
   readonly group = new Group();
   readonly lantern: PointLight;
-  /** Fired as the blade goes in at each stroke, with how hard he is pulling it (for the splash sound). */
-  onStroke: ((power: number) => void) | null = null;
   /** The paddle's blade (world); `bladeWet` how much of it is in the water (0..1), `bladeDrive` how hard it pulls (1 = the mean). */
   readonly blade = new Vector3();
   bladeWet = 0;
@@ -351,7 +351,6 @@ export class HeroBoat {
   private readonly force: PaddleForce = { thrust: 0, side: 0, x: 0, z: 0 };
   private readonly basis = new Matrix4();
   private wasWet = false;
-  private lastPhase = 0;
   private swingX = 0;
   private swingZ = 0;
   private vSwingX = 0;
@@ -435,7 +434,7 @@ export class HeroBoat {
     this.shadow.position.set(STANCE.x, 0.318, STANCE.z);
     g.add(this.shadow);
 
-    this.buildPaddle(wood);
+    this.buildPaddle();
     // the young majhi the film follows
     this.man = new Boatman(STANCE, [CROSS_RADIUS, LOWER_HOLD_RADIUS], TARUN_OUTFIT, 'tarun');
     g.add(this.man.group);
@@ -567,6 +566,11 @@ export class HeroBoat {
     return this.man.stretch;
   }
 
+  /** How far each of his wrists (left, right) fell short of its hold on the paddle this frame, m (debug: his hand off his arm). */
+  get shortBy(): readonly [number, number] {
+    return this.man.shortBy;
+  }
+
   private addCargo(cz0: number): void {
     const g = this.group;
     const jute = weaveTexture(54);
@@ -664,13 +668,23 @@ export class HeroBoat {
     return light;
   }
 
-  /** The বৈঠা: a T-grip, a long round shaft and a leaf-shaped blade. Built with the grip at its origin and the shaft down −y. */
-  private buildPaddle(wood: MeshStandardMaterial): void {
+  /**
+   * The বৈঠা: a wooden T-grip, a long shaft of bamboo with its nodes, and a leaf-shaped wooden blade lashed to it.
+   * The bamboo is pale and smooth, so the shaft and his hands on it read clear against the water (as the user's
+   * reference boatman's pole does, 2026-10-08; it had been the hull's dark planks). Built with the grip at its origin
+   * and the shaft down −y.
+   */
+  private buildPaddle(): void {
     const b = new MeshBuilder();
     const throat = PADDLE_REACH - BLADE_LENGTH / 2;
     // the cross-grip along x, darkened by his hand
     b.add(new CylinderGeometry(CROSS_RADIUS, CROSS_RADIUS, CROSS_HALF * 2, 8), new Matrix4().makeRotationZ(Math.PI / 2), rgb('#6e5c44'));
-    b.add(new CylinderGeometry(SHAFT_TOP, SHAFT_THROAT, throat, 10), new Matrix4().makeTranslation(0, -throat / 2, 0), rgb('#9a8466'));
+    b.add(new CylinderGeometry(SHAFT_TOP, SHAFT_THROAT, throat, 10), new Matrix4().makeTranslation(0, -throat / 2, 0), rgb('#c6ae76'));
+    // the bamboo's nodes: a slightly raised, darker ring every internode
+    for (let y = BAMBOO_NODE * 0.65; y < throat - 0.08; y += BAMBOO_NODE) {
+      const r = SHAFT_TOP + ((SHAFT_THROAT - SHAFT_TOP) * y) / throat + 0.003;
+      b.add(new CylinderGeometry(r, r, 0.014, 10), new Matrix4().makeTranslation(0, -y, 0), rgb('#9c844e'));
+    }
     // the blade: a long leaf, widest past its middle and rounded at the tip, its edges thinned, darker where it stays wet
     const top = b.vertexCount;
     const steps = 12;
@@ -679,7 +693,7 @@ export class HeroBoat {
       const y = -throat - t * BLADE_LENGTH;
       const w = 0.112 * Math.pow(Math.sin(Math.PI * Math.min(1, 0.12 + t * 0.92)), 0.55) + 0.016;
       const th = 0.016 - 0.008 * t;
-      const tint = rgb('#a89070', 1 - 0.3 * t);
+      const tint = rgb('#8c6c48', 1 - 0.3 * t);
       for (const [x, z] of [
         [-w, 0],
         [0, th],
@@ -702,7 +716,9 @@ export class HeroBoat {
       new Matrix4().makeTranslation(0, -throat + 0.04, 0).multiply(new Matrix4().makeRotationX(Math.PI / 2)),
       rgb('#8e7a52'),
     );
-    this.paddle.add(new Mesh(b.build(), wood));
+    // (its own: the hull's plank texture had darkened a thin shaft to a dark streak; the bamboo's skin is glossy)
+    const look = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.5, side: DoubleSide }), { grime: 0.15 });
+    this.paddle.add(new Mesh(b.build(), look));
     this.group.add(this.paddle);
   }
 
@@ -719,8 +735,6 @@ export class HeroBoat {
   /** Sets the boat where `body` has her, works the paddle, poses the boatman, swings the lantern. */
   update(dt: number, t: number, lamp: number, body: BoatBody): void {
     const phase = strokePhase(body.strokeTime);
-    if (phase < this.lastPhase && this.onStroke) this.onStroke(body.power);
-    this.lastPhase = phase;
 
     const g = this.group;
     // her waterline on the water: she sits HERO_SINK deeper than her shape's zero

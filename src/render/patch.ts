@@ -28,16 +28,27 @@ export interface PatchOptions {
   /** Custom vertex displacement after `begin_vertex`; `key` names it in the program cache. */
   vertex?: { key: string; pars: string; code: string; uniforms?: Record<string, IUniform> };
   /**
-   * Instanced: an instance whose root's sphere of this radius (m, holding all of it as the wind sways it) lies
-   * wholly outside the view is dropped before any of its vertices' work (the grass and the crops lie all round the
-   * camera, most of them behind it).
-   */
-  cull?: number;
-  /**
    * How the season shows on it: 'leaf' greens up in the rains and dries and pales in the dry months;
    * 'tree' as a leaf, and in spring a share of trees burst into red flower; 'kash' plumes only in autumn.
    */
   seasonal?: 'leaf' | 'tree' | 'kash';
+  /**
+   * Sways with the plant it rests on (a bird on a crown), as that plant's leaves sway where it rests, per instance:
+   * `aSwayAt` its place in the plant's own frame (as the plant's `position`), `aSwayRoot` the plant's root (world),
+   * `aSway` the plant's `wind` (× how much of its sway it takes; 0 for none) and `windHeight` (`swayOf`).
+   */
+  swayWith?: boolean;
+}
+
+/** A plant's sway as `patchMaterial` gave it, for what rests on it to sway with (`swayWith`). */
+export interface Sway {
+  wind: number;
+  windHeight: number;
+}
+const SWAYS = new WeakMap<Material, Sway>();
+/** The sway `patchMaterial` gave `material` (none: it stands still). */
+export function swayOf(material: Material): Sway {
+  return SWAYS.get(material) ?? { wind: 0, windHeight: 1 };
 }
 
 /** Metres covered by one repeat of a ground texture. */
@@ -70,7 +81,14 @@ vAtmRoot = root;
 #endif
 #ifdef ATM_WIND
 {
-  float hk = clamp(position.y / ATM_WIND_H, 0.0, 1.6);
+  #ifdef ATM_SWAY_WITH
+  // what rests on a plant goes as the plant's leaves go where it rests (not by its own height in its own mesh)
+  vec3 swayAt = aSwayAt;
+  root = aSwayRoot;
+  #else
+  vec3 swayAt = position;
+  #endif
+  float hk = clamp(swayAt.y / ATM_WIND_H, 0.0, 1.6);
   hk *= hk;
   float t = uTime;
   // the one wind (env/wind.ts) as it reached this plant: the gust fronts rolling downwind, felt a moment
@@ -105,8 +123,8 @@ vAtmRoot = root;
   float aside = 0.16 * strong * sin(t * w * 0.73 + seed2 * 9.0) + buffet.y * 0.25 * strong * storm;
   vec2 sway = (down * along + across * aside) * hk * ATM_WIND * give;
   // the crown's parts on their own swings, quicker and smaller, out where the branches are; whipping in a storm
-  float bk = smoothstep(0.3, 0.95, position.y / ATM_WIND_H);
-  float bp = dot(position, vec3(0.6, 0.31, 0.45)) + seed * 13.0;
+  float bk = smoothstep(0.3, 0.95, swayAt.y / ATM_WIND_H);
+  float bp = dot(swayAt, vec3(0.6, 0.31, 0.45)) + seed * 13.0;
   vec2 branch = down * sin(t * w * 2.7 + bp) + across * 0.6 * sin(t * w * 3.4 + bp * 1.3);
   sway += branch * (0.05 + 0.09 * strong + 0.04 * strong * strong) * bk * ATM_WIND * ATM_WIND_H * 0.25;
   atmW.xz += sway;
@@ -133,21 +151,6 @@ vSplat = aSplat;
 #endif
 mvPosition = viewMatrix * atmW;
 gl_Position = projectionMatrix * mvPosition;
-`;
-
-// An instance wholly outside the view: its vertices are put beyond the far plane at once, spared the wind's and
-// their own work. Its root's sphere is tested against the frustum's sides (widened to R × (P + 1), never less than
-// the true reach R × √(P² + 1), so nothing partly in view is dropped) and against the eye's back.
-const CULL_VERTEX = /* glsl */ `
-#if defined(ATM_CULL) && defined(USE_INSTANCING)
-{
-  vec4 atmC = projectionMatrix * viewMatrix * modelMatrix * vec4(instanceMatrix[3].xyz, 1.0);
-  if (atmC.w < -ATM_CULL || abs(atmC.x) > atmC.w + ATM_CULL * (projectionMatrix[0][0] + 1.0) || abs(atmC.y) > atmC.w + ATM_CULL * (projectionMatrix[1][1] + 1.0)) {
-    gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
-    return;
-  }
-}
-#endif
 `;
 
 // The ground's detail: the two strongest of five photo layers (rarely do more meet), sampled at two
@@ -561,6 +564,13 @@ export function patchMaterial<T extends Material>(material: T, options: PatchOpt
     defines.ATM_WIND = options.wind.toFixed(3);
     defines.ATM_WIND_H = (options.windHeight ?? 2).toFixed(3);
     if (options.foliage) defines.ATM_FLUTTER = '';
+    SWAYS.set(material, { wind: options.wind, windHeight: options.windHeight ?? 2 });
+  }
+  if (options.swayWith) {
+    // each instance its own plant's
+    defines.ATM_WIND = 'aSway.x';
+    defines.ATM_WIND_H = 'aSway.y';
+    defines.ATM_SWAY_WITH = '';
   }
   if (options.translucency) defines.ATM_TRANSL = options.translucency.toFixed(3);
   if (options.skin) defines.ATM_SKIN = options.skin.toFixed(3);
@@ -570,7 +580,6 @@ export function patchMaterial<T extends Material>(material: T, options: PatchOpt
   if (options.terrain) defines.ATM_TERRAIN = '';
   if (options.terrain && options.splat) defines.ATM_SPLAT = '';
   if (options.seasonal) defines.ATM_SEASONAL = options.seasonal === 'leaf' ? '1' : options.seasonal === 'tree' ? '2' : '3';
-  if (options.cull) defines.ATM_CULL = options.cull.toFixed(2);
   material.defines = { ...(material.defines ?? {}), ...defines };
 
   const key = `atm|${JSON.stringify(defines)}|${options.foliage ? 'f' : ''}|${options.vertex?.key ?? ''}`;
@@ -589,11 +598,12 @@ export function patchMaterial<T extends Material>(material: T, options: PatchOpt
       GLSL_COMMON +
       'varying vec3 vAtmWorld;\n' +
       (options.seasonal ? 'varying vec3 vAtmRoot;\n' : '') +
+      (options.swayWith ? 'attribute vec3 aSwayAt;\nattribute vec3 aSwayRoot;\nattribute vec2 aSway;\n' : '') +
       terrainPars +
       splatVertPars +
       (options.vertex?.pars ?? '') +
       shader.vertexShader
-        .replace('#include <begin_vertex>', `#include <begin_vertex>\n${CULL_VERTEX}\n${options.vertex?.code ?? ''}`)
+        .replace('#include <begin_vertex>', `#include <begin_vertex>\n${options.vertex?.code ?? ''}`)
         .replace('#include <project_vertex>', PROJECT_VERTEX);
 
     let frag = shader.fragmentShader

@@ -4,7 +4,8 @@ import { SegmentIndex } from '../core/segmentIndex';
 import { MeshBuilder, rgb, scaleRgb, type RGB } from '../render/builder';
 import { patchMaterial } from '../render/patch';
 import { trackTexture } from '../render/textures';
-import { PLAIN, RAILWAY, RAILWAY_POINTS, type Pt } from './plan';
+import type { TrainSound } from '../audio/soundscape';
+import { BIL_SPEC, PLAIN, RAILWAY, RAILWAY_POINTS, type Pt } from './plan';
 
 // The railway on the far side of the village from the river: a single line on its embankment across the
 // fields north of the bil, and now and then the intercity train along it in Bangladesh Railway's green with
@@ -61,6 +62,20 @@ export function railAt(s: number): { x: number; z: number; heading: number } {
   const bx = LINE[i * 2 + 2];
   const bz = LINE[i * 2 + 3];
   return { x: ax + (bx - ax) * t, z: az + (bz - az) * t, heading: Math.atan2(bx - ax, bz - az) };
+}
+
+/** The line's point nearest (x, z), of its points 4 m apart: how far it is (m) and how far along the line (m). The result is reused. */
+const nearestOut = { distance: 0, s: 0 };
+export function railNearest(x: number, z: number): { distance: number; s: number } {
+  let best = Infinity;
+  let at = 0;
+  for (let i = 0; i < COUNT; i++) {
+    const d = (LINE[i * 2] - x) ** 2 + (LINE[i * 2 + 1] - z) ** 2;
+    if (d < best) (best = d), (at = i);
+  }
+  nearestOut.distance = Math.sqrt(best);
+  nearestOut.s = at * STEP;
+  return nearestOut;
 }
 
 const INDEX = new SegmentIndex(48);
@@ -145,10 +160,46 @@ const CAR = 20;
 const GAP = 0.8;
 const NOSE = 2.4;
 const COACHES = 6;
+/** Its wheels' radius (m, 0.92 m across) and how far each bogie's middle is from its car's (m). */
+const WHEEL_R = 0.46;
+const BOGIE_AT = CAR / 2 - 3.2;
+/**
+ * How it rocks on its springs as it runs (each car out of step with the next): its roll (rad) and bounce (m), and
+ * how often (Hz).
+ */
+const SWAY = { roll: 0.008, rollHz: 0.85, bounce: 0.012, bounceHz: 1.3 };
 /** Running speed (m/s, ≈ 60 km/h), and how often a train comes by (s); one comes each way in turn. */
 export const TRAIN_SPEED = 16.5;
 const SPEED = TRAIN_SPEED;
 const EVERY = 300;
+/** The rails' length (m): every wheel strikes each joint between them, the train's clatter (Bangladesh Railway's 13 m rails). */
+const JOINT = 13;
+/** Where along a car its wheelsets are, from its middle (m): two bogies, two axles each, as the bogies are drawn. */
+const AXLES = [-7.8, -5.8, 5.8, 7.8];
+/** Its engine's height over the rails (m), under the cab car's floor. */
+const ENGINE_UP = 1.2;
+/**
+ * The whistle boards the driver sounds the horn at (m along the line), whichever way the train runs: every
+ * `WHISTLE_EVERY` m along the line, as Bangladesh's drivers sound it before the crossings and halts of a country line
+ * (the user missed it, 2026-10-08: once a run it was seldom heard), and 450 m short of the stretch nearest the
+ * village (by the bil) coming either way.
+ */
+const WHISTLE_EVERY = 900;
+/** How far ahead of the listener's place on the line the driver sounds the horn as he comes on toward it, and the least run between two soundings (m). */
+const APPROACH = 350;
+const HORN_APART = 150;
+const WHISTLES = (() => {
+  let near = 0;
+  let best = Infinity;
+  for (let s = 0; s <= RAIL_LENGTH; s += 10) {
+    const p = railAt(s);
+    const d = Math.hypot(p.x - BIL_SPEC.x, p.z - BIL_SPEC.z);
+    if (d < best) (best = d), (near = s);
+  }
+  const boards: number[] = [];
+  for (let s = WHISTLE_EVERY / 2; s < RAIL_LENGTH; s += WHISTLE_EVERY) boards.push(s);
+  return { forward: [...boards, near - 450], back: [...boards, near + 450] };
+})();
 
 /** A car's cross-section (across, up): skirt, sides with a little tumblehome, a chamfered roof. */
 const SECTION = [
@@ -164,9 +215,10 @@ const SECTION = [
 const EDGE_COLORS = [LIVERY.dark, LIVERY.dark, LIVERY.green, LIVERY.roof, LIVERY.roof, LIVERY.roof, LIVERY.green, LIVERY.dark];
 
 /** A car built along +z (its forward), centred on z = 0: its body lofted from the section, bands, doors, bogies; and its windows apart (they light at night). */
-function car(cab: boolean): { body: BufferGeometry; windows: BufferGeometry } {
+function car(cab: boolean): { body: BufferGeometry; windows: BufferGeometry; lamps: BufferGeometry | null } {
   const b = new MeshBuilder();
   const w = new MeshBuilder();
+  const l = new MeshBuilder();
   const box = (bb: MeshBuilder, x: number, y: number, z: number, sx: number, sy: number, sz: number, c: RGB) => {
     const hx = sx / 2;
     const hy = sy / 2;
@@ -229,14 +281,33 @@ function car(cab: boolean): { body: BufferGeometry; windows: BufferGeometry } {
     for (let k = 0; k < 11; k++) {
       const z = (k - 5) * 1.45;
       if (cab && z > CAR / 2 - 4) continue;
-      box(w, side * 1.445, 2.58, z, 0.05, 0.8, 1.1, rgb('#f0d9a0'));
+      // (dark glass by day, the sky in it; lit only after dark: they had shone yellow at noon)
+      box(w, side * 1.445, 2.58, z, 0.05, 0.8, 1.1, rgb('#2b3739'));
     }
   }
-  // the bogies under both ends: a frame on two wheelsets
-  for (const z of [-CAR / 2 + 3.2, CAR / 2 - 3.2]) {
-    box(b, 0, 0.72, z, 2.2, 0.45, 3, LIVERY.dark);
-    for (const dz of [-1, 1]) for (const side of [-1, 1]) box(b, side * 1.0, 0.46, z + dz, 0.2, 0.9, 0.9, scaleRgb(LIVERY.dark, 0.8));
+  // the running gear (it had been a box at each end, the sky showing under the car between them, the user's note of
+  // 2026-10-08): under each end a bogie, its two wheelsets on the rails (the broad gauge apart), side frames outside
+  // them over their axle boxes, a bolster under the body; between the bogies the underframe, its tanks and boxes
+  // hung beneath the floor
+  const wheel = new CylinderGeometry(WHEEL_R, WHEEL_R, 0.12, 14).rotateZ(Math.PI / 2);
+  const steel = scaleRgb(LIVERY.dark, 0.75);
+  for (const zb of [-BOGIE_AT, BOGIE_AT]) {
+    box(b, 0, 0.82, zb, 1.9, 0.26, 2.6, LIVERY.dark);
+    for (const side of [-1, 1]) {
+      box(b, side * 1.02, WHEEL_R + 0.04, zb, 0.12, 0.34, 2.9, LIVERY.dark);
+      for (const dz of [-1, 1]) {
+        b.add(wheel, new Matrix4().makeTranslation((side * GAUGE) / 2, WHEEL_R, zb + dz), steel);
+        box(b, side * 1.02, WHEEL_R, zb + dz, 0.2, 0.22, 0.3, steel);
+      }
+    }
   }
+  box(b, 0, 0.86, 0, 2.3, 0.18, 2 * BOGIE_AT - 3.2, LIVERY.dark);
+  for (const [x, z, sx, sz] of [
+    [-0.55, -2.2, 0.9, 2.6],
+    [0.6, 1.6, 1.0, 3.4],
+    [0, -4.6, 1.6, 0.9],
+  ] as const)
+    box(b, x, 0.6, z, sx, 0.42, sz, scaleRgb(LIVERY.dark, 0.9));
   // the cab's nose: the roof drops to a raked screen, a red apron with two lamps
   if (cab) {
     const rings = [0, 0.9, 1.7, NOSE].map((d) => {
@@ -264,9 +335,10 @@ function car(cab: boolean): { body: BufferGeometry; windows: BufferGeometry } {
     b.vertex(new Vector3(0, 2.2, CAR / 2 + NOSE), new Vector3(0, 0, 1), 0, 0, LIVERY.red);
     for (const p of tip) b.vertex(p, new Vector3(0, 0, 1), 0, 0, LIVERY.red);
     for (let k = 0; k < tip.length; k++) b.tri(c, c + 1 + k, c + 1 + ((k + 1) % tip.length));
-    for (const side of [-1, 1]) box(w, side * 0.7, 1.85, CAR / 2 + NOSE + 0.06, 0.42, 0.22, 0.06, rgb('#fff6e0'));
+    // its headlamps, lit day and night as the country's trains run
+    for (const side of [-1, 1]) box(l, side * 0.7, 1.85, CAR / 2 + NOSE + 0.06, 0.42, 0.22, 0.06, rgb('#fff6e0'));
   }
-  return { body: b.build(), windows: w.build() };
+  return { body: b.build(), windows: w.build(), lamps: cab ? l.build() : null };
 }
 
 /** The train: its cars as meshes moved along the line each frame; between runs it is out of sight beyond the world's ends. */
@@ -276,11 +348,28 @@ export class Train {
   private readonly lit: MeshStandardMaterial;
   /** Seconds added to the clock, so a film scene can have the train where it wants it. */
   private offset = 0;
+  /** Where its nose is as last moved (m along the line, out beyond its ends as a run begins and ends), which way it runs, and whether it is on a run. */
+  private nose = 0;
+  private dir = 1;
+  private running = false;
+  /** Its nose and each wheelset's place along the line when its sounds were last asked for (m), to find what they passed since. */
+  private noseWas = NaN;
+  /** Where its nose was when the horn last sounded (m along the line). */
+  private hornedAt = -Infinity;
+  private readonly axlesWere: number[] = [];
+  private readonly sound: TrainSound & { engine: Vector3; bogies: Vector3[] } = {
+    engine: new Vector3(),
+    bogies: Array.from({ length: (COACHES + 1) * 2 }, () => new Vector3()),
+    joints: [],
+    horn: null,
+  };
 
   constructor() {
     this.group.name = 'train';
     const body = patchMaterial(new MeshStandardMaterial({ vertexColors: true, roughness: 0.45, metalness: 0.1 }), { grime: 0.25 });
-    this.lit = new MeshStandardMaterial({ vertexColors: true, roughness: 0.3, emissive: '#ffd890', emissiveIntensity: 0 });
+    // its windows: glass, glossy enough to take the sky by day, their lights coming on after dark (`update`)
+    this.lit = new MeshStandardMaterial({ vertexColors: true, roughness: 0.18, metalness: 0.3, emissive: '#ffd890', emissiveIntensity: 0 });
+    const lamp = patchMaterial(new MeshStandardMaterial({ vertexColors: true, emissive: '#fff2d0', emissiveIntensity: 1.6 }), {});
     const cab = car(true);
     const coach = car(false);
     for (let i = 0; i <= COACHES; i++) {
@@ -292,6 +381,7 @@ export class Train {
       m.castShadow = false;
       m.receiveShadow = true;
       g.add(m, w);
+      if (parts.lamps) g.add(new Mesh(parts.lamps, lamp));
       this.group.add(g);
       this.cars.push(m);
     }
@@ -317,19 +407,85 @@ export class Train {
     const head = into * SPEED;
     const visible = head < length + (CAR + GAP) * (COACHES + 1);
     this.group.visible = visible;
+    this.running = visible;
     if (!visible) return;
     // the nose's distance along the line from its starting end, 150 m out beyond it
     const nose = forward ? head - 150 : length - 150 - head;
     const dir = forward ? 1 : -1;
+    this.nose = nose;
+    this.dir = dir;
     this.cars.forEach((m, i) => {
       const s = nose - dir * (CAR / 2 + (i === 0 ? NOSE : 0) + i * (CAR + GAP));
       const p = railAt(Math.min(RAIL_LENGTH, Math.max(0, s)));
       const g = m.parent as Group;
-      g.position.set(p.x, CREST + RAIL_TOP, p.z);
-      g.rotation.set(0, p.heading + (forward ? 0 : Math.PI), 0);
+      // (each car rocking on its springs as it runs, out of step with the next: it had run stiff as a model)
+      const k = i * 1.7;
+      const bounce = SWAY.bounce * Math.sin(time * 2 * Math.PI * SWAY.bounceHz + k * 1.3);
+      g.position.set(p.x, CREST + RAIL_TOP + bounce, p.z);
+      g.rotation.set(0, p.heading + (forward ? 0 : Math.PI), SWAY.roll * Math.sin(time * 2 * Math.PI * SWAY.rollHz + k), 'YXZ');
       g.visible = s > -40 && s < RAIL_LENGTH + 40;
     });
-    this.lit.emissiveIntensity = 0.15 + 1.1 * night;
+    this.lit.emissiveIntensity = 1.3 * night;
+  }
+
+  /**
+   * Where its sounds come from now (audio/soundscape.ts `train`): the engine under the cab car, every bogie (the
+   * wheels' rolling on the rails), each rail joint a wheel has struck since it was last asked and how long ago, and
+   * the horn if the driver sounded it since: at a whistle board, or as it comes on toward the listener at `ear`
+   * (within `APPROACH` m of the line's point nearest them; the user's wish, 2026-10-08). Null between its runs.
+   */
+  acoustics(ear: { x: number; z: number }): TrainSound | null {
+    const out = this.sound;
+    out.joints.length = 0;
+    out.horn = null;
+    if (!this.running) {
+      this.noseWas = Number.NaN;
+      this.axlesWere.length = 0;
+      return null;
+    }
+    const { nose, dir } = this;
+    // (a jump, a film's cut or the next run: nothing struck or sounded on the way)
+    const going = Number.isFinite(this.noseWas) && Math.abs(nose - this.noseWas) < 30;
+    let axle = 0;
+    for (let i = 0; i <= COACHES; i++) {
+      const middle = nose - dir * (CAR / 2 + (i === 0 ? NOSE : 0) + i * (CAR + GAP));
+      for (const along of AXLES) {
+        const s = middle + along;
+        const was = this.axlesWere[axle];
+        this.axlesWere[axle++] = s;
+        if (!going || was === undefined) continue;
+        // each joint passed since, struck as long ago as the wheel has taken to come on from it
+        const from = s > was ? Math.floor(was / JOINT) + 1 : Math.ceil(s / JOINT);
+        const to = s > was ? Math.floor(s / JOINT) : Math.ceil(was / JOINT) - 1;
+        for (let j = from; j <= to; j++) {
+          const at = j * JOINT;
+          if (at < 0 || at > RAIL_LENGTH) continue;
+          const p = railAt(at);
+          out.joints.push({ x: p.x, y: CREST + RAIL_TOP, z: p.z, ago: Math.abs(s - at) / SPEED });
+        }
+      }
+      for (const [k, along] of [-6.8, 6.8].entries()) {
+        const p = railAt(Math.min(RAIL_LENGTH, Math.max(0, middle + along)));
+        out.bogies[i * 2 + k].set(p.x, CREST + RAIL_TOP, p.z);
+      }
+      if (i === 0) {
+        const p = railAt(Math.min(RAIL_LENGTH, Math.max(0, middle)));
+        out.engine.set(p.x, CREST + RAIL_TOP + ENGINE_UP, p.z);
+      }
+    }
+    if (going) {
+      const passed = (at: number) => (dir > 0 ? this.noseWas < at && at <= nose : nose <= at && at < this.noseWas);
+      // (not again within a few seconds of the last: a board just before the listener's place)
+      const blow = (at: number) => {
+        if (!passed(at) || Math.abs(nose - this.hornedAt) < HORN_APART) return;
+        out.horn = Math.abs(nose - at) / SPEED;
+        this.hornedAt = nose;
+      };
+      for (const board of dir > 0 ? WHISTLES.forward : WHISTLES.back) blow(board);
+      blow(railNearest(ear.x, ear.z).s - dir * APPROACH);
+    }
+    this.noseWas = nose;
+    return out;
   }
 }
 

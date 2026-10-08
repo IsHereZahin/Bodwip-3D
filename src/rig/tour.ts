@@ -4,7 +4,7 @@ import { sunDirectionOn } from '../env/astro';
 import { makeSeasonState, seasonAt } from '../env/season';
 import { plotCropAt } from '../world/crops';
 import { FISHER_SITE } from '../world/fisher';
-import { BIL, BRIDGE, HOMESTEAD_MOUNDS, JOURNEY, SALT_CREEK, SANKO, WATER_LEVEL, bridgeToWorld, corridorDistance, journeyAt, journeyFrame, journeyHalfWidth, landUse, saltPoint, shapePoint, terrainHeight, waterLevelAt, waterRise, waterwayAt } from '../world/geography';
+import { BIL, BRIDGE, HOMESTEAD_MOUNDS, JOURNEY, SANKO, WATER_LEVEL, bridgeToWorld, corridorDistance, journeyAt, journeyFrame, journeyHalfWidth, landUse, saltIntake, saltPoint, shapePoint, terrainHeight, waterLevelAt, waterRise, waterwayAt } from '../world/geography';
 import { bloomRank } from '../world/leaves';
 import { LILY_PONDS } from '../world/ponds';
 import { SALT_FIELD, type Pt } from '../world/plan';
@@ -55,6 +55,9 @@ function onWay(s: number, side: number, up: number, out: Vector3): Vector3 {
 }
 
 const ease = (u: number) => smoothstep(0, 1, u);
+
+/** A scene's cues (s into it) as they stand `at` s in, where a still starts: those past are gone, the rest that much nearer. */
+const still = (cues: readonly number[], at: number) => cues.filter((t) => t >= at).map((t) => t - at);
 
 /**
  * A place `dist` m out from the boat over open water, as near to the way `dir` (unit, level) as there is one:
@@ -446,8 +449,8 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
   const gher = gherStand();
   const gherFwd = new Vector3(Math.sin(gher.yaw), 0, Math.cos(gher.yaw));
   const gherRight = new Vector3(-gherFwd.z, 0, gherFwd.x);
-  // the salt creek's head at the sluice, and the man the salt scene comes down to
-  const creekHead = SALT_CREEK.at(SALT_CREEK.length);
+  // where the creek's water is let into the salt field, and the man the salt scene comes down to
+  const creekHead = saltIntake(SALT_FIELD).water;
   const saltMan = SALT_MEN[1] ?? SALT_MEN[0];
   const fieldMiddle = saltPoint(SALT_FIELD.w * 0.45, SALT_FIELD.d * 0.5);
   // the reapers' field: its edge, the way out across it and along it
@@ -587,7 +590,8 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       world: { day: 16, hour: 15.8, weather: 'clear', wind: 0.3 },
       // in the mustard beside the line: the intercity far off, coming on, going by close with the camera turning
       // with it, then up and back over the fields as it goes away west along its embankment
-      begin: (s) => s.train(trainFrom, true),
+      // (a still that starts into the shot finds the train that far on its way)
+      begin: (s, at) => s.train(trainFrom + TRAIN_SPEED * at, true),
       pose: (u, _s, pos, look) => {
         const t = u * TRAIN_SHOT;
         const nose = trainFrom + TRAIN_SPEED * t;
@@ -629,7 +633,7 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       // across the khal from a homestead in the squall: its palms and bamboo thrashing, the rain driving over the
       // water, lightning forking down beyond the trees
       // (the last early enough that its thunder, a few seconds behind it, is heard before the cut)
-      begin: (s) => s.lightning([2.2, 6.4, 9.4]),
+      begin: (s, at) => s.lightning(still([2.2, 6.4, 9.4], at)),
       pose: (u, _s, pos, look) => {
         onWay(storm.s + lerp(-26, -14, u), -storm.side * journeyHalfWidth(storm.s) * 0.55, 2.5, pos);
         look.copy(storm.corner).setY(storm.corner.y + lerp(3.6, 3, u));
@@ -648,9 +652,9 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       journey: fractionAt(Math.max(60, JOURNEY.turn - 150)),
       // low over the river ahead of the boat as she comes on, bareheaded in the close air: the cloud heavy and dark
       // over the village, the wind getting up in the trees, a far flash in the cloud, and at the last the first drops
-      begin: (s) => {
+      begin: (s, at) => {
         s.bareheaded();
-        s.lightning([8.6]);
+        s.lightning(still([8.6], at));
       },
       pose: (u, s, pos, look) => {
         rel(s, lerp(26, 19, ease(u)), lerp(4.5, 3.2, u), lerp(2.0, 2.8, u), pos);
@@ -678,7 +682,7 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       // the boat comes through it, the majhi under his mathal; thunder in it, then it eases a little
       world: { day: 176, hour: 16.0, weather: 'rain', wind: null, rain: [[0, 0.5], [0.3, 0.92], [0.7, 1], [1, 0.82]], wet: [[0, 0.32], [0.45, 0.72], [1, 0.97]] },
       journey: fractionAt(Math.max(0, hubS - 22)),
-      begin: (s) => s.lightning([7.5, 15.2]),
+      begin: (s, at) => s.lightning(still([7.5, 15.2], at)),
       pose: (u, _s, pos, look) => {
         if (!hub) {
           onWay(hubS + lerp(-18, -8, u), 0, lerp(1.0, 2.0, u), pos);
@@ -776,7 +780,7 @@ export function tourScenes(ghats: readonly Ghat[]): Scene[] {
       seconds: 14,
       world: { day: 235, hour: 9.2, weather: 'clear', wind: 0.25, rain: [[0, 0], [1, 0]], wet: [[0, 0.72], [1, 0.66]] },
       // low over the lily rafts, drifting across the bil below the hills, the train going by beyond it
-      begin: (s) => s.train(BIL_TRAIN - TRAIN_SPEED * 7, true),
+      begin: (s, at) => s.train(BIL_TRAIN - TRAIN_SPEED * (7 - at), true),
       pose: (u, _s, pos, look) => {
         const p = bilPoint(lerp(-BIL.halfLen * 0.7, -BIL.halfLen * 0.4, u), -BIL.halfWid * 0.3);
         pos.set(p.x, surface() + lerp(5, 3.2, u), p.z);
